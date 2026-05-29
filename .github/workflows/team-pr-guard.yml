@@ -1,0 +1,61 @@
+name: team-pr-guard
+
+# 팀 프로젝트 레포 PR 본문 검증 워크플로우.
+# 학생 개인 레포의 mission-guard 와는 다른 검사를 수행:
+#  1) PR 본문에 라이프사이클 단계가 1개 이상 체크되어 있는가
+#  2) 검증 섹션이 비어 있지 않은가
+#  3) PR 본문 길이가 최소 200자 이상 (체크리스트 / 헤더 제외)
+#
+# 검증 실패는 학생이 PR 본문을 수정하면 통과하도록 가벼운 차단만.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  validate-pr-body:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR body content
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY="${PR_BODY:-}"
+
+          if [ -z "$BODY" ]; then
+            echo "::error::PR 본문이 비어있습니다. 템플릿을 채워주세요."
+            exit 1
+          fi
+
+          # 1) 라이프사이클 단계 ≥ 1 체크
+          STAGES=$(printf '%s' "$BODY" | grep -cE '^- \[[xX]\] (기획|코딩|테스트|리뷰|배포·운영|배포)' || true)
+          if [ "$STAGES" -lt 1 ]; then
+            echo "::error::라이프사이클 단계를 1개 이상 체크해주세요 (기획 / 코딩 / 테스트 / 리뷰 / 배포·운영)."
+            exit 1
+          fi
+
+          # 2) 검증 섹션 본문 (제목/체크박스 제외) ≥ 1줄
+          VERIFICATION=$(printf '%s' "$BODY" | awk '
+            BEGIN { in_section = 0 }
+            /^## 검증/ { in_section = 1; next }
+            /^## / && in_section { in_section = 0 }
+            in_section && !/^[[:space:]]*$/ && !/^- \[[ xX]\]/ { print }
+          ')
+          VERIFICATION_LEN=$(printf '%s' "$VERIFICATION" | tr -d '[:space:]' | wc -c | tr -d ' ')
+          if [ "$VERIFICATION_LEN" -lt 10 ]; then
+            echo "::error::'검증' 섹션을 채워주세요. 어떤 테스트 / 시나리오 / 측정으로 확인했는지 1줄 이상."
+            exit 1
+          fi
+
+          # 3) 본문 전체 길이 (체크박스 제외) ≥ 200자
+          BODY_TEXT=$(printf '%s' "$BODY" | awk '!/^[[:space:]]*-?[[:space:]]*\[[ xX]\]/ && !/^[[:space:]]*#/ && !/^<!--/ { print }')
+          BODY_LEN=$(printf '%s' "$BODY_TEXT" | tr -d '[:space:]' | wc -c | tr -d ' ')
+          if [ "$BODY_LEN" -lt 200 ]; then
+            echo "::error::PR 본문 본글이 너무 짧습니다 (${BODY_LEN}자). 담당 기능 / 검증 / AI 보조 흔적을 200자 이상 작성해주세요."
+            exit 1
+          fi
+
+          echo "✅ PR body validation passed (stages=$STAGES, verification_len=$VERIFICATION_LEN, body_len=$BODY_LEN)"
