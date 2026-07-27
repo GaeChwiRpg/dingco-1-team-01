@@ -1,0 +1,165 @@
+name: ai-review
+
+# W9 팀 프로젝트 레포 AI 코드리뷰.
+# curriculum.md "팀 레포 필수 산출물" 중 리뷰 단계 산출물이다.
+#
+# ANTHROPIC_API_KEY 시크릿이 없으면 아무것도 하지 않고 통과한다(exit 0).
+# 키를 넣기 전에도 PR 이 막히지 않게 하려는 것이고, 대신 리뷰는 안 붙는다.
+#
+# 팀별 설정:
+#   Settings → Secrets and variables → Actions
+#     Secret   ANTHROPIC_API_KEY  (필수)
+#     Variable ANTHROPIC_MODEL    (선택, 기본 claude-opus-5)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # 같은 PR 에 새 커밋이 오면 이전 리뷰는 취소 — 중복 코멘트 방지.
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API key
+        id: gate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::notice::ANTHROPIC_API_KEY 시크릿이 없어 AI 리뷰를 건너뜁니다. Settings → Secrets and variables → Actions 에서 추가하세요."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build diff
+        if: steps.gate.outputs.enabled == 'true'
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # 잠금파일·바이너리·빌드 산출물은 리뷰 가치가 없고 토큰만 먹는다.
+          git diff "$BASE_SHA...$HEAD_SHA" -- . \
+            ':(exclude)**/package-lock.json' \
+            ':(exclude)**/*.lock' \
+            ':(exclude)**/build/**' \
+            ':(exclude)**/node_modules/**' \
+            > /tmp/pr.diff || true
+
+          BYTES=$(wc -c < /tmp/pr.diff | tr -d ' ')
+          echo "diff bytes: $BYTES"
+          if [ "$BYTES" -eq 0 ]; then
+            echo "::notice::리뷰할 변경이 없습니다."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 과대 diff 는 앞부분만 — 잘렸다는 사실을 프롬프트에 알린다.
+          if [ "$BYTES" -gt 200000 ]; then
+            head -c 200000 /tmp/pr.diff > /tmp/pr.diff.cut
+            printf '\n\n[이 diff 는 200KB 에서 잘렸습니다. 뒷부분은 보이지 않습니다.]\n' >> /tmp/pr.diff.cut
+            mv /tmp/pr.diff.cut /tmp/pr.diff
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Request review
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.skip == 'false'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-opus-5' }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          SYSTEM=$(cat <<'PROMPT'
+          너는 백엔드 부트캠프 W9 팀 프로젝트의 코드 리뷰어다. 한국어로, 존중하는 말투로 쓴다.
+
+          평가 축은 학생들이 이미 알고 있는 5개다:
+          요구사항 충족도 / 구조·가독성 / 기술 포인트 적용 / 검증 근거 품질 / 설명력
+
+          규칙:
+          - 잘한 점 1~2개를 먼저 구체적으로 짚는다. 일반론 말고 이 diff 안의 실제 코드를 인용한다.
+          - 개선 제안은 최대 4개. 각각 파일 경로와 함께, 왜 문제인지 → 어떻게 고치는지 순서로.
+          - 팀 프로젝트라 협업 흔적(API 계약, 역할 분담, 통합 지점)이 보이면 그것도 본다.
+          - 아직 안 배운 기술을 요구하지 않는다. 커리큘럼 범위는 Spring Boot / JPA / 인덱스 / 트랜잭션·락 / 프로파일링 / Redis 다.
+          - 확신이 없으면 단정하지 말고 질문으로 남긴다.
+          - 전체 600자 이내. 길면 학생이 안 읽는다.
+          PROMPT
+          )
+
+          # diff 는 셸 이스케이프가 위험하므로 jq 로 안전하게 넣는다.
+          jq -n \
+            --arg model "$ANTHROPIC_MODEL" \
+            --arg system "$SYSTEM" \
+            --arg title "$PR_TITLE" \
+            --rawfile diff /tmp/pr.diff \
+            '{
+              model: $model,
+              max_tokens: 8000,
+              output_config: { effort: "medium" },
+              system: $system,
+              messages: [{
+                role: "user",
+                content: ("PR 제목: " + $title + "\n\n아래는 이 PR 의 diff 다.\n\n```diff\n" + $diff + "\n```")
+              }]
+            }' > /tmp/req.json
+
+          HTTP=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            https://api.anthropic.com/v1/messages \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            --data @/tmp/req.json)
+
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::Anthropic API ${HTTP}"
+            jq -r '.error.message // .' /tmp/resp.json | head -5
+            exit 1
+          fi
+
+          # 안전 분류기가 요청을 거절하면 stop_reason 이 refusal 이고 content 가 비어 있다.
+          STOP=$(jq -r '.stop_reason // ""' /tmp/resp.json)
+          if [ "$STOP" = "refusal" ]; then
+            echo "::warning::모델이 이 diff 에 대한 리뷰를 거절했습니다 (stop_reason=refusal)."
+            exit 0
+          fi
+
+          jq -r '[.content[]? | select(.type=="text") | .text] | join("\n")' /tmp/resp.json > /tmp/review.md
+          if [ ! -s /tmp/review.md ]; then
+            echo "::warning::리뷰 본문이 비어 있습니다 (stop_reason=${STOP})."
+            exit 0
+          fi
+
+          {
+            echo "## 🤖 AI 코드리뷰"
+            echo
+            cat /tmp/review.md
+            echo
+            echo "---"
+            echo "_\`${ANTHROPIC_MODEL}\` · 이 리뷰는 참고용입니다. 동의하지 않으면 PR 에 근거를 남기고 그대로 가세요._"
+          } > /tmp/comment.md
+
+      - name: Post comment
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          [ -s /tmp/comment.md ] || { echo "코멘트 없음"; exit 0; }
+          gh pr comment "$PR_NUMBER" --body-file /tmp/comment.md
