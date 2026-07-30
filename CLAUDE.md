@@ -58,8 +58,9 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | `GET /api/review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
 | fingerprint 로 그룹 조회 (수신 경로, 최고 빈도) | `fingerprint` UNIQUE | `const` / `eq_ref` |
 | `GET /api/error-groups?sort=occurrenceCount` — status + category 필터 | `(status, current_category, occurrence_count DESC)` | `ref`, 정렬까지 커버 |
-| `GET /api/error-groups?sort=lastSeenAt` — 기간 범위 + 최근 순 | `(status, last_seen_at)` | `range`, 정렬까지 커버 |
-| 기간 범위 + `occurrence_count DESC` 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → filesort. **기간 필터를 쓰면 `sort=lastSeenAt` 을 택한다** (D-012) |
+| `GET /api/error-groups?sort=lastSeenAt` — status + 기간 범위 (category **없음**) | `(status, last_seen_at)` | `range`, 정렬까지 커버 |
+| 위 + `category` 필터 동시 사용 | `(status, current_category, last_seen_at)` **후보** | category 는 등치라 선행 컬럼에 두면 뒤의 범위+정렬까지 커버 가능. 단 인덱스가 3개로 늘어 쓰기 비용 증가 → **측정 5 로 이득 확인 후 확정** (D-018) |
+| 기간 범위 + `occurrence_count DESC` 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → filesort. **기간 필터를 쓰면 `sort=lastSeenAt` 을 택한다** (D-013) |
 | 그룹별 최신 분류 결과 | `(error_group_id, created_at DESC)` | `ref` |
 | 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |
 
@@ -105,9 +106,26 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | 지점 | 수단 | 이유 |
 | --- | --- | --- |
 | `occurrence_count` 증가 (최고 빈도) | **JPQL 원자적 UPDATE** (`SET occurrence_count = occurrence_count + 1`) | 락 없이 DB 원자성 사용. 여기에 비관적 락 걸면 수신 경로 전체가 직렬화됨 |
-| 신규 그룹 동시 생성 | **`fingerprint` UNIQUE + 위반 예외 캐치 후 재조회** | 선-조회 후-삽입만으로는 못 막는다. 락 아님 |
+| 신규 그룹 동시 생성 | **`fingerprint` UNIQUE + 트랜잭션 밖 재시도** (D-016) | 선-조회 후-삽입만으로는 못 막는다. 락 아님 |
 | 큐 항목 중복 확정 | **낙관적 락 `@Version`** → 충돌 시 409 | 두 검토자가 같은 항목을 집는 빈도가 낮음. 비관적 락은 과잉 |
 
+**UNIQUE 충돌 재시도의 트랜잭션 경계 (D-016) — 구현 시 반드시 지킬 것**
+
+제약 위반 예외를 **같은 트랜잭션 안에서 캐치해 재조회하면 안 된다.** Hibernate 는 제약 위반 발생 시 세션을 오염된 것으로 간주하고 트랜잭션을 rollback-only 로 마킹하므로, 이어지는 재조회는 `UnexpectedRollbackException` 으로 실패한다. 예외는 **트랜잭션 밖으로 전파시켜 롤백을 완료시킨 뒤** 새 트랜잭션에서 재시도해야 한다.
+
+```text
+ingest(cmd)                      ← 트랜잭션 없음. 재시도 루프는 여기
+  ├ 캐시 조회 → hit  : recordOccurrence(groupId)      [TX]
+  ├ DB 조회  → 존재  : recordOccurrence(groupId)      [TX]
+  └ 없음            : createGroupAndRecord(cmd)       [TX]
+                        └ UNIQUE 위반 시 예외를 TX 밖으로 전파 (롤백 확정)
+                           → ingest 가 캐치 → 최대 1회 재시도
+                           → 재시도 시엔 다른 스레드가 커밋한 그룹이 보이므로
+                             "DB 조회 → 존재" 경로로 성공
+```
+
+- 재시도는 `@Retryable(DataIntegrityViolationException.class, maxAttempts=2)` 로 두되, **`@Transactional` 메서드 바깥**에 붙인다 (같은 클래스 내부 호출은 프록시를 안 타므로 빈을 분리)
+- MySQL `INSERT ... ON DUPLICATE KEY UPDATE` 로 예외 자체를 없애는 대안도 있으나, Phase 2 는 위 구조를 택한다 — 동시 첫 유입 race 를 측정 7 로 관찰하는 것이 학습 목표이기 때문
 - 사용자 규모 / 충돌 빈도 측정 후 재평가 (`DECISIONS.md` 후속 항목)
 
 ### 캐시 전략

@@ -114,7 +114,7 @@ sequenceDiagram
             SVC->>DB: [TX] errors INSERT + occurrence_count++
         else 신규 그룹
             SVC->>DB: [TX] error_group INSERT (status=NEW) + errors INSERT
-            Note over SVC,DB: unique 제약 위반 시 재조회로 흡수<br/>(동시 첫 유입 → 그룹 1개만)
+            Note over SVC,DB: UNIQUE 위반 시 예외를 TX 밖으로 전파 → 롤백 후 재시도<br/>재시도에선 "기존 그룹 존재" 경로로 성공 (D-016)
             SVC->>SVC: ErrorGroupCreatedEvent 발행
         end
     end
@@ -128,7 +128,7 @@ sequenceDiagram
 2. **AI 호출은 신규 그룹에만 발생한다.** AI 절감을 만드는 것은 **그룹핑**이지 캐시가 아니다 — 캐시가 miss 여도 DB 에 그룹이 있으면 AI 를 부르지 않는다. 캐시가 줄이는 것은 **수신 경로의 DB 조회**다 (시스템 최고 QPS 지점). 두 지표를 분리해서 측정한다 (D-014):
    - AI 절감률 = `1 - (AI 호출 수 / 투입 건수)` ≈ `1 - (신규 그룹 수 / 투입 건수)`
    - 캐시 hit rate = `hit / (hit + miss)` — **항상 절감률 이하**. TTL 만료·재기동 시 miss 지만 AI 호출은 없다
-3. 같은 fingerprint 동시 첫 유입은 실제 race condition이다. `fingerprint` unique 제약을 신뢰 근거로 삼고, 위반 예외를 재조회로 흡수한다 (선-조회 후-삽입만으로는 못 막는다).
+3. 같은 fingerprint 동시 첫 유입은 실제 race condition이다. `fingerprint` unique 제약을 신뢰 근거로 삼는다 (선-조회 후-삽입만으로는 못 막는다). 단 **위반 예외를 같은 트랜잭션 안에서 캐치해 재조회하면 안 된다** — Hibernate가 세션을 오염된 것으로 보고 트랜잭션을 rollback-only로 마킹하므로 재조회가 실패한다. 예외를 트랜잭션 밖으로 전파시켜 롤백을 완료한 뒤 새 트랜잭션에서 재시도한다 (D-016).
 
 ### 4-2. AI 분류 → 검증 → 판정 (핵심 구간)
 
@@ -160,7 +160,13 @@ sequenceDiagram
 
 **감사 표본 삽입도 같은 트랜잭션에 넣는다 (D-012).** 초안은 "감사는 부차적이니 실패해도 자동 승인을 되돌릴 필요 없다"는 이유로 별도 트랜잭션을 뒀는데, 이건 잘못이다 — 표본이 소리 없이 누락되면 실제 감사율이 5% 미달이 되고, **§8 측정 8(자동 승인 건 오분류율)의 분모가 조용히 줄어든다.** 측정 무결성이 이 프로젝트의 주제인데 측정 장치 자체를 best-effort 로 두는 셈이다.
 
-"부차적이니 분리한다"는 직관은 **외부 의존성**에 적용되는 것이고, 여기 두 쓰기는 같은 DB·같은 커넥션이라 분리해서 얻는 격리 이득이 없다. 삽입이 실패하면 분류째로 롤백되어 그룹이 `NEEDS_REVIEW` 없이 `NEW` 로 남고, 다음 재분류에서 다시 표본 추첨 대상이 된다 (AI 호출 1회 낭비는 감수).
+"부차적이니 분리한다"는 직관은 **외부 의존성**에 적용되는 것이고, 여기 두 쓰기는 같은 DB·같은 커넥션이라 분리해서 얻는 격리 이득이 없다.
+
+**단, 롤백된 그룹의 복구 경로가 Phase 2 에는 없다 (D-017).** 판정 트랜잭션이 롤백되면 그룹은 `NEW` 로 남는데, `ErrorGroupCreatedEvent` 는 이미 소비됐고 자동 재분류는 Phase 3(항목 G)이므로 **아무도 다시 분류하지 않는다.** 이 시스템이 막으려는 "조용히 유실된 에러"를 스스로 만드는 구멍이다. Phase 2 에서는 고치는 대신 **관찰 가능하게** 만든다:
+
+- `GET /api/stats` 의 `classification.stuckNew` — 생성 후 N분(기본 10분) 이상 `NEW` 에 머무른 그룹 수
+- Actuator gauge `triage.groups.stuck_new`
+- 이 값이 0 이 아니면 분류 파이프라인이 조용히 실패하고 있다는 신호다. **재분류 스윕은 Phase 3 항목 G 로 이월** (재시도 소진·일시적 장애 복구와 같은 문제이므로 함께 처리하는 것이 맞다)
 
 추가 안전장치로 **감사율 자체를 검증 가능하게** 만든다 — `GET /api/stats` 가 표본 수(`sampledTotal`)와 모집단 수(`eligibleTotal`), 실측 비율(`actualSampleRate`)을 함께 노출한다. 설정값 5% 와 실측값이 벌어지면 즉시 드러난다.
 
@@ -266,6 +272,7 @@ stateDiagram-v2
 | **앵커링 편향** — AI 제안 카테고리를 보여주므로 검토자가 동의 쪽으로 기울고, 수집된 정답 레이블이 오염 | Phase 2 는 한계로 수용하고 **측정된 오분류율을 하한값으로 해석**. 사람이 먼저 분류 → 그 후 AI 제안 공개하는 2단계 방식은 Phase 3 (항목 I) |
 | AI 응답 지연이 수신 API 응답시간에 전파 | 이벤트 + `@Async` 분리. 수신 API는 그룹 upsert + INSERT만 하고 리턴 |
 | **AI API 장기 장애 시 전건 수동 처리 대상화** | Phase 2에서는 한계로 명시만 (재시도 3회 소진 → 큐). 백오프 재분류·circuit breaker는 Phase 3 (G) |
+| **판정 트랜잭션 롤백 시 그룹이 `NEW` 로 영구 방치** — 이벤트는 이미 소비됐고 자동 재분류가 없어 아무도 다시 분류하지 않는다 | Phase 2는 **관찰까지만** — `stats.classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 로 노출해 조용한 유실을 드러낸다. 재분류 스윕은 Phase 3 (G). **측정 3(롤백 검증) 시 stuckNew가 실제로 증가하는지 함께 확인**한다 (D-017) |
 | 신규 카테고리에 임계값 미등록 | 기본값 0.9로 fallback — **보수적 = 격리 쪽**으로 실패한다 |
 | 검토 큐 적체 시 수동 처리 부담 | MVP는 수동 확정 API만. 적체를 메트릭으로 노출해 **적체 자체를 관찰 가능하게** 만드는 것까지가 Phase 2 목표 |
 
@@ -287,12 +294,12 @@ stateDiagram-v2
 | 2 | 검토 큐 적체율 | 50건 투입 후 사유별(`LOW_CONFIDENCE` / `CLASSIFY_FAILED` / `AUDIT_SAMPLE`) 삽입 건수 / 전체 비율 | `evidence/` |
 | 3 | 트랜잭션 롤백 검증 | 큐 삽입 강제 실패 주입 → `classification_result` 롤백 여부 확인 | 통합 테스트 |
 | 4 | 재시도 동작 | AI API 오류 주입 → 재시도 횟수·간격 로그 + 최종 큐 삽입 확인 | 구조화 로그 |
-| 5 | 인덱스 효과 | `(status, created_at)` 인덱스 전/후 검토 큐 조회 `EXPLAIN` 비교 | `evidence/` |
+| 5 | 인덱스 효과 | 아래 4개 케이스 `EXPLAIN` 비교 (D-018)<br>ⓐ 검토 큐 `(status, created_at)` 전/후<br>ⓑ `sort=occurrenceCount` + category<br>ⓒ `sort=lastSeenAt` + 기간 (category 없음)<br>ⓓ **`sort=lastSeenAt` + 기간 + category 동시** — `(status, last_seen_at)` 만으로는 category 미커버라 filesort/추가 필터링이 남는지, 3컬럼 인덱스가 값어치 있는지 확인 | `evidence/` |
 | 6 | **AI 호출 절감률** | 반복 포함 1000건 투입 → 실제 AI 호출 횟수 + 생성된 그룹 수. **절감률 = 1 - (AI 호출/투입)** 으로만 정의한다. 캐시 hit rate 로 대체하지 않는다 (D-014) | `evidence/` |
 | 7 | **동시 유입 중복 방지** | 같은 fingerprint 20 스레드 동시 `POST` → 그룹 1개 / AI 호출 1회 확인 | 동시성 테스트 |
 | 8 | **자동 승인 건 오분류율** | 감사 표본에서 `category ≠ final_category` 비율. 신뢰도 구간별로 분해. **앵커링 편향으로 하한값임을 명시** (D-010) | `evidence/` |
 | 9 | **카테고리별 임계값 효과** | 동일 50건을 ⓐ전역 단일값 0.7(D-006 이전 초안 = 대조군) vs ⓑ카테고리별 차등으로 각각 처리 → 격리 건수·오분류 통과 건수 비교 | `evidence/` |
-| 10 | **blind 무결성** | 검토 큐 응답 필드 전수를 놓고 감사 표본 역산이 가능한지 점검. 가능하면 필드 제거 | 리뷰 메모 |
+| 10 | **blind 무결성** | 검토 큐 응답 필드 전수 점검. **결정적 역산**(필드 조합으로 100% 식별)은 0건이어야 하며 발견 시 필드 제거. **확률적 추론**(`sampleMessage`·`occurrenceCount` 로 짐작)은 제거 불가하므로 목록화만 (D-019) | 리뷰 메모 |
 | 11 | **캐시 hit rate** | 측정 6과 **별개 지표**. 같은 1000건 투입에서 hit/miss 카운터 기록 후 절감률과의 격차를 확인 — 격차 = "캐시 miss 지만 그룹은 존재" 비율 (D-014) | `evidence/` |
 
 ### 이 프로젝트의 성공 기준 두 줄

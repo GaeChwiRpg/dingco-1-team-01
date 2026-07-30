@@ -1,4 +1,4 @@
-# API-CONTRACT v0.4
+# API-CONTRACT v0.5
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -202,7 +202,9 @@ X-Api-Key: sdk-live-a1b2c3
 
 - `suggestedCategory` 는 남긴다 — 이것까지 가리면 `CLASSIFY_FAILED`(제안 없음)와 나머지가 구별되고, 검토 생산성도 크게 떨어진다
 - `CLASSIFY_FAILED` 항목은 `suggestedCategory: null`
-- **알려진 한계 (D-010)**: AI 제안을 보여주므로 검토자에게 앵커링 편향이 남는다. 따라서 `GET /api/stats` 의 `audit.misclassificationRate` 는 **하한값**이며 실제 오분류율은 이보다 높다. 사람이 먼저 분류하고 그 다음 AI 제안을 공개하는 2단계 방식은 Phase 3 (항목 I)
+- **알려진 한계 1 — 앵커링 (D-010)**: AI 제안을 보여주므로 검토자에게 앵커링 편향이 남는다. 사람이 먼저 분류하고 그 다음 AI 제안을 공개하는 2단계 방식은 Phase 3 (항목 I)
+- **알려진 한계 2 — 확률적 추론 (D-019)**: `sampleMessage` 는 **제거할 수 없다.** 검토자가 에러 원문을 못 읽으면 분류 작업 자체가 불가능하기 때문이다. 다만 숙련된 검토자는 *"이건 딱 봐도 명확한데 왜 내 큐에 있지"* 로 감사 표본을 **확률적으로** 추론할 수 있다. `occurrenceCount` 도 약한 신호가 된다
+- 두 한계의 성격이 다르다 — **결정적 역산은 0건이어야 하고**(그건 결함이다), **확률적 추론은 남는다**(그건 감수한다). 따라서 `audit.misclassificationRate` 는 **하한값**으로만 해석한다
 
 **오류**: 403 (`ROLE_INGEST` 접근)
 
@@ -329,7 +331,8 @@ X-User-Role: ADMIN
     "autoAccepted": 29,
     "needsReview": 8,
     "failed": 1,
-    "autoAcceptRate": 0.763
+    "autoAcceptRate": 0.763,
+    "stuckNew": 0
   },
   "aiCallSavings": {
     "eventsReceived": 1284,
@@ -373,6 +376,7 @@ X-User-Role: ADMIN
 | --- | --- |
 | `GET /actuator/health` | E2E 헬스 체크 (`tests/e2e/api.spec.ts`) |
 | `GET /actuator/metrics/triage.queue.backlog` | 큐 적체 건수 gauge (`stats:summary` 캐시 경유) |
+| `GET /actuator/metrics/triage.groups.stuck_new` | 10분 이상 `NEW` 에 머문 그룹 수 — 판정 롤백으로 조용히 방치된 그룹 탐지 (D-017). **0 이 아니면 분류 파이프라인이 실패 중** |
 | `GET /actuator/metrics/triage.ai.calls` | AI 호출 횟수 counter |
 | `GET /actuator/metrics/triage.classification.success.rate` | 분류 성공률 |
 | `GET /actuator/metrics/cache.gets` | `classification:byFingerprint` hit/miss |
@@ -387,4 +391,5 @@ X-User-Role: ADMIN
 | v0.2 | 2026-07-30 | AI 리뷰 반영 — `GET /api/review-queue` 에서 `confidence`·`threshold` 응답 필드와 `category` 필터 제거 (blind 누설 차단, D-010). `GET /api/error-groups` 의 `category`·`confidence` 출처를 역정규화 컬럼으로 명시 (D-011) | #1 |
 | v0.3 | 2026-07-30 | AI 리뷰 2차 반영 — `GET /api/error-groups` 에 `sort` 파라미터 추가 (기간 필터 시 filesort 회피). `GET /api/stats` 의 `audit` 에 `eligibleTotal`·`actualSampleRate`·`configuredSampleRate` 추가 (감사율 검증, D-012) | #1 |
 | v0.4 | 2026-07-30 | AI 리뷰 3차 반영 — `GET /api/stats` 의 `cacheHitRate` 를 `aiCallSavings` 밖으로 분리해 `cache` 객체로 독립 (캐시 hit rate ≠ AI 절감률, D-014) | #1 |
+| v0.5 | 2026-07-30 | AI 리뷰 4차 반영 — `GET /api/stats` 에 `classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 추가 (판정 롤백으로 방치된 그룹 탐지, D-017). §4 blind 한계를 결정적 역산/확률적 추론으로 구분 (D-019) | #1 |
 <!-- 변경 시 한 줄씩 추가 -->
