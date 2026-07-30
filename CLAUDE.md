@@ -136,8 +136,8 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 
 ## 모듈 간 계약 (병렬 작업 기준선)
 
-작업 패키지 P1(수신·그룹핑) / P2(분류·검증) / P3(검토·관측)가 병렬로 가려면 **경계 3개만** 먼저 고정하면 된다.
-이 계약을 바꾸는 변경은 세 패키지 담당자 합의 + `DECISIONS.md` 항목 필요.
+작업 패키지 **P1 수신·그룹핑(이용택) / P2 분류·검증(김준현) / P3 검토·관측(김은빈)** — D-015.
+셋이 병렬로 가려면 **경계 3개만** 먼저 고정하면 된다. 이 계약을 바꾸는 변경은 세 담당자 합의 + `DECISIONS.md` 항목 필요.
 
 **계약 A — `ErrorGroupCreatedEvent` (P1 → P2)**
 
@@ -192,15 +192,17 @@ evict : 없음 (그룹은 삭제되지 않음). TTL 은 메모리 상한 목적�
 ## 라이프사이클 단계 책임자
 
 각 단계는 책임자 1명이 산출물 끝까지 책임. 단계 간 협업은 PR 본문 + `INTEGRATION-LOG.md` 로 동기화.
-분담 확정은 `DECISIONS.md` **D-002 (현재 보류 — 팀 합의 대기)**.
+분담 확정: `DECISIONS.md` **D-002 (채택)**. 진행 상태는 `LIFECYCLE-COVERAGE.md` 매트릭스.
 
 | 단계 | 책임자 | 도구 |
 | --- | --- | --- |
-| 기획 | (D-002 확정 전) | Jira MCP, AI PRD |
+| 기획 | 김준현 | Jira MCP, AI PRD |
 | 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI |
-| 테스트 | (D-002 확정 전) | Playwright MCP |
-| 리뷰 | (D-002 확정 전) | Claude GitHub Actions |
-| 배포·운영 | (D-002 확정 전) | Sentry MCP, Docker |
+| 테스트 | 이용택 | Playwright MCP |
+| 리뷰 | 김은빈 | Claude GitHub Actions |
+| 배포·운영 | 이용택 | Sentry MCP, Docker |
+
+인원 3명 / 단계 5개라 이용택이 2단계를 겸한다. **코딩은 전원 공동**이고, 코드 범위는 위 「모듈 간 계약」의 P1/P2/P3 로 나눈다.
 
 ## 변경 절차
 

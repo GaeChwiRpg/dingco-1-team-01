@@ -216,12 +216,12 @@ stateDiagram-v2
 
 | 공통 기능 | 본 시스템 매핑 | 담당자 |
 | --- | --- | --- |
-| 권한·역할 | `ROLE_INGEST` / `ROLE_REVIEWER` / `ROLE_ADMIN` 3역할 + `@PreAuthorize`. 전송 주체 · 판정 주체 · 정책 결정 주체 분리 | (D-002에서 확정) |
-| 핵심 트랜잭션 | ① `ErrorIngestService.ingest` — 그룹 upsert + 발생 로그 삽입 + 카운트 증가<br>② `ClassificationService.verifyAndPersist` — 정책 조회 + 분류 결과 저장 + 그룹 상태 전이 + 조건부 큐 삽입<br>③ `ReviewService.confirm` — 큐 락 조회 + 확정 + 최종 카테고리 기록 + 그룹 전이 | (D-002에서 확정) |
-| 검색·필터 | `ReviewQueueRepository.search` — **status / 기간** 필터 + `(status, created_at)` 인덱스 (사유·신뢰도·카테고리 필터는 blind 규칙상 제공 안 함, D-010). `error_group`은 status / category 필터 + `occurrence_count` 또는 `last_seen_at` 정렬 | (D-002에서 확정) |
-| 캐시 | ① `fingerprint → 그룹 요약` 캐시 — **시스템 최고 QPS 지점(수신 경로)의 DB 조회 제거**. 그룹 생성 시 put, 판정 확정 시 갱신. AI 절감은 그룹핑의 효과이고 캐시와는 별개 지표 (D-014)<br>② 큐 적체·감사 요약 통계 `@Cacheable` (TTL 10s) + `@CacheEvict(allEntries=true)`. Actuator gauge가 매 스크랩마다 전수 count 치는 것 방지 | (D-002에서 확정) |
-| 비동기·이벤트 | `ErrorGroupCreatedEvent` (Spring Events) → `@Async` AI 분류 워커 + `@Retryable(maxAttempts=3)` + `@Recover`로 큐 자동 삽입 | (D-002에서 확정) |
-| AI 보조 | `AiClassificationService` — 에러 → 카테고리 + 신뢰도<br>**+ 카테고리별 임계값 검증 계층**<br>**+ 자동 승인 건 무작위 감사 샘플링** (본 프로젝트의 차별점) | (D-002에서 확정) |
+| 권한·역할 | `ROLE_INGEST` / `ROLE_REVIEWER` / `ROLE_ADMIN` 3역할 + `@PreAuthorize`. 전송 주체 · 판정 주체 · 정책 결정 주체 분리 | 김준현 (P2 선작업) |
+| 핵심 트랜잭션 | ① `ErrorIngestService.ingest` — 그룹 upsert + 발생 로그 삽입 + 카운트 증가<br>② `ClassificationService.verifyAndPersist` — 정책 조회 + 분류 결과 저장 + 그룹 상태 전이 + 조건부 큐 삽입<br>③ `ReviewService.confirm` — 큐 락 조회 + 확정 + 최종 카테고리 기록 + 그룹 전이 | ① 이용택 (P1)<br>② 김준현 (P2)<br>③ 김은빈 (P3) |
+| 검색·필터 | `ReviewQueueRepository.search` — **status / 기간** 필터 + `(status, created_at)` 인덱스 (사유·신뢰도·카테고리 필터는 blind 규칙상 제공 안 함, D-010). `error_group`은 status / category 필터 + `occurrence_count` 또는 `last_seen_at` 정렬 | 김은빈 (P3) |
+| 캐시 | ① `fingerprint → 그룹 요약` 캐시 — **시스템 최고 QPS 지점(수신 경로)의 DB 조회 제거**. 그룹 생성 시 put, 판정 확정 시 갱신. AI 절감은 그룹핑의 효과이고 캐시와는 별개 지표 (D-014)<br>② 큐 적체·감사 요약 통계 `@Cacheable` (TTL 10s) + `@CacheEvict(allEntries=true)`. Actuator gauge가 매 스크랩마다 전수 count 치는 것 방지 | ① 이용택·김준현 (계약 C)<br>② 김은빈 (P3) |
+| 비동기·이벤트 | `ErrorGroupCreatedEvent` (Spring Events) → `@Async` AI 분류 워커 + `@Retryable(maxAttempts=3)` + `@Recover`로 큐 자동 삽입 | 이용택 발행 (P1) → 김준현 수신 (P2) |
+| AI 보조 | `AiClassificationService` — 에러 → 카테고리 + 신뢰도<br>**+ 카테고리별 임계값 검증 계층**<br>**+ 자동 승인 건 무작위 감사 샘플링** (본 프로젝트의 차별점) | 김준현 (P2) |
 
 > `@Transactional` 위치는 `CLAUDE.md` 규칙 준수 — Controller 금지, 단일 read 금지, 위 3개 묶음 read+write 메서드에만. 캐시 evict/갱신은 **커밋 후**에 수행한다 (롤백된 판정이 캐시에 남으면 안 됨).
 
