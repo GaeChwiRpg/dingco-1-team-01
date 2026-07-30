@@ -1,4 +1,4 @@
-# API-CONTRACT v0.5
+# API-CONTRACT v0.6
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -27,7 +27,7 @@
 | 401 | 인증 헤더 누락 또는 API key 불일치 |
 | 403 | 역할 권한 부족 (예: `ROLE_INGEST` 가 검토 큐 접근) |
 | 404 | 대상 리소스 없음 |
-| 409 | 낙관적 락 충돌 (이미 확정된 큐 항목 재확정) |
+| 409 | 확정 충돌 — **원인 2종을 `code` 로 구분**한다 (D-021). `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 확정 경합) |
 
 ### 카테고리 enum (10종)
 
@@ -246,7 +246,28 @@ X-User-Role: REVIEWER
 - `matched: false` = AI 제안과 사람 확정 불일치 → 오분류 집계 대상
 - 감사 표본이었더라도 응답에 그 사실은 드러내지 않는다 (blind 유지)
 
-**오류**: 400 (`finalCategory` enum 불일치), 404, **409 (이미 `RESOLVED` — 낙관적 락 충돌)**
+**오류**: 400 (`finalCategory` enum 불일치), 404, **409 (확정 충돌 — 아래 2종)**
+
+### 409 의 두 원인 (D-021)
+
+같은 409 지만 **발생 시점과 원인이 다르므로 `code` 로 구분**한다. 하나로 뭉뚱그리면 동시성 테스트에서 "락이 실제로 동작했는지"를 검증할 수 없다.
+
+| `code` | 시나리오 | 검출 지점 | 필요한 장치 |
+| --- | --- | --- | --- |
+| `ALREADY_RESOLVED` | B 가 확정을 **끝낸 뒤** A 가 확정 시도 (시간 차) | 조회 시점 상태 검사 (`status != PENDING`) | 상태 검사만으로 충분 |
+| `CONCURRENT_UPDATE` | A·B 가 **둘 다 PENDING 을 읽고** 동시에 확정 시도 | 커밋 시점 `@Version` 불일치 | **`@Version` 필수** |
+
+**상태 검사만으로는 부족한 이유**: 두 검토자가 동시에 `PENDING` 을 읽으면 **둘 다 상태 검사를 통과**한다 (check-then-act 경합). 이 창을 막는 것이 `@Version` 이고, 그래서 D-007 이 낙관적 락을 선택했다. 반대로 `@Version` 만 있고 상태 검사가 없으면, 시간 차를 두고 온 요청이 `CONCURRENT_UPDATE` 로 잘못 보고된다 — **경합이 없었는데 경합이라고 말하는 셈**이다.
+
+```json
+{
+  "code": "CONCURRENT_UPDATE",
+  "message": "다른 검토자가 방금 이 항목을 확정했습니다.",
+  "reviewQueueItemId": 902
+}
+```
+
+측정 7(동시성 테스트)에서 두 코드의 발생 비율을 기록한다 — `CONCURRENT_UPDATE` 가 0 이면 경합 창이 재현되지 않은 것이므로 **테스트가 무의미**하다는 신호다.
 
 ---
 
@@ -392,4 +413,5 @@ X-User-Role: ADMIN
 | v0.3 | 2026-07-30 | AI 리뷰 2차 반영 — `GET /api/error-groups` 에 `sort` 파라미터 추가 (기간 필터 시 filesort 회피). `GET /api/stats` 의 `audit` 에 `eligibleTotal`·`actualSampleRate`·`configuredSampleRate` 추가 (감사율 검증, D-012) | #1 |
 | v0.4 | 2026-07-30 | AI 리뷰 3차 반영 — `GET /api/stats` 의 `cacheHitRate` 를 `aiCallSavings` 밖으로 분리해 `cache` 객체로 독립 (캐시 hit rate ≠ AI 절감률, D-014) | #1 |
 | v0.5 | 2026-07-30 | AI 리뷰 4차 반영 — `GET /api/stats` 에 `classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 추가 (판정 롤백으로 방치된 그룹 탐지, D-017). §4 blind 한계를 결정적 역산/확률적 추론으로 구분 (D-019) | #1 |
+| v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — `PATCH /api/review-queue/{id}` 의 409 를 `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 경합) 2종 `code` 로 분리. 상태 검사와 `@Version` 이 각각 다른 창을 막는다는 근거 명시 (D-021) | #1 |
 <!-- 변경 시 한 줄씩 추가 -->

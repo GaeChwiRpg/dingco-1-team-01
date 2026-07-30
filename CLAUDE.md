@@ -57,14 +57,16 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | --- | --- | --- |
 | `GET /api/review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
 | fingerprint 로 그룹 조회 (수신 경로, 최고 빈도) | `fingerprint` UNIQUE | `const` / `eq_ref` |
-| `GET /api/error-groups?sort=occurrenceCount` — status + category 필터 | `(status, current_category, occurrence_count DESC)` | `ref`, 정렬까지 커버 |
+| `GET /api/error-groups?sort=occurrenceCount` — status + category 필터 | `(status, current_category, occurrence_count DESC)` ⚠️ | `ref`, 정렬까지 커버. **단 `occurrence_count` 는 수신 요청마다 UPDATE 되므로 이 인덱스는 최고 QPS 경로에 쓰기 비용을 얹는다** (D-018) |
 | `GET /api/error-groups?sort=lastSeenAt` — status + 기간 범위 (category **없음**) | `(status, last_seen_at)` | `range`, 정렬까지 커버 |
 | 위 + `category` 필터 동시 사용 | `(status, current_category, last_seen_at)` **후보** | category 는 등치라 선행 컬럼에 두면 뒤의 범위+정렬까지 커버 가능. 단 인덱스가 3개로 늘어 쓰기 비용 증가 → **측정 5 로 이득 확인 후 확정** (D-018) |
 | 기간 범위 + `occurrence_count DESC` 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → filesort. **기간 필터를 쓰면 `sort=lastSeenAt` 을 택한다** (D-013) |
 | 그룹별 최신 분류 결과 | `(error_group_id, created_at DESC)` | `ref` |
 | 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |
 
-> 4행(커버 불가)은 결함이 아니라 **B-tree 의 구조적 한계**다. 측정 5번(인덱스 EXPLAIN 비교)에서 이 예상이 맞는지 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
+> 커버 불가 행은 결함이 아니라 **B-tree 의 구조적 한계**다. 측정 5번에서 이 예상이 맞는지 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
+>
+> ⚠️ **인덱스 컬럼의 갱신 빈도를 반드시 함께 본다 (D-018).** `error_group` 의 컬럼별 갱신 빈도는 극단적으로 다르다 — `occurrence_count` 는 **수신 요청마다**, `status`·`current_*` 는 **그룹당 1~2회**뿐이다. `occurrence_count` 를 포함한 인덱스는 조회를 빠르게 하는 대신 **시스템에서 가장 빈번한 쓰기 경로를 느리게 만든다.** 따라서 측정 5는 조회 `EXPLAIN` 만이 아니라 **인덱스 유무별 `POST /api/errors` 쓰기 지연**도 함께 측정해야 판단 근거가 된다. 조회 이득만 보고 인덱스를 추가하는 것이 이 프로젝트에서 가장 하기 쉬운 실수다.
 > 검토 큐에 `category` 필터가 없는 이유는 blind 규칙 — 아래 참조.
 
 ## 6 공통 필수 기능 매핑
@@ -107,7 +109,7 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | --- | --- | --- |
 | `occurrence_count` 증가 (최고 빈도) | **JPQL 원자적 UPDATE** (`SET occurrence_count = occurrence_count + 1`) | 락 없이 DB 원자성 사용. 여기에 비관적 락 걸면 수신 경로 전체가 직렬화됨 |
 | 신규 그룹 동시 생성 | **`fingerprint` UNIQUE + 트랜잭션 밖 재시도** (D-016) | 선-조회 후-삽입만으로는 못 막는다. 락 아님 |
-| 큐 항목 중복 확정 | **낙관적 락 `@Version`** → 충돌 시 409 | 두 검토자가 같은 항목을 집는 빈도가 낮음. 비관적 락은 과잉 |
+| 큐 항목 중복 확정 | **상태 검사 + 낙관적 락 `@Version`** → 409 (`code` 2종) | 두 검토자가 같은 항목을 집는 빈도가 낮아 비관적 락은 과잉. **둘 다 필요하다** — 상태 검사만으로는 동시에 `PENDING` 을 읽은 경합(check-then-act)을 못 막고, `@Version` 만으로는 시간 차 요청을 경합으로 오보한다 (D-021) |
 
 **UNIQUE 충돌 재시도의 트랜잭션 경계 (D-016) — 구현 시 반드시 지킬 것**
 
