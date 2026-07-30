@@ -1,4 +1,4 @@
-# API-CONTRACT v0.3
+# API-CONTRACT v0.4
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -334,8 +334,12 @@ X-User-Role: ADMIN
   "aiCallSavings": {
     "eventsReceived": 1284,
     "aiCallsMade": 38,
-    "savingsRate": 0.970,
-    "cacheHitRate": 0.968
+    "savingsRate": 0.970
+  },
+  "cache": {
+    "hitRate": 0.942,
+    "hits": 1198,
+    "misses": 74
   },
   "audit": {
     "eligibleTotal": 29,
@@ -354,6 +358,8 @@ X-User-Role: ADMIN
 ```
 
 > `audit.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". 여기 수치는 형식 예시이며, 확정값은 본인 실측으로만 기록한다 (`CLAUDE.md` AI 검증 규칙).
+>
+> `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 그룹핑이다.** 캐시 miss 여도 DB 에 그룹이 있으면 AI 를 부르지 않으므로 `hitRate < savingsRate` 가 정상이다. 한 객체 안에 두면 같은 현상의 두 표현으로 오독된다.
 >
 > `eligibleTotal` / `actualSampleRate` / `configuredSampleRate` 는 **감사 장치 자체를 감사**하기 위한 필드다 (D-012). 표본 삽입이 누락되면 `misclassificationRate` 의 분모가 조용히 줄어 측정 8 이 왜곡되므로, 설정값과 실측 비율의 괴리를 항상 확인할 수 있게 한다. (위 예시는 초기 표본이 적어 실측 비율이 설정값과 크게 벌어진 상태)
 
@@ -380,4 +386,5 @@ X-User-Role: ADMIN
 | v0.1 | 2026-07-30 | 에러 분류 검증 파이프라인 8 endpoint + Actuator 초기 정의. 템플릿의 ticket 도메인 예시 폐기 (D-001) | #1 |
 | v0.2 | 2026-07-30 | AI 리뷰 반영 — `GET /api/review-queue` 에서 `confidence`·`threshold` 응답 필드와 `category` 필터 제거 (blind 누설 차단, D-010). `GET /api/error-groups` 의 `category`·`confidence` 출처를 역정규화 컬럼으로 명시 (D-011) | #1 |
 | v0.3 | 2026-07-30 | AI 리뷰 2차 반영 — `GET /api/error-groups` 에 `sort` 파라미터 추가 (기간 필터 시 filesort 회피). `GET /api/stats` 의 `audit` 에 `eligibleTotal`·`actualSampleRate`·`configuredSampleRate` 추가 (감사율 검증, D-012) | #1 |
+| v0.4 | 2026-07-30 | AI 리뷰 3차 반영 — `GET /api/stats` 의 `cacheHitRate` 를 `aiCallSavings` 밖으로 분리해 `cache` 객체로 독립 (캐시 hit rate ≠ AI 절감률, D-014) | #1 |
 <!-- 변경 시 한 줄씩 추가 -->

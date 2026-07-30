@@ -44,7 +44,7 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
                       EXTERNAL_API, NULL_REFERENCE, OUT_OF_MEMORY, SERIALIZATION, CONFIG
 ```
 
-**불변 규칙 3개**
+**불변 규칙 4개**
 
 1. 상태(`status`)는 `ErrorGroup` 이 소유한다. `ErrorEvent` 는 상태를 갖지 않는다 (같은 에러 1000번 = 판정 1번). — D-004
 2. `final_category` 기록 시 `category` 를 덮어쓰지 않는다. 덮어쓰면 오분류 증거가 사라진다.
@@ -73,7 +73,7 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | 권한·역할 | 3역할 분리 — 전송 주체 ≠ 판정 주체 ≠ 정책 결정 주체 | `config/SecurityConfig.java` |
 | 핵심 트랜잭션 | ① 그룹 upsert + 로그 삽입 + 카운트 증가<br>② 분류 결과 저장 + 그룹 전이 + 조건부 큐 삽입 (**감사 표본 삽입 포함** — D-012)<br>③ 큐 확정 + `final_category` 기록 + 그룹 전이 | ① `service/ErrorIngestService.ingest`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` |
 | 검색·필터 | 큐 복합 필터 + 페이징 | `domain/repository/ReviewQueueRepository.search` |
-| 캐시 | ① `fingerprint → 분류 결과` (hit rate = AI 비용 절감률)<br>② 적체·감사 요약 통계 (TTL 10s) | ① `service/ClassificationCache`<br>② `service/StatsService.summary` |
+| 캐시 | ① `fingerprint → 그룹 요약` (수신 경로 DB 조회 제거 — 시스템 최고 QPS)<br>② 적체·감사 요약 통계 (TTL 10s) | ① `service/ClassificationCache`<br>② `service/StatsService.summary` |
 | 비동기·이벤트 | `ErrorGroupCreatedEvent` → `@Async` 워커 + `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` |
 | AI 보조 | 분류 + **임계값 검증** + **감사 샘플링** | `service/AiClassificationService`, `service/PolicyService`, `service/AuditSamplingPolicy` |
 
@@ -113,7 +113,10 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 ### 캐시 전략
 
 - 변경 빈도 << 조회 빈도 인 지점만
-- `classification:byFingerprint` — 분류 확정 시 put, 수신 경로에서 조회. **hit rate 를 메트릭으로 노출** (곧 AI 비용 절감률)
+- `classification:byFingerprint` — 수신 경로에서 조회. 값 구조는 **계약 C** 참조
+  - **캐시가 줄이는 것은 DB 조회이지 AI 호출이 아니다** (D-014). 캐시 miss 여도 DB 에 그룹이 있으면 AI 를 부르지 않는다 — AI 절감을 만드는 건 그룹핑이다
+  - 따라서 `hit rate` 와 `AI 절감률` 은 **별개 메트릭으로 각각 노출**한다. hit rate 는 항상 절감률 이하다
+  - 정당화 근거: fingerprint→그룹 매핑은 그룹 생성 후 거의 불변이고 수신 요청마다 조회된다 = 변경 빈도 << 조회 빈도 조건에 가장 잘 맞는 지점
 - `stats:summary` — TTL 10s + 큐 삽입/확정 시 `@CacheEvict(allEntries=true)`. Actuator gauge 가 매 스크랩마다 전수 count 치는 것 방지
 
 ### AI 호출 규칙
@@ -133,8 +136,8 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 
 ## 모듈 간 계약 (병렬 작업 기준선)
 
-작업 패키지 P1(수신·그룹핑) / P2(분류·검증) / P3(검토·관측)가 병렬로 가려면 **경계 2개만** 먼저 고정하면 된다.
-이 두 계약을 바꾸는 변경은 세 패키지 담당자 합의 + `DECISIONS.md` 항목 필요.
+작업 패키지 P1(수신·그룹핑) / P2(분류·검증) / P3(검토·관측)가 병렬로 가려면 **경계 3개만** 먼저 고정하면 된다.
+이 계약을 바꾸는 변경은 세 패키지 담당자 합의 + `DECISIONS.md` 항목 필요.
 
 **계약 A — `ErrorGroupCreatedEvent` (P1 → P2)**
 
@@ -151,6 +154,19 @@ error_group_id, classification_result_id, reason, status=PENDING, created_at, ve
   └ reason 별 보장: LOW_CONFIDENCE / AUDIT_SAMPLE 은 classification_result_id 반드시 존재
                     CLASSIFY_FAILED 는 classification_result.category = null
   └ P3 는 reason 을 조회 응답에 노출하지 않는다 (blind, D-010)
+```
+
+**계약 C — `classification:byFingerprint` 캐시 값 구조 (P1 읽기 ↔ P2 쓰기)**
+
+```text
+key   : fingerprint (String)
+value : { groupId, status, currentCategory, currentConfidence }
+  └ groupId 는 필수 — hit 시 errors INSERT + occurrence_count++ 에 필요
+  └ currentCategory / currentConfidence 는 미판정(status=NEW) 이면 null
+
+put   : ① 그룹 생성 트랜잭션 커밋 후 (status=NEW) — 분류 대기 중 폭주 유입 흡수
+        ② 판정 확정 트랜잭션(②③) 커밋 후 재 put — status / current_* 갱신
+evict : 없음 (그룹은 삭제되지 않음). TTL 은 메모리 상한 목적으로만 사용
 ```
 
 ## 작업 경계

@@ -125,7 +125,9 @@ sequenceDiagram
 **설계 의도**
 
 1. `POST /api/errors` 응답은 AI 호출과 **완전히 디커플링**된다. AI가 수 초 걸려도 클라이언트 응답시간에 영향이 없다.
-2. **AI 호출은 신규 fingerprint에만 발생한다.** 이 구간이 곧 캐시의 존재 이유이고, hit rate가 그대로 AI 비용 절감률이다.
+2. **AI 호출은 신규 그룹에만 발생한다.** AI 절감을 만드는 것은 **그룹핑**이지 캐시가 아니다 — 캐시가 miss 여도 DB 에 그룹이 있으면 AI 를 부르지 않는다. 캐시가 줄이는 것은 **수신 경로의 DB 조회**다 (시스템 최고 QPS 지점). 두 지표를 분리해서 측정한다 (D-014):
+   - AI 절감률 = `1 - (AI 호출 수 / 투입 건수)` ≈ `1 - (신규 그룹 수 / 투입 건수)`
+   - 캐시 hit rate = `hit / (hit + miss)` — **항상 절감률 이하**. TTL 만료·재기동 시 miss 지만 AI 호출은 없다
 3. 같은 fingerprint 동시 첫 유입은 실제 race condition이다. `fingerprint` unique 제약을 신뢰 근거로 삼고, 위반 예외를 재조회로 흡수한다 (선-조회 후-삽입만으로는 못 막는다).
 
 ### 4-2. AI 분류 → 검증 → 판정 (핵심 구간)
@@ -200,8 +202,8 @@ stateDiagram-v2
 | 사용자 규모 | 에러 수신 50 req/s, 동시 검토자 5명 | 부하 도구 실측 (아래) |
 | `POST /api/errors` 응답시간 | p95 < 100ms (AI 호출 비동기 분리 전제) | `hey -n 2000 -c 50` **본인 실측만** |
 | `GET /api/review-queue` 응답시간 | p95 < 200ms (10만 건 적체 기준) | 인덱스 전/후 `EXPLAIN` + `hey` 비교 |
-| **AI 호출 절감률** | 반복 포함 1000건 투입 시 AI 호출 ≤ 50회 (**95%+ 절감**) | 호출 카운터 메트릭 실측 |
-| **분류 캐시 hit rate** | ≥ 90% (반복 유입 시나리오) | Actuator 캐시 메트릭 |
+| **AI 호출 절감률** (그룹핑 효과) | 반복 포함 1000건 투입 시 AI 호출 ≤ 50회 (**95%+ 절감**) | 호출 카운터 메트릭 실측 |
+| **분류 캐시 hit rate** (DB 조회 절감) | ≥ 90% (반복 유입 시나리오). **절감률과 다른 지표** — 캐시 miss 여도 그룹이 있으면 AI 는 안 부른다 (D-014) | Actuator 캐시 메트릭 |
 | 데이터 정합성 | 분류 결과 저장 ↔ 큐 삽입 all-or-nothing. 동시 확정 시 last-write-wins 금지. **동시 첫 유입 시 중복 그룹 0건** | 롤백 통합 테스트 + 동시 `PATCH` 테스트 + 동시 `POST` 테스트 |
 | AI 신뢰성 | 신뢰도 0.8 이상 구간 분류 일치율 ≥ 90% | 정답 레이블 50건 대조 |
 | **감사 유효성** | 자동 승인 건의 오분류율을 수치로 산출 가능. 단 앵커링 편향으로 **하한값** | 감사 표본 `category` vs `final_category` 대조 |
@@ -217,7 +219,7 @@ stateDiagram-v2
 | 권한·역할 | `ROLE_INGEST` / `ROLE_REVIEWER` / `ROLE_ADMIN` 3역할 + `@PreAuthorize`. 전송 주체 · 판정 주체 · 정책 결정 주체 분리 | (D-002에서 확정) |
 | 핵심 트랜잭션 | ① `ErrorIngestService.ingest` — 그룹 upsert + 발생 로그 삽입 + 카운트 증가<br>② `ClassificationService.verifyAndPersist` — 정책 조회 + 분류 결과 저장 + 그룹 상태 전이 + 조건부 큐 삽입<br>③ `ReviewService.confirm` — 큐 락 조회 + 확정 + 최종 카테고리 기록 + 그룹 전이 | (D-002에서 확정) |
 | 검색·필터 | `ReviewQueueRepository.search` — **status / 기간** 필터 + `(status, created_at)` 인덱스 (사유·신뢰도·카테고리 필터는 blind 규칙상 제공 안 함, D-010). `error_group`은 status / category 필터 + `occurrence_count` 또는 `last_seen_at` 정렬 | (D-002에서 확정) |
-| 캐시 | ① `fingerprint → 분류 결과` 캐시 — **hit rate가 곧 AI 비용 절감률**, 확정 시 갱신<br>② 큐 적체·감사 요약 통계 `@Cacheable` (TTL 10s) + `@CacheEvict(allEntries=true)`. Actuator gauge가 매 스크랩마다 전수 count 치는 것 방지 | (D-002에서 확정) |
+| 캐시 | ① `fingerprint → 그룹 요약` 캐시 — **시스템 최고 QPS 지점(수신 경로)의 DB 조회 제거**. 그룹 생성 시 put, 판정 확정 시 갱신. AI 절감은 그룹핑의 효과이고 캐시와는 별개 지표 (D-014)<br>② 큐 적체·감사 요약 통계 `@Cacheable` (TTL 10s) + `@CacheEvict(allEntries=true)`. Actuator gauge가 매 스크랩마다 전수 count 치는 것 방지 | (D-002에서 확정) |
 | 비동기·이벤트 | `ErrorGroupCreatedEvent` (Spring Events) → `@Async` AI 분류 워커 + `@Retryable(maxAttempts=3)` + `@Recover`로 큐 자동 삽입 | (D-002에서 확정) |
 | AI 보조 | `AiClassificationService` — 에러 → 카테고리 + 신뢰도<br>**+ 카테고리별 임계값 검증 계층**<br>**+ 자동 승인 건 무작위 감사 샘플링** (본 프로젝트의 차별점) | (D-002에서 확정) |
 
@@ -286,11 +288,12 @@ stateDiagram-v2
 | 3 | 트랜잭션 롤백 검증 | 큐 삽입 강제 실패 주입 → `classification_result` 롤백 여부 확인 | 통합 테스트 |
 | 4 | 재시도 동작 | AI API 오류 주입 → 재시도 횟수·간격 로그 + 최종 큐 삽입 확인 | 구조화 로그 |
 | 5 | 인덱스 효과 | `(status, created_at)` 인덱스 전/후 검토 큐 조회 `EXPLAIN` 비교 | `evidence/` |
-| 6 | **AI 호출 절감률** | 반복 포함 1000건 투입 → 실제 AI 호출 횟수 + 생성된 그룹 수. 절감률 = 1 - (호출/투입) | `evidence/` |
+| 6 | **AI 호출 절감률** | 반복 포함 1000건 투입 → 실제 AI 호출 횟수 + 생성된 그룹 수. **절감률 = 1 - (AI 호출/투입)** 으로만 정의한다. 캐시 hit rate 로 대체하지 않는다 (D-014) | `evidence/` |
 | 7 | **동시 유입 중복 방지** | 같은 fingerprint 20 스레드 동시 `POST` → 그룹 1개 / AI 호출 1회 확인 | 동시성 테스트 |
 | 8 | **자동 승인 건 오분류율** | 감사 표본에서 `category ≠ final_category` 비율. 신뢰도 구간별로 분해. **앵커링 편향으로 하한값임을 명시** (D-010) | `evidence/` |
-| 10 | **blind 무결성** | 검토 큐 응답 필드 전수를 놓고 감사 표본 역산이 가능한지 점검. 가능하면 필드 제거 | 리뷰 메모 |
 | 9 | **카테고리별 임계값 효과** | 동일 50건을 ⓐ전역 단일값 0.7(D-006 이전 초안 = 대조군) vs ⓑ카테고리별 차등으로 각각 처리 → 격리 건수·오분류 통과 건수 비교 | `evidence/` |
+| 10 | **blind 무결성** | 검토 큐 응답 필드 전수를 놓고 감사 표본 역산이 가능한지 점검. 가능하면 필드 제거 | 리뷰 메모 |
+| 11 | **캐시 hit rate** | 측정 6과 **별개 지표**. 같은 1000건 투입에서 hit/miss 카운터 기록 후 절감률과의 격차를 확인 — 격차 = "캐시 miss 지만 그룹은 존재" 비율 (D-014) | `evidence/` |
 
 ### 이 프로젝트의 성공 기준 두 줄
 
