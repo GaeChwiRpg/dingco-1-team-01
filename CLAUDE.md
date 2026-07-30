@@ -22,8 +22,10 @@ ErrorEvent(id, error_group_id, raw_message, stack_trace, source, occurred_at, cr
   └ 테이블명은 errors. append-only 발생 로그. 상태 없음.
 
 ErrorGroup(id, fingerprint UNIQUE, sample_message, status, occurrence_count,
+           current_category, current_confidence,
            first_seen_at, last_seen_at, created_at, updated_at)
   └ 분류의 단위. status: NEW | CLASSIFIED | UNCLASSIFIED
+  └ current_* 는 classification_result 의 역정규화 사본 (D-011). 목록 조회 조인 제거용
 
 ClassificationResult(id, error_group_id, category, confidence, model, raw_response,
                      verdict, final_category, attempt_count, created_at)
@@ -47,16 +49,21 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 1. 상태(`status`)는 `ErrorGroup` 이 소유한다. `ErrorEvent` 는 상태를 갖지 않는다 (같은 에러 1000번 = 판정 1번). — D-004
 2. `final_category` 기록 시 `category` 를 덮어쓰지 않는다. 덮어쓰면 오분류 증거가 사라진다.
 3. `UNCLASSIFIED → CLASSIFIED` 전이는 **사람만** 일으킨다. AI 에게 이 전이 권한 없음.
+4. `ErrorGroup.current_*` 는 역정규화 사본이므로 **판정이 확정되는 트랜잭션(②③) 안에서만** 갱신한다. 다른 경로에서 손대면 원본과 어긋난다. — D-011
 
 ### 핵심 쿼리 + 인덱스
 
-| 쿼리 | 인덱스 |
-| --- | --- |
-| `GET /api/review-queue` — status / category / 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` |
-| fingerprint 로 그룹 조회 (수신 경로, 최고 빈도) | `fingerprint` UNIQUE |
-| `GET /api/error-groups` — `occurrence_count DESC` | `(status, occurrence_count DESC)` |
-| 그룹별 최신 분류 결과 | `(error_group_id, created_at DESC)` |
-| 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` |
+| 쿼리 | 인덱스 | 예상 EXPLAIN |
+| --- | --- | --- |
+| `GET /api/review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
+| fingerprint 로 그룹 조회 (수신 경로, 최고 빈도) | `fingerprint` UNIQUE | `const` / `eq_ref` |
+| `GET /api/error-groups` — status + category 필터 + `occurrence_count DESC` | `(status, current_category, occurrence_count DESC)` | `ref`, 정렬까지 커버 |
+| 위 + `last_seen_at` 범위 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → 인덱스로 후보 축소 후 `Using where` |
+| 그룹별 최신 분류 결과 | `(error_group_id, created_at DESC)` | `ref` |
+| 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |
+
+> 4행(커버 불가)은 결함이 아니라 **B-tree 의 구조적 한계**다. 측정 5번(인덱스 EXPLAIN 비교)에서 이 예상이 맞는지 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
+> 검토 큐에 `category` 필터가 없는 이유는 blind 규칙 — 아래 참조.
 
 ## 6 공통 필수 기능 매핑
 
@@ -116,8 +123,11 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 
 ### 감사 샘플링 blind 규칙
 
-- `GET /api/review-queue` 응답에 **`reason` 을 포함하지 않는다**. 검토자가 감사 표본임을 알면 결과가 낙관적으로 편향됨
-- `reason` 노출은 `GET /api/stats` (ADMIN) 에서만
+- `GET /api/review-queue` 는 **`reason` · `confidence` · `threshold` 를 파라미터로도 응답으로도 제공하지 않는다**. `category` 필터도 없다 — D-010
+- 이유: `AUDIT_SAMPLE` 은 **정의상 `confidence >= threshold`** 다. 두 값을 주면 뺄셈 한 번으로 감사 표본이 100% 식별되므로 `reason` 만 가려도 소용없다
+- `suggestedCategory` 는 남긴다 (가리면 `CLASSIFY_FAILED` 가 구별되고 검토 생산성도 떨어짐). 대신 **앵커링 편향이 남으므로 측정된 오분류율은 하한값**으로 해석한다
+- 노출은 `GET /api/stats` (ADMIN) 에서만
+- 새 응답 필드를 추가할 때는 **"이 값으로 감사 표본을 역산할 수 있나"** 를 먼저 확인한다
 
 ## 작업 경계
 

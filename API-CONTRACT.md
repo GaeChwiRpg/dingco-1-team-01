@@ -1,4 +1,4 @@
-# API-CONTRACT v0.1
+# API-CONTRACT v0.2
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -86,10 +86,12 @@ X-Api-Key: sdk-live-a1b2c3
 | 이름 | 기본값 | 설명 |
 | --- | --- | --- |
 | `status` | (전체) | `NEW \| CLASSIFIED \| UNCLASSIFIED` |
-| `category` | (전체) | 확정된 카테고리 기준 |
+| `category` | (전체) | `error_group.current_category` 기준 |
 | `from` / `to` | (전체) | `last_seen_at` 범위 (ISO-8601) |
 | `page` | 0 | |
 | `size` | 20 | 최대 100 |
+
+> `category` / `confidence` 는 `classification_result` 를 조인하지 않고 **`error_group` 에 역정규화된 `current_category` / `current_confidence` 를 읽는다** (D-011). 목록 조회에서 그룹당 조인이 발생하는 것을 막고, `(status, current_category, occurrence_count DESC)` 인덱스로 필터+정렬을 함께 커버하기 위함.
 
 **응답**: `200 OK`
 
@@ -160,11 +162,14 @@ X-Api-Key: sdk-live-a1b2c3
 | 이름 | 기본값 | 설명 |
 | --- | --- | --- |
 | `status` | `PENDING` | `PENDING \| RESOLVED` |
-| `category` | (전체) | AI 제안 카테고리 |
 | `from` / `to` | (전체) | `created_at` 범위 |
 | `page` / `size` | 0 / 20 | |
 
-> ⚠️ **`reason` 은 요청 파라미터로도 응답 필드로도 제공하지 않는다.** 검토자가 감사 표본(`AUDIT_SAMPLE`)임을 알면 평소보다 신중히 봐서 감사 결과가 낙관적으로 편향된다 (`CLAUDE.md` blind 규칙, D-005). 사유별 조회는 `GET /api/stats` (ADMIN) 에서만.
+> ⚠️ **blind 보증 — `reason` · `confidence` · `threshold` 는 요청 파라미터로도 응답 필드로도 제공하지 않는다.** (D-005, D-010)
+>
+> `reason` 만 가리는 것으로는 부족하다. 격리 사유는 3종뿐이고 `AUDIT_SAMPLE` 은 **정의상 `confidence >= threshold`** 이므로, 두 값을 함께 주면 검토자가 뺄셈 한 번으로 감사 표본을 100% 식별한다. `category` 필터 역시 AI 제안을 노출하므로 제거했다.
+>
+> 사유별·신뢰도별 조회는 `GET /api/stats` (ADMIN) 에서만.
 
 **응답**: `200 OK`
 
@@ -177,8 +182,6 @@ X-Api-Key: sdk-live-a1b2c3
       "sampleMessage": "Could not open JDBC Connection for transaction",
       "occurrenceCount": 1284,
       "suggestedCategory": "DB_CONNECTION",
-      "confidence": 0.62,
-      "threshold": 0.85,
       "status": "PENDING",
       "createdAt": "2026-07-30T10:12:05Z"
     }
@@ -189,8 +192,9 @@ X-Api-Key: sdk-live-a1b2c3
 }
 ```
 
-- `suggestedCategory` / `confidence` / `threshold` 를 함께 주는 이유: 검토자가 "AI 가 왜 격리됐는지" 를 판단 근거로 쓴다
-- `CLASSIFY_FAILED` 항목은 `suggestedCategory: null`, `confidence: null`
+- `suggestedCategory` 는 남긴다 — 이것까지 가리면 `CLASSIFY_FAILED`(제안 없음)와 나머지가 구별되고, 검토 생산성도 크게 떨어진다
+- `CLASSIFY_FAILED` 항목은 `suggestedCategory: null`
+- **알려진 한계 (D-010)**: AI 제안을 보여주므로 검토자에게 앵커링 편향이 남는다. 따라서 `GET /api/stats` 의 `audit.misclassificationRate` 는 **하한값**이며 실제 오분류율은 이보다 높다. 사람이 먼저 분류하고 그 다음 AI 제안을 공개하는 2단계 방식은 Phase 3 (항목 I)
 
 **오류**: 403 (`ROLE_INGEST` 접근)
 
@@ -360,5 +364,6 @@ X-User-Role: ADMIN
 
 | 버전 | 일자 | 변경 | PR |
 | --- | --- | --- | --- |
-| v0.1 | 2026-07-30 | 에러 분류 검증 파이프라인 8 endpoint + Actuator 초기 정의. 템플릿의 ticket 도메인 예시 폐기 (D-001) | (PR 미생성) |
+| v0.1 | 2026-07-30 | 에러 분류 검증 파이프라인 8 endpoint + Actuator 초기 정의. 템플릿의 ticket 도메인 예시 폐기 (D-001) | #1 |
+| v0.2 | 2026-07-30 | AI 리뷰 반영 — `GET /api/review-queue` 에서 `confidence`·`threshold` 응답 필드와 `category` 필터 제거 (blind 누설 차단, D-010). `GET /api/error-groups` 의 `category`·`confidence` 출처를 역정규화 컬럼으로 명시 (D-011) | #1 |
 <!-- 변경 시 한 줄씩 추가 -->

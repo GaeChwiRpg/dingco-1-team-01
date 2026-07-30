@@ -144,4 +144,39 @@
 - **영향**: `CLAUDE.md` 작업 경계 2줄
 - **재평가**: `PRD.md` 가 구현과 어긋난 채 방치되는 사례가 관측되면 기획 문서에도 동반 변경 의무를 부과
 
-<!-- 다음 결정 추가 시 D-010 부터 -->
+### D-010. blind 누설 차단 — confidence·threshold·category 필터 제거, 앵커링 한계는 수용
+
+- **일자**: 2026-07-30
+- **상태**: 채택
+- **배경**: PR #1 AI 코드리뷰가 D-005 blind 규칙의 구멍을 지적했다. `GET /api/review-queue` 에서 `reason` 은 가렸지만 `confidence` 와 `threshold` 를 함께 반환하고 있었다. **격리 사유는 3종뿐이고 `AUDIT_SAMPLE` 은 정의상 `confidence >= threshold`** 이므로, 검토자는 두 값을 비교하는 것만으로 감사 표본을 100% 식별한다. `reason` 을 가린 것이 무의미했다.
+  추가로, 리뷰가 지적하지 않은 더 깊은 문제도 함께 발견했다 — AI 제안 카테고리를 보여주는 것 자체가 **앵커링 편향**을 만들어 우리가 수집하는 정답 레이블을 오염시킨다. 감사의 목적은 *독립적인* 사람 판단인데 그 전제가 깨진다.
+- **선택지**:
+  1. `confidence` / `threshold` 만 제거 — 식별 누설은 닫히지만 앵커링은 남음. 저비용
+  2. `suggestedCategory` 까지 제거해 완전 blind — 앵커링 제거. 단 `CLASSIFY_FAILED`(제안 없음)가 역으로 구별되고, 검토자가 매번 원문만 보고 분류해야 해 생산성이 크게 떨어짐
+  3. 2단계 공개 — 사람이 먼저 분류 제출 → 그 후 AI 제안 공개. 이론상 최선이나 5일 안에 UI/API 2단계는 무리
+- **결정**: **1번 + 한계 명시.** `confidence`·`threshold` 응답 필드와 `category` 요청 필터를 제거한다 (`category` 필터도 AI 제안을 노출하므로). `suggestedCategory` 는 남기고, 대신 **측정된 오분류율을 하한값(lower bound)으로 해석**한다고 문서에 못박는다 — 실제 오분류율은 이보다 높다. 3번은 Phase 3 항목 I 로 이월.
+  "편향을 없앴다"보다 **"편향의 방향과 성격을 알고 측정했다"** 가 5일 범위에서 더 정직하고, 면접 답변으로도 낫다.
+- **영향**:
+  - `API-CONTRACT.md` v0.1 → v0.2 — §4 파라미터·응답 필드, §4 한계 주석
+  - `CLAUDE.md` blind 규칙 확장 + **"새 응답 필드 추가 시 감사 표본 역산 가능성을 먼저 확인"** 규칙 신설
+  - `PRD.md` US-8(카테고리·사유 필터 제거), §4-4 흐름, §5 비기능(blind 무결성), §7 리스크(앵커링), §8 측정 8·10, 성공 기준 3번
+  - 부수 효과: 검토 큐의 `category` 필터가 사라져 `classification_result` 조인이 불필요해지고 `(status, created_at)` 인덱스가 정확해짐 (D-011 참조)
+- **재평가**: 감사 표본에서 `matched=true` 비율이 비정상적으로 높으면(예: 95%+) 앵커링이 심한 신호. 그때 Phase 3 항목 I 를 앞당긴다.
+
+### D-011. ErrorGroup 에 current_category / current_confidence 역정규화
+
+- **일자**: 2026-07-30
+- **상태**: 채택
+- **배경**: PR #1 AI 코드리뷰가 `CLAUDE.md` 인덱스 표와 실제 필터 컬럼의 불일치를 지적했다. 확인해보니 두 곳이 어긋나 있었다.
+  ① `GET /api/error-groups` 는 `category` 필터와 `last_seen_at` 범위를 받고 응답에 `category`·`confidence` 를 포함하는데, **`error_group` 테이블에는 그 컬럼이 없다** (`classification_result` 소유). 조인이 필요한데 명시하지 않았다.
+  ② `(status, occurrence_count DESC)` 인덱스는 `last_seen_at` 범위를 커버하지 못한다.
+- **선택지**:
+  1. 조인 유지 + `classification_result` 에 인덱스 추가 — 정규화 유지. 목록 조회마다 그룹당 조인, 필터+정렬 인덱스 커버가 어려움
+  2. **`error_group` 에 `current_category` / `current_confidence` 역정규화** — 조인 제거 + `(status, current_category, occurrence_count DESC)` 로 필터·정렬 동시 커버. 대가는 갱신 일관성 책임
+  3. 카테고리 필터 기능 삭제 — 요구사항 후퇴
+- **결정**: 2번. `error_group` 은 **분류의 단위**이므로 현재 카테고리를 자기 속성으로 갖는 것이 도메인상 자연스럽다. 일관성은 규칙으로 묶는다 — **판정이 확정되는 트랜잭션(②③) 안에서만 갱신** (`CLAUDE.md` 불변 규칙 4번). 원본(`classification_result`)은 그대로 이력으로 남으므로 감사 대조는 영향받지 않는다.
+  `last_seen_at` 범위 + `occurrence_count` 정렬 동시 사용은 **B-tree 로 커버 불가**임을 인덱스 표에 명시하고, 측정 5번에서 EXPLAIN 으로 확인한다. 숨기지 않고 예상 계획을 미리 적어두는 쪽을 택했다.
+- **영향**: `CLAUDE.md` 도메인 모델 + 불변 규칙 4번 + 인덱스 표(예상 EXPLAIN 열 추가), `PRD.md` §4-0, `API-CONTRACT.md` §2 출처 주석
+- **재평가**: 역정규화 컬럼과 원본이 어긋난 사례가 1건이라도 관측되면 조인 방식(1번)으로 되돌린다. 검증은 정합성 확인 쿼리로 주기 실행.
+
+<!-- 다음 결정 추가 시 D-012 부터 -->

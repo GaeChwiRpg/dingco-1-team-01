@@ -47,7 +47,8 @@ AI 결과를 무조건 신뢰하는 파이프라인과의 차이는 두 가지�
 
 ### 검토
 
-- **US-8**: (검토자)로서 (검토 큐를 상태 / 격리 사유 / 카테고리 / 기간으로 복합 필터)해서 (오래된 순으로 페이징 조회)할 수 있다. — [검색·필터]
+- **US-8**: (검토자)로서 (검토 큐를 상태 / 기간으로 필터)해서 (오래된 순으로 페이징 조회)하고, (에러 그룹은 상태 / 카테고리로 필터 + 발생 횟수 순 정렬)로 조회할 수 있다. — [검색·필터]
+  - 검토 큐에서 **격리 사유·신뢰도·카테고리로는 필터할 수 없다** — 감사 표본 역산이 가능해지므로 (D-010)
 - **US-9**: (검토자)로서 (격리된 그룹의 최종 카테고리를 확정)해서 (큐 항목 `RESOLVED` + 분류 결과 갱신 + 그룹 상태 전이를 원자적으로) 처리할 수 있다. — [핵심 트랜잭션]
 - **US-10**: (검토자)로서 (다른 검토자가 이미 확정한 항목을 중복 확정)하려 할 때 (409 충돌 응답)을 받을 수 있다. — [핵심 트랜잭션 · 동시성]
 
@@ -66,8 +67,10 @@ errors            (id, error_group_id FK, raw_message, stack_trace, source, occu
                   └ append-only 발생 로그. 개별 레코드는 상태를 갖지 않는다.
 
 error_group       (id, fingerprint UNIQUE, sample_message, status, occurrence_count,
+                   current_category, current_confidence,
                    first_seen_at, last_seen_at, created_at, updated_at)
                   └ 분류의 단위. status: NEW | CLASSIFIED | UNCLASSIFIED
+                  └ current_* = classification_result 역정규화 사본. 목록 조회 조인 제거용 (D-011)
 
 classification_result (id, error_group_id FK, category, confidence, model, raw_response,
                        verdict, final_category, attempt_count, created_at)
@@ -175,9 +178,10 @@ stateDiagram-v2
 
 ```text
 검토자 로그인
-  → GET /api/review-queue?status=PENDING&category=DB_CONNECTION (오래된 순, 페이징)
-     · 격리 사유(reason)는 응답에 포함하지 않는다 → 감사 표본 blind 유지
-     · AI 제안 카테고리 + 신뢰도 + 그룹 발생 횟수(occurrence_count)를 함께 표시
+  → GET /api/review-queue?status=PENDING (오래된 순, 페이징)
+     · reason / confidence / threshold 를 응답에 포함하지 않는다 → 감사 표본 blind 유지
+       (AUDIT_SAMPLE 은 정의상 confidence >= threshold 이므로 두 값만 주면 역산 가능, D-010)
+     · AI 제안 카테고리 + 그룹 발생 횟수(occurrence_count)만 표시
   → PATCH /api/review-queue/{id} {"finalCategory": "DB_CONNECTION"}
   → [TX] 큐 항목 락 조회(중복 확정 방지) → status=RESOLVED
         + classification_result.final_category 기록
@@ -196,7 +200,8 @@ stateDiagram-v2
 | **분류 캐시 hit rate** | ≥ 90% (반복 유입 시나리오) | Actuator 캐시 메트릭 |
 | 데이터 정합성 | 분류 결과 저장 ↔ 큐 삽입 all-or-nothing. 동시 확정 시 last-write-wins 금지. **동시 첫 유입 시 중복 그룹 0건** | 롤백 통합 테스트 + 동시 `PATCH` 테스트 + 동시 `POST` 테스트 |
 | AI 신뢰성 | 신뢰도 0.8 이상 구간 분류 일치율 ≥ 90% | 정답 레이블 50건 대조 |
-| **감사 유효성** | 자동 승인 건의 실제 오분류율을 수치로 산출 가능 | 감사 표본 `category` vs `final_category` 대조 |
+| **감사 유효성** | 자동 승인 건의 오분류율을 수치로 산출 가능. 단 앵커링 편향으로 **하한값** | 감사 표본 `category` vs `final_category` 대조 |
+| **blind 무결성** | 검토 큐 응답만으로 감사 표본을 역산할 수 없어야 함 | 응답 필드 전수 점검 + 역산 가능성 리뷰 |
 | 보안 | 에러 수신은 API key, 검토/정책 endpoint는 역할 기반 인가. OpenAI API key는 환경변수만 (`.env` commit 금지) | 403 케이스 E2E |
 
 > `CLAUDE.md` AI 검증 규칙에 따라 **응답시간·throughput 수치는 AI 추정값을 evidence로 쓰지 않는다.** 위 목표치는 목표일 뿐이고, 확정 수치는 본인 `hey` / `wrk` 실측으로만 기록한다.
@@ -238,6 +243,7 @@ stateDiagram-v2
 | F | **검토 우선순위 스코어링** | `occurrence_count × 심각도 × (1 - confidence)` 복합 정렬 + 전용 인덱스 |
 | G | **실패 유형 구분 + 백오프 재분류** | 일시적(429/5xx) vs 영구적(파싱 실패) 구분, 스케줄러 재분류, circuit breaker |
 | H | **이중 모델 불일치 격리** | 두 모델 결과 상이 시 신뢰도와 무관하게 격리 (신뢰도 과신을 잡는 두 번째 축) |
+| I | **2단계 공개 검토** | 검토자가 먼저 독립적으로 분류 → 제출 후 AI 제안 공개. 앵커링 편향 제거로 오분류율을 하한값이 아닌 실측값으로 (D-010) |
 | — | 미분류 자동 재분류, 카테고리 체계 자동 학습, 멀티테넌시 | MVP 제외 |
 | — | 프론트엔드 화면 | 없음. E2E는 API 레벨(`tests/e2e/api.spec.ts`)로 검증 |
 
@@ -250,7 +256,8 @@ stateDiagram-v2
 | OpenAI API가 신뢰도 점수를 직접 주지 않음 | 프롬프트로 `{"category":..., "confidence":0.0~1.0}` JSON 강제. 파싱 실패 시 `confidence=0`으로 간주해 **무조건 격리** (fail-safe 방향) |
 | 트랜잭션 범위 설계 실수로 롤백이 안 먹음 | 롤백 시나리오 통합 테스트를 **Day 3 필수 체크포인트**로 지정 |
 | **감사 표본이 통계적으로 부족** — 자동 승인이 하루 100건이면 5건/일 | 감사 비율을 설정 가능하게 (ADMIN). Phase 2 측정은 정답 레이블 50건 실험 투입으로 표본 확보 |
-| **감사 blind 누설** — 검토자가 감사 건임을 알면 결과가 낙관적으로 편향 | 큐 조회 응답에서 `reason` 미노출. 감사 여부는 통계 API(ADMIN)에서만 확인 |
+| **감사 blind 누설** — 검토자가 감사 건임을 알면 결과가 낙관적으로 편향 | `reason` 뿐 아니라 `confidence`·`threshold`·`category` 필터까지 모두 미노출. `AUDIT_SAMPLE` 은 정의상 `confidence >= threshold` 라 두 값만으로 역산되기 때문 (D-010). 신규 응답 필드 추가 시 역산 가능성 점검을 의무화 |
+| **앵커링 편향** — AI 제안 카테고리를 보여주므로 검토자가 동의 쪽으로 기울고, 수집된 정답 레이블이 오염 | Phase 2 는 한계로 수용하고 **측정된 오분류율을 하한값으로 해석**. 사람이 먼저 분류 → 그 후 AI 제안 공개하는 2단계 방식은 Phase 3 (항목 I) |
 | AI 응답 지연이 수신 API 응답시간에 전파 | 이벤트 + `@Async` 분리. 수신 API는 그룹 upsert + INSERT만 하고 리턴 |
 | **AI API 장기 장애 시 전건 수동 처리 대상화** | Phase 2에서는 한계로 명시만 (재시도 3회 소진 → 큐). 백오프 재분류·circuit breaker는 Phase 3 (G) |
 | 신규 카테고리에 임계값 미등록 | 기본값 0.9로 fallback — **보수적 = 격리 쪽**으로 실패한다 |
@@ -277,13 +284,15 @@ stateDiagram-v2
 | 5 | 인덱스 효과 | `(status, created_at)` 인덱스 전/후 검토 큐 조회 `EXPLAIN` 비교 | `evidence/` |
 | 6 | **AI 호출 절감률** | 반복 포함 1000건 투입 → 실제 AI 호출 횟수 + 생성된 그룹 수. 절감률 = 1 - (호출/투입) | `evidence/` |
 | 7 | **동시 유입 중복 방지** | 같은 fingerprint 20 스레드 동시 `POST` → 그룹 1개 / AI 호출 1회 확인 | 동시성 테스트 |
-| 8 | **자동 승인 건 오분류율** | 감사 표본에서 `category ≠ final_category` 비율. 신뢰도 구간별로 분해 | `evidence/` |
+| 8 | **자동 승인 건 오분류율** | 감사 표본에서 `category ≠ final_category` 비율. 신뢰도 구간별로 분해. **앵커링 편향으로 하한값임을 명시** (D-010) | `evidence/` |
+| 10 | **blind 무결성** | 검토 큐 응답 필드 전수를 놓고 감사 표본 역산이 가능한지 점검. 가능하면 필드 제거 | 리뷰 메모 |
 | 9 | **카테고리별 임계값 효과** | 동일 50건을 ⓐ전역 단일값 0.7(D-006 이전 초안 = 대조군) vs ⓑ카테고리별 차등으로 각각 처리 → 격리 건수·오분류 통과 건수 비교 | `evidence/` |
 
 ### 이 프로젝트의 성공 기준 두 줄
 
 1. AI가 틀렸을 때 시스템이 **조용히 틀리지 않고, 큐에 쌓이며 관찰 가능하게 틀리는가.**
 2. AI가 **자신 있게** 틀렸을 때, 그 사실을 **수치로 말할 수 있는가.**
+3. 그 수치가 **어느 방향으로 얼마나 편향됐는지**까지 말할 수 있는가 (하한값 해석).
 
 ## 9. 출처 · 참고
 
