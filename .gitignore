@@ -1,0 +1,56 @@
+# ─── 비밀 정보 (CLAUDE.md 작업 경계: commit 절대 금지) ───
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+application-local.yml
+application-local.yaml
+application-secret.yml
+src/main/resources/application-local.yml
+
+# ─── Gradle / Java ───
+.gradle/
+build/
+out/
+*.class
+!gradle/wrapper/gradle-wrapper.jar
+
+# ─── IDE ───
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+
+# ─── Playwright / Node (tests/e2e) ───
+node_modules/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ─── Docker 로컬 데이터 ───
+docker/data/
+mysql-data/
+redis-data/
+
+# ─── 로그 ───
+*.log
+logs/
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── Claude Code ───
+# 개인 설정·statusline 만 제외.
+# .claude/commands/, .claude/hooks/ 는 코딩 단계 산출물이므로 커밋한다.
+.claude/settings.local.json
+.claude/scripts/context-monitor.py
