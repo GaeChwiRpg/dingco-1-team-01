@@ -57,8 +57,9 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | --- | --- | --- |
 | `GET /api/review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
 | fingerprint 로 그룹 조회 (수신 경로, 최고 빈도) | `fingerprint` UNIQUE | `const` / `eq_ref` |
-| `GET /api/error-groups` — status + category 필터 + `occurrence_count DESC` | `(status, current_category, occurrence_count DESC)` | `ref`, 정렬까지 커버 |
-| 위 + `last_seen_at` 범위 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → 인덱스로 후보 축소 후 `Using where` |
+| `GET /api/error-groups?sort=occurrenceCount` — status + category 필터 | `(status, current_category, occurrence_count DESC)` | `ref`, 정렬까지 커버 |
+| `GET /api/error-groups?sort=lastSeenAt` — 기간 범위 + 최근 순 | `(status, last_seen_at)` | `range`, 정렬까지 커버 |
+| 기간 범위 + `occurrence_count DESC` 동시 사용 | **커버 불가** | 범위 + 다른 컬럼 정렬을 한 B-tree 로 동시 충족 못 함 → filesort. **기간 필터를 쓰면 `sort=lastSeenAt` 을 택한다** (D-012) |
 | 그룹별 최신 분류 결과 | `(error_group_id, created_at DESC)` | `ref` |
 | 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |
 
@@ -70,7 +71,7 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 | 기능 | 본 시스템 매핑 | 코드 위치 |
 | --- | --- | --- |
 | 권한·역할 | 3역할 분리 — 전송 주체 ≠ 판정 주체 ≠ 정책 결정 주체 | `config/SecurityConfig.java` |
-| 핵심 트랜잭션 | ① 그룹 upsert + 로그 삽입 + 카운트 증가<br>② 분류 결과 저장 + 그룹 전이 + 조건부 큐 삽입<br>③ 큐 확정 + `final_category` 기록 + 그룹 전이 | ① `service/ErrorIngestService.ingest`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` |
+| 핵심 트랜잭션 | ① 그룹 upsert + 로그 삽입 + 카운트 증가<br>② 분류 결과 저장 + 그룹 전이 + 조건부 큐 삽입 (**감사 표본 삽입 포함** — D-012)<br>③ 큐 확정 + `final_category` 기록 + 그룹 전이 | ① `service/ErrorIngestService.ingest`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` |
 | 검색·필터 | 큐 복합 필터 + 페이징 | `domain/repository/ReviewQueueRepository.search` |
 | 캐시 | ① `fingerprint → 분류 결과` (hit rate = AI 비용 절감률)<br>② 적체·감사 요약 통계 (TTL 10s) | ① `service/ClassificationCache`<br>② `service/StatsService.summary` |
 | 비동기·이벤트 | `ErrorGroupCreatedEvent` → `@Async` 워커 + `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` |
@@ -89,6 +90,7 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 - Controller 절대 X
 - 단일 read 도 X (cost > benefit)
 - 묶음 read+write 만 — 위 표의 ①②③ **세 메서드**. 여기 밖에 새로 붙이려면 근거를 PR 본문에 쓴다
+- **측정 장치를 트랜잭션 밖에 두지 않는다.** 감사 표본 큐 삽입은 ② 안에 포함한다 — 누락되면 감사율이 설정값 미달이 되어 측정 8 의 분모가 조용히 줄어든다. "부차적이라 분리한다"는 판단은 외부 의존성에만 적용한다 (D-012)
 - **캐시 갱신/evict 는 커밋 후** (`@TransactionalEventListener(AFTER_COMMIT)`). 롤백된 판정이 캐시에 남으면 안 됨
 
 ### LAZY 기본
@@ -128,6 +130,28 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 - `suggestedCategory` 는 남긴다 (가리면 `CLASSIFY_FAILED` 가 구별되고 검토 생산성도 떨어짐). 대신 **앵커링 편향이 남으므로 측정된 오분류율은 하한값**으로 해석한다
 - 노출은 `GET /api/stats` (ADMIN) 에서만
 - 새 응답 필드를 추가할 때는 **"이 값으로 감사 표본을 역산할 수 있나"** 를 먼저 확인한다
+
+## 모듈 간 계약 (병렬 작업 기준선)
+
+작업 패키지 P1(수신·그룹핑) / P2(분류·검증) / P3(검토·관측)가 병렬로 가려면 **경계 2개만** 먼저 고정하면 된다.
+이 두 계약을 바꾸는 변경은 세 패키지 담당자 합의 + `DECISIONS.md` 항목 필요.
+
+**계약 A — `ErrorGroupCreatedEvent` (P1 → P2)**
+
+```text
+ErrorGroupCreatedEvent(errorGroupId, fingerprint, sampleMessage, stackTrace)
+  └ 신규 그룹 생성 트랜잭션 커밋 후 발행 (AFTER_COMMIT)
+  └ 기존 그룹 재발 시에는 발행하지 않는다
+```
+
+**계약 B — `review_queue` 삽입 시 필수 컬럼 (P2 → P3)**
+
+```text
+error_group_id, classification_result_id, reason, status=PENDING, created_at, version=0
+  └ reason 별 보장: LOW_CONFIDENCE / AUDIT_SAMPLE 은 classification_result_id 반드시 존재
+                    CLASSIFY_FAILED 는 classification_result.category = null
+  └ P3 는 reason 을 조회 응답에 노출하지 않는다 (blind, D-010)
+```
 
 ## 작업 경계
 

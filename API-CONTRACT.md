@@ -1,4 +1,4 @@
-# API-CONTRACT v0.2
+# API-CONTRACT v0.3
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -88,8 +88,16 @@ X-Api-Key: sdk-live-a1b2c3
 | `status` | (전체) | `NEW \| CLASSIFIED \| UNCLASSIFIED` |
 | `category` | (전체) | `error_group.current_category` 기준 |
 | `from` / `to` | (전체) | `last_seen_at` 범위 (ISO-8601) |
+| `sort` | `occurrenceCount` | `occurrenceCount` (발생 많은 순) \| `lastSeenAt` (최근 순) |
 | `page` | 0 | |
 | `size` | 20 | 최대 100 |
+
+> **`sort` 를 둔 이유 (D-012)**: `from`/`to` 범위 필터와 `occurrence_count DESC` 정렬을 함께 쓰면 한 B-tree 로 커버되지 않아 filesort 가 발생한다. 기간 필터를 쓰는 조회는 `sort=lastSeenAt` 을 선택하면 `(status, last_seen_at)` 인덱스로 **범위 + 정렬을 함께 커버**한다. 어느 쪽이 실제로 유리한지는 측정 5번 EXPLAIN 결과로 확정한다.
+>
+> | 조회 패턴 | 권장 `sort` | 인덱스 |
+> | --- | --- | --- |
+> | 기간 필터 없음 | `occurrenceCount` | `(status, current_category, occurrence_count DESC)` |
+> | 기간 필터 있음 | `lastSeenAt` | `(status, last_seen_at)` |
 
 > `category` / `confidence` 는 `classification_result` 를 조인하지 않고 **`error_group` 에 역정규화된 `current_category` / `current_confidence` 를 읽는다** (D-011). 목록 조회에서 그룹당 조인이 발생하는 것을 막고, `(status, current_category, occurrence_count DESC)` 인덱스로 필터+정렬을 함께 커버하기 위함.
 
@@ -330,7 +338,10 @@ X-User-Role: ADMIN
     "cacheHitRate": 0.968
   },
   "audit": {
+    "eligibleTotal": 29,
     "sampledTotal": 12,
+    "actualSampleRate": 0.414,
+    "configuredSampleRate": 0.05,
     "reviewed": 10,
     "mismatched": 2,
     "misclassificationRate": 0.200,
@@ -343,6 +354,8 @@ X-User-Role: ADMIN
 ```
 
 > `audit.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". 여기 수치는 형식 예시이며, 확정값은 본인 실측으로만 기록한다 (`CLAUDE.md` AI 검증 규칙).
+>
+> `eligibleTotal` / `actualSampleRate` / `configuredSampleRate` 는 **감사 장치 자체를 감사**하기 위한 필드다 (D-012). 표본 삽입이 누락되면 `misclassificationRate` 의 분모가 조용히 줄어 측정 8 이 왜곡되므로, 설정값과 실측 비율의 괴리를 항상 확인할 수 있게 한다. (위 예시는 초기 표본이 적어 실측 비율이 설정값과 크게 벌어진 상태)
 
 **오류**: 403
 
@@ -366,4 +379,5 @@ X-User-Role: ADMIN
 | --- | --- | --- | --- |
 | v0.1 | 2026-07-30 | 에러 분류 검증 파이프라인 8 endpoint + Actuator 초기 정의. 템플릿의 ticket 도메인 예시 폐기 (D-001) | #1 |
 | v0.2 | 2026-07-30 | AI 리뷰 반영 — `GET /api/review-queue` 에서 `confidence`·`threshold` 응답 필드와 `category` 필터 제거 (blind 누설 차단, D-010). `GET /api/error-groups` 의 `category`·`confidence` 출처를 역정규화 컬럼으로 명시 (D-011) | #1 |
+| v0.3 | 2026-07-30 | AI 리뷰 2차 반영 — `GET /api/error-groups` 에 `sort` 파라미터 추가 (기간 필터 시 filesort 회피). `GET /api/stats` 의 `audit` 에 `eligibleTotal`·`actualSampleRate`·`configuredSampleRate` 추가 (감사율 검증, D-012) | #1 |
 <!-- 변경 시 한 줄씩 추가 -->

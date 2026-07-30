@@ -78,7 +78,8 @@ classification_result (id, error_group_id FK, category, confidence, model, raw_r
                   └ category = AI 제안, final_category = 사람 확정 (감사 대조의 핵심 2컬럼)
 
 review_queue      (id, error_group_id FK, classification_result_id FK, reason, status,
-                   reviewer_id, resolved_at, created_at)
+                   reviewer_id, resolved_at, created_at, version)
+                  └ version = 낙관적 락. 동시 확정 시 409 의 근거 (D-007)
                   └ reason: LOW_CONFIDENCE | CLASSIFY_FAILED | AUDIT_SAMPLE
                   └ status: PENDING | RESOLVED
 
@@ -141,11 +142,8 @@ sequenceDiagram
     alt 성공
         W->>P: threshold(category) 조회
         alt confidence >= threshold
-            W->>DB: [TX] classification_result(AUTO_ACCEPTED) + error_group.status=CLASSIFIED
-            alt 무작위 추출 (기본 5%)
-                W->>DB: [TX] review_queue INSERT (AUDIT_SAMPLE)
-                Note over W,DB: 자동 승인이지만 표본 검사 대상<br/>그룹 상태는 CLASSIFIED 유지
-            end
+            W->>DB: [TX] classification_result(AUTO_ACCEPTED) + error_group.status=CLASSIFIED<br/>+ (5% 확률) review_queue INSERT (AUDIT_SAMPLE)
+            Note over W,DB: 감사 표본 삽입도 같은 TX (D-012)<br/>그룹 상태는 CLASSIFIED 유지
         else confidence < threshold
             W->>DB: [TX] classification_result(NEEDS_REVIEW) + review_queue(LOW_CONFIDENCE)<br/>+ error_group.status=UNCLASSIFIED
         end
@@ -156,7 +154,13 @@ sequenceDiagram
 
 **분기별 트랜잭션 원자성이 왜 중요한가**
 
-`NEEDS_REVIEW` / `FAILED` 분기에서 *"분류 결과는 저장됐는데 검토 큐 삽입이 실패"* 한 상태는 존재할 수 없어야 한다. 그 상태가 곧 **조용히 유실된 미분류 에러** — 이 시스템이 막으려는 바로 그 실패다. 감사 표본 삽입 실패는 자동 승인 자체를 되돌릴 필요는 없지만, 표본이 소리 없이 누락되면 감사율이 실제보다 낮아지므로 별도 트랜잭션 + 실패 로깅으로 관측 가능하게 둔다.
+`NEEDS_REVIEW` / `FAILED` 분기에서 *"분류 결과는 저장됐는데 검토 큐 삽입이 실패"* 한 상태는 존재할 수 없어야 한다. 그 상태가 곧 **조용히 유실된 미분류 에러** — 이 시스템이 막으려는 바로 그 실패다.
+
+**감사 표본 삽입도 같은 트랜잭션에 넣는다 (D-012).** 초안은 "감사는 부차적이니 실패해도 자동 승인을 되돌릴 필요 없다"는 이유로 별도 트랜잭션을 뒀는데, 이건 잘못이다 — 표본이 소리 없이 누락되면 실제 감사율이 5% 미달이 되고, **§8 측정 8(자동 승인 건 오분류율)의 분모가 조용히 줄어든다.** 측정 무결성이 이 프로젝트의 주제인데 측정 장치 자체를 best-effort 로 두는 셈이다.
+
+"부차적이니 분리한다"는 직관은 **외부 의존성**에 적용되는 것이고, 여기 두 쓰기는 같은 DB·같은 커넥션이라 분리해서 얻는 격리 이득이 없다. 삽입이 실패하면 분류째로 롤백되어 그룹이 `NEEDS_REVIEW` 없이 `NEW` 로 남고, 다음 재분류에서 다시 표본 추첨 대상이 된다 (AI 호출 1회 낭비는 감수).
+
+추가 안전장치로 **감사율 자체를 검증 가능하게** 만든다 — `GET /api/stats` 가 표본 수(`sampledTotal`)와 모집단 수(`eligibleTotal`), 실측 비율(`actualSampleRate`)을 함께 노출한다. 설정값 5% 와 실측값이 벌어지면 즉시 드러난다.
 
 ### 4-3. 에러 그룹 상태 전이
 
@@ -212,7 +216,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | 권한·역할 | `ROLE_INGEST` / `ROLE_REVIEWER` / `ROLE_ADMIN` 3역할 + `@PreAuthorize`. 전송 주체 · 판정 주체 · 정책 결정 주체 분리 | (D-002에서 확정) |
 | 핵심 트랜잭션 | ① `ErrorIngestService.ingest` — 그룹 upsert + 발생 로그 삽입 + 카운트 증가<br>② `ClassificationService.verifyAndPersist` — 정책 조회 + 분류 결과 저장 + 그룹 상태 전이 + 조건부 큐 삽입<br>③ `ReviewService.confirm` — 큐 락 조회 + 확정 + 최종 카테고리 기록 + 그룹 전이 | (D-002에서 확정) |
-| 검색·필터 | `ReviewQueueRepository.search` — status / reason / category / 기간 복합 필터 + `(status, created_at)` 복합 인덱스. `error_group`은 `occurrence_count` 정렬 조회 | (D-002에서 확정) |
+| 검색·필터 | `ReviewQueueRepository.search` — **status / 기간** 필터 + `(status, created_at)` 인덱스 (사유·신뢰도·카테고리 필터는 blind 규칙상 제공 안 함, D-010). `error_group`은 status / category 필터 + `occurrence_count` 또는 `last_seen_at` 정렬 | (D-002에서 확정) |
 | 캐시 | ① `fingerprint → 분류 결과` 캐시 — **hit rate가 곧 AI 비용 절감률**, 확정 시 갱신<br>② 큐 적체·감사 요약 통계 `@Cacheable` (TTL 10s) + `@CacheEvict(allEntries=true)`. Actuator gauge가 매 스크랩마다 전수 count 치는 것 방지 | (D-002에서 확정) |
 | 비동기·이벤트 | `ErrorGroupCreatedEvent` (Spring Events) → `@Async` AI 분류 워커 + `@Retryable(maxAttempts=3)` + `@Recover`로 큐 자동 삽입 | (D-002에서 확정) |
 | AI 보조 | `AiClassificationService` — 에러 → 카테고리 + 신뢰도<br>**+ 카테고리별 임계값 검증 계층**<br>**+ 자동 승인 건 무작위 감사 샘플링** (본 프로젝트의 차별점) | (D-002에서 확정) |
