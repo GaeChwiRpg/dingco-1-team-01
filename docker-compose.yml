@@ -1,0 +1,67 @@
+# 시연·측정용 스택 (배포·운영 단계 산출물).
+#
+# 측정 5ⓔ 의 A/B:
+#   docker compose up -d                                          → V1 만 (후보 인덱스 없음)
+#   FLYWAY_TARGET=2 docker compose up -d --force-recreate app      → V2 적용
+#   docker compose down -v                                        → 되돌림 (Flyway 는 undo 가 없다)
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 를 .env 에 설정하세요}
+      MYSQL_DATABASE: ${DB_NAME:-triagedb}
+      MYSQL_USER: ${DB_USER:-triage}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 를 .env 에 설정하세요}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-triagedb}
+      DB_USER: ${DB_USER:-triage}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # 기본 1 = V1 만. 측정 5ⓔ 때만 2 로 올린다 (D-023).
+      FLYWAY_TARGET: ${FLYWAY_TARGET:-1}
+    depends_on:
+      mysql:
+        # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  mysql-data:

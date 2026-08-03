@@ -1,0 +1,80 @@
+spring:
+  application:
+    name: triage
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:triagedb}?serverTimezone=UTC&characterEncoding=UTF-8
+    username: ${DB_USER:triage}
+    password: ${DB_PASSWORD:triage}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      # D-023: 엔티티와 DDL 이 어긋나면 부팅이 실패해야 한다.
+      # update 였다면 엔티티 변경이 운영 스키마에 조용히 반영되는데,
+      # 그건 이 프로젝트 주제("조용히 틀리지 않기")와 정면으로 어긋난다.
+      ddl-auto: validate
+    # 뷰 렌더링이 없고, 트랜잭션 밖에서 LAZY 를 건드리는 사고를 막는다.
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    # ⚠️ 기본값 1 = V1 만 적용. V2 의 후보 인덱스는 켜지지 않는다 (D-023).
+    #
+    # 측정 5ⓔ 를 돌릴 때만 SPRING_FLYWAY_TARGET=2 로 재기동한다.
+    # Flyway 는 forward-only 라 undo 가 없으므로 되돌릴 때는 docker compose down -v.
+    #
+    # 이 값을 2 로 올려 커밋하는 것은 "후보 인덱스를 V1 으로 승격"하는 것과 같다.
+    # 측정으로 쓰기 지연 이득이 확인되기 전까지 하지 않는다.
+    target: ${FLYWAY_TARGET:1}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  cache:
+    type: redis
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ─────────────────────────────────────────────────────────────
+# D-023 부수 확정 — property 이름은 D-023 본문 그대로 유지한다
+# ─────────────────────────────────────────────────────────────
+monitoring:
+  # 생성 후 이 시간 이상 NEW 에 머문 그룹을 stuckNew 로 센다 (D-017).
+  # 판정 트랜잭션이 롤백되면 그룹은 NEW 로 남는데 아무도 다시 분류하지 않는다 —
+  # 이 시스템이 막으려는 "조용히 유실된 에러"를 스스로 만드는 구멍이라 관찰만이라도 한다.
+  #
+  # 테스트에서 초 단위로 낮출 수 없으면 D-017 을 검증할 방법이 없어서 property 로 뺐다.
+  stuck-new-threshold: 10m
+
+classification:
+  policy:
+    # PER_CATEGORY = D-006 의 카테고리별 차등. GLOBAL = 그 이전 초안(단일 0.7).
+    # 측정 9 는 같은 50건을 두 모드로 각각 처리해 격리 건수를 비교한다 —
+    # GLOBAL 이 대조군이자, D-008 이 Day 3 에 막혔을 때의 탈출 경로다.
+    mode: PER_CATEGORY
+    global-threshold: 0.7
+    # classification_policy 에 없는 카테고리의 fallback. 보수적 = 격리 쪽으로 실패한다.
+    default-threshold: 0.9
+  audit:
+    # 자동 승인 건 중 감사 표본으로 뽑을 비율 (D-005).
+    # 실측 비율은 GET /api/stats 의 actualSampleRate 로 대조한다 — 설정값과 벌어지면
+    # 표본 삽입이 누락된 것이고, 그러면 측정 8 의 분모가 조용히 줄어든다 (D-012).
+    sample-rate: 0.05
+
+logging:
+  level:
+    com.dingco.triage: DEBUG
