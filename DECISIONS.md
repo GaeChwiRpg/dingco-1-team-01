@@ -457,4 +457,37 @@
   - 측정 2 에서 `CLASSIFY_FAILED` 가 10% 를 넘고 재시도로 회수되지 않으면(D-022 재평가 조건) 프롬프트를 먼저 고치고, 그래도 안 되면 structured outputs 도입을 후속 항목으로 재검토한다
   - AI API 장기 장애 시 전건이 수동 처리 대상이 되는 한계는 Phase 2 에서 명시만 한다. 백오프 재분류·circuit breaker 는 Phase 3 항목 G
 
-<!-- 다음 결정 추가 시 D-025 부터 -->
+### D-025. 엔티티 생성은 정적 팩토리로만 — baseline 이 "생성 시점 불변식"까지 고정한다
+
+- **일자**: 2026-08-03
+- **상태**: 채택
+- **배경**: PR #3 AI 리뷰 지적. baseline 엔티티 5개에 `protected` 무인자 생성자만 있어 **애플리케이션 코드에서 생성이 아예 불가능**하다. 즉 P1/P2/P3 담당자가 각 패키지의 첫 줄에 할 일이 "생성 수단 만들기"이고, 그 자리에서 setter 가 나온다. 그러면 불변 규칙 2(`category` 덮어쓰기 금지)와 4(`current_*` 는 ②③ 안에서만)를 지킬 자리가 사라진다.
+
+  더 큰 문제는 **생성 시점의 불변식이 한 패키지 소유가 아니라는 점**이다. `ErrorGroup` 의 `current_* = null` 은 계약 C 이고, `ClassificationResult` 의 `verdict` × `(category, confidence)` null 조합은 D-022 이자 계약 B 의 `reason` 판별식이다. 세 사람이 각자 만들면 계약이 세 벌로 갈라진다.
+- **선택지**:
+  1. 지금처럼 두고 각 담당자가 필요할 때 만든다 — 계약이 코드에 없으므로 어긋나도 컴파일도 테스트도 통과한다. 어긋난 사실은 측정 단계에서야 드러난다
+  2. `EntityFactory` 같은 별도 클래스로 분리 — 그 클래스가 필드에 접근하려면 생성자를 package-private 이상으로 열어야 한다. **생성 경로를 좁히려는 목적 자체를 되돌린다**
+  3. **엔티티 안에 정적 팩토리**
+- **결정**: 3번. baseline 이 제공하는 범위를 "필드·매핑" → **"필드·매핑 + 생성 팩토리"** 로 넓힌다. 상태 **전이** 메서드는 종전대로 각 트랜잭션 소유자가 추가한다 — 생성은 전이가 아니므로 D-015 의 P1/P2/P3 분담과 충돌하지 않는다.
+
+  | 엔티티 | 팩토리 | 고정하는 계약 |
+  | --- | --- | --- |
+  | `ErrorGroup` | `create(fingerprint, sampleMessage, seenAt)` | 계약 C — `status=NEW`, `occurrenceCount=1`, `firstSeenAt == lastSeenAt`, `current_* = null` |
+  | `ErrorEvent` | `of(group, rawMessage, stackTrace, source, occurredAt)` | 불변 규칙 1 — 파라미터에 상태가 없다. `stackTrace` 만 nullable |
+  | `ClassificationResult` | `autoAccepted(...)` / `needsReview(...)` / `failed(...)` | D-022 — `failed(...)` 에 `confidence` 파라미터가 **없다** |
+  | `ReviewQueueItem` | `from(result)` | 계약 B — 파라미터에 `reason` 이 **없다** |
+  | `ClassificationPolicy` | 없음 | seed 10행이 `V1` 에 있어 애플리케이션이 생성하지 않는다. 필요한 건 전이 메서드 `updateThreshold(...)` (P3) |
+
+  **핵심은 두 팩토리에서 파라미터를 뺀 것이다.** `failed(...)` 에 `confidence` 자리가 없으면 D-022 가 금지한 `confidence = 0` 이 **문법적으로 불가능**해진다. `from(result)` 에 `reason` 자리가 없으면 D-022 가 금지한 "`category == null` 로 reason 판별"이 애초에 불가능해지고, 내부 `switch` 가 exhaustive 라 `Verdict` 에 값이 늘면 **컴파일 에러로 터진다.** 문서가 아니라 컴파일러가 계약을 지킨다.
+
+  **부수 확정 2건:**
+  - **`ErrorGroup.firstSeenAt` / `lastSeenAt` 은 서버 수신 시각**이다. 클라이언트가 보고한 `occurredAt` 은 `ErrorEvent` 에만 보고값 그대로 남긴다 — 클라이언트 시계는 신뢰할 수 없고, 이 값이 D-017 `stuckNew` 와 목록 기간 필터의 기준이라 조작 가능한 값을 쓰면 두 지표가 함께 오염된다
+  - **엔티티는 `Instant.now()` 를 직접 부르지 않는다.** 시각은 항상 파라미터로 받는다. `stuck-new-threshold` 를 property 로 뺀 것과 같은 이유로(D-023), 테스트에서 시각을 조작할 수 없으면 D-017 을 검증할 방법이 없다
+  - fingerprint 정규화는 팩토리 밖 별도 컴포넌트(`service/FingerprintGenerator`, P1) 다. 팩토리는 **계산된 값**을 받는다 — 정규화 규칙이 바뀌면 그룹핑 결과 전체가 바뀌므로 DB 없이 단독 테스트가 가능해야 한다
+- **영향**:
+  - `domain/ErrorGroup.java`, `ErrorEvent.java`, `ClassificationResult.java`, `ReviewQueueItem.java` — 팩토리 추가 + 클래스 javadoc 의 "필드·매핑까지만" 문구 정정
+  - `src/test/java/.../domain/DomainFactoryTest.java` 신설 — 컨텍스트 없는 순수 단위 테스트
+  - Lombok 은 도입하지 않는다. `@Setter`/`@Data`/`@Builder` 가 위 세 계약을 모두 우회시키고, `@Getter` 만 쓸 거라면 이미 손으로 쓴 getter 와 차이가 없다. 이벤트·캐시값·DTO 는 Java 21 `record` 를 기본으로 한다
+- **재평가**: P1/P2/P3 가 전이 메서드를 붙이는 시점에 팩토리 시그니처가 부족하면 여기 표를 갱신한다. 단 **파라미터를 늘리는 방향만 허용하고, `reason`·`confidence` 를 다시 파라미터로 여는 변경은 D-022/계약 B 재논의를 동반해야 한다**
+
+<!-- 다음 결정 추가 시 D-026 부터 -->

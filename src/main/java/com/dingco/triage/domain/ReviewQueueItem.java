@@ -2,6 +2,7 @@ package com.dingco.triage.domain;
 
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.domain.type.QueueStatus;
+import com.dingco.triage.domain.type.Verdict;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -16,6 +17,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.Objects;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -79,6 +81,34 @@ public class ReviewQueueItem {
     private long version;
 
     protected ReviewQueueItem() {
+    }
+
+    /**
+     * 계약 B 의 큐 삽입. <b>파라미터에 {@code reason} 이 없다</b> (D-025).
+     *
+     * <p>호출부가 reason 을 직접 고를 경로 자체를 없앤다. D-022 가 못박은 <b>"reason 판별 기준은
+     * verdict 다 — {@code category == null} 은 결과일 뿐 판별식이 아니다"</b> 를 코드로 옮긴 자리이고,
+     * 아래 switch 는 exhaustive 하므로 {@link Verdict} 에 값이 늘면 <b>여기가 컴파일 에러로 터진다.</b>
+     * 계약 B 를 문서가 아니라 컴파일러가 지킨다.
+     *
+     * <p>{@code errorGroup} 도 파라미터가 아니라 {@code result} 에서 꺼낸다 — 둘이 어긋난 행이
+     * 생길 수 없게 하기 위해서다.
+     *
+     * <p>{@code version} 은 {@code @Version} 의 초기값 0 그대로, {@code createdAt} 은 JPA
+     * auditing 이 채운다. 계약 B 의 필수 컬럼 6개가 이 메서드 하나로 전부 채워진다.
+     */
+    public static ReviewQueueItem from(ClassificationResult result) {
+        Objects.requireNonNull(result, "classificationResult");
+        ReviewQueueItem item = new ReviewQueueItem();
+        item.errorGroup = result.getErrorGroup();
+        item.classificationResult = result;
+        item.reason = switch (result.getVerdict()) {
+            case NEEDS_REVIEW -> QueueReason.LOW_CONFIDENCE;
+            case FAILED -> QueueReason.CLASSIFY_FAILED;
+            case AUTO_ACCEPTED -> QueueReason.AUDIT_SAMPLE;
+        };
+        item.status = QueueStatus.PENDING;
+        return item;
     }
 
     public Long getId() {
