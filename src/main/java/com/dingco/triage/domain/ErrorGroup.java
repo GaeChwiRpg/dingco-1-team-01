@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Objects;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -21,7 +22,8 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
  * 분류의 단위. 같은 에러가 1000번 발생해도 판정은 1번이다 (D-004).
  *
  * <p><b>공유 엔티티</b> — P1(수신·그룹핑) / P2(분류·검증) / P3(검토·관측) 셋 다 이 타입을 쓴다.
- * baseline 은 필드·매핑까지만 제공하고, 상태 전이 메서드는 각 트랜잭션의 소유자가 추가한다:
+ * baseline 은 필드·매핑과 <b>생성 팩토리</b>까지 제공하고(D-025), 상태 <b>전이</b> 메서드는
+ * 각 트랜잭션의 소유자가 추가한다:
  *
  * <ul>
  *   <li>P1 — 생성 + {@code occurrence_count} 증가 (JPQL 원자적 UPDATE, 엔티티 setter 아님)
@@ -93,6 +95,36 @@ public class ErrorGroup {
     private Instant updatedAt;
 
     protected ErrorGroup() {
+    }
+
+    /**
+     * 신규 fingerprint 의 첫 유입. <b>생성 시점의 불변식을 여기서만 정한다</b> (D-025).
+     *
+     * <p>{@code currentCategory} / {@code currentConfidence} 를 null 로 두는 것이 곧
+     * <b>계약 C</b> 의 "미판정(status=NEW) 이면 null" 이다. 이 값은 그룹 생성 커밋 후 캐시에
+     * 그대로 put 되므로, 여기서 어긋나면 P1 의 수신 경로가 없는 판정을 읽는다.
+     *
+     * <p>{@code occurrenceCount} 는 <b>1</b> 로 시작한다 — 그룹을 만든 그 요청 자체가 1건이기
+     * 때문이다. 생성 트랜잭션에서 다시 증가시키지 않는다 (D-016 의 {@code createGroupAndRecord}).
+     *
+     * <p><b>{@code fingerprint} 는 계산된 값을 받는다.</b> 스택트레이스 정규화는 별도 컴포넌트
+     * ({@code service/FingerprintGenerator}, P1 소유) 의 일이다 — 정규화 규칙이 바뀌면 그룹핑
+     * 결과 전체가 바뀌므로 DB 없이 단독으로 테스트할 수 있어야 한다.
+     *
+     * @param seenAt <b>서버 수신 시각</b>. 클라이언트가 보고한 {@code occurredAt} 이 아니다 —
+     *     클라이언트 시계는 신뢰할 수 없다 (D-025). 엔티티가 {@code Instant.now()} 를 직접 부르지
+     *     않는 이유는 D-017 의 {@code stuckNew} 가 이 시각을 분모로 쓰기 때문이다. 테스트에서
+     *     시각을 조작할 수 없으면 그 지표를 검증할 방법이 없다
+     */
+    public static ErrorGroup create(String fingerprint, String sampleMessage, Instant seenAt) {
+        ErrorGroup group = new ErrorGroup();
+        group.fingerprint = Objects.requireNonNull(fingerprint, "fingerprint");
+        group.sampleMessage = Objects.requireNonNull(sampleMessage, "sampleMessage");
+        group.status = GroupStatus.NEW;
+        group.occurrenceCount = 1;
+        group.firstSeenAt = Objects.requireNonNull(seenAt, "seenAt");
+        group.lastSeenAt = seenAt;
+        return group;
     }
 
     public Long getId() {

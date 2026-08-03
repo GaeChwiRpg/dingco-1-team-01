@@ -16,6 +16,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Objects;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -28,6 +29,10 @@ import org.hibernate.type.SqlTypes;
  * {@code category} 를 덮어쓰면 오분류 증거가 사라지므로 절대 덮어쓰지 않는다 (불변 규칙 2).
  *
  * <p>소유: P2 (생성) / P3 ({@code finalCategory} 기록).
+ *
+ * <p>생성은 <b>verdict 별 팩토리 3개</b>로만 가능하다 (D-025). {@code verdict} 와
+ * {@code (category, confidence)} 의 null 조합이 D-022 이자 <b>계약 B</b> 의 {@code reason}
+ * 판별식이라, 임의 조합으로 만들 수 있으면 그 판별식이 무너진다.
  *
  * <p><b>setter 를 만들지 않는다.</b> 특히 {@code category} 에 setter 가 열리면 불변 규칙 2
  * ("{@code final_category} 기록 시 {@code category} 를 덮어쓰지 않는다")를 지킬 자리가 사라진다.
@@ -92,6 +97,66 @@ public class ClassificationResult {
     private Instant createdAt;
 
     protected ClassificationResult() {
+    }
+
+    private ClassificationResult(ErrorGroup errorGroup, Verdict verdict, ErrorCategory category,
+            BigDecimal confidence, String model, String rawResponse, int attemptCount) {
+        if (attemptCount < 1) {
+            // attemptCount 는 "@Retryable 이 실제로 회수하고 있는가"의 근거다 (D-022 재평가).
+            // 0 이 섞이면 그 집계가 조용히 틀린다.
+            throw new IllegalArgumentException("attemptCount 는 1 이상이어야 한다: " + attemptCount);
+        }
+        this.errorGroup = Objects.requireNonNull(errorGroup, "errorGroup");
+        this.verdict = verdict;
+        this.category = category;
+        this.confidence = confidence;
+        this.model = model;
+        this.rawResponse = rawResponse;
+        this.attemptCount = attemptCount;
+    }
+
+    /**
+     * {@code confidence >= threshold} — 자동 승인. 이 중 일부가 감사 표본으로 뽑힌다 (D-005).
+     *
+     * <p>임계값 비교 자체는 P2 의 정책 서비스가 한다. 이 팩토리는 <b>그 결과로 만들어지는 행의
+     * 모양</b>만 고정한다 — {@code category} 와 {@code confidence} 가 둘 다 있어야 한다는 것.
+     */
+    public static ClassificationResult autoAccepted(ErrorGroup errorGroup, ErrorCategory category,
+            BigDecimal confidence, String model, String rawResponse, int attemptCount) {
+        return classified(errorGroup, Verdict.AUTO_ACCEPTED, category, confidence, model,
+                rawResponse, attemptCount);
+    }
+
+    /** {@code confidence < threshold} — category 는 있지만 격리한다. */
+    public static ClassificationResult needsReview(ErrorGroup errorGroup, ErrorCategory category,
+            BigDecimal confidence, String model, String rawResponse, int attemptCount) {
+        return classified(errorGroup, Verdict.NEEDS_REVIEW, category, confidence, model,
+                rawResponse, attemptCount);
+    }
+
+    /**
+     * AI 호출/파싱이 재시도 3회를 소진했다 — {@code @Recover} 에서 부른다.
+     *
+     * <p><b>파라미터에 {@code category} 와 {@code confidence} 가 없다.</b> D-022 가 금지한
+     * "파싱 실패에 {@code confidence = 0} 을 쓰는 것"이 문법적으로 불가능해진다. 문서가 아니라
+     * 컴파일러가 막는다 — 0 이 들어가면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과
+     * "응답이 깨진 건"이 섞여 이 프로젝트의 결론이 오염된다.
+     *
+     * @param rawResponse 실패 원인 추적용 원문. AI 가 응답 자체를 못 준 경우엔 null 일 수 있다
+     */
+    public static ClassificationResult failed(ErrorGroup errorGroup, String model,
+            String rawResponse, int attemptCount) {
+        return new ClassificationResult(errorGroup, Verdict.FAILED, null, null, model,
+                rawResponse, attemptCount);
+    }
+
+    private static ClassificationResult classified(ErrorGroup errorGroup, Verdict verdict,
+            ErrorCategory category, BigDecimal confidence, String model, String rawResponse,
+            int attemptCount) {
+        return new ClassificationResult(errorGroup, verdict,
+                Objects.requireNonNull(category, "category"),
+                Objects.requireNonNull(confidence, "confidence"),
+                model, rawResponse, attemptCount);
     }
 
     public Long getId() {

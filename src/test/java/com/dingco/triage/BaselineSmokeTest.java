@@ -3,12 +3,22 @@ package com.dingco.triage;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.dingco.triage.domain.ClassificationPolicy;
+import com.dingco.triage.domain.ClassificationResult;
+import com.dingco.triage.domain.ErrorEvent;
+import com.dingco.triage.domain.ErrorGroup;
+import com.dingco.triage.domain.ReviewQueueItem;
 import com.dingco.triage.domain.repository.ClassificationPolicyRepository;
+import com.dingco.triage.domain.repository.ClassificationResultRepository;
+import com.dingco.triage.domain.repository.ErrorEventRepository;
+import com.dingco.triage.domain.repository.ErrorGroupRepository;
+import com.dingco.triage.domain.repository.ReviewQueueRepository;
 import com.dingco.triage.domain.type.ErrorCategory;
+import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.support.MySqlTestContainer;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,6 +48,18 @@ class BaselineSmokeTest {
 
     @Autowired
     private ClassificationPolicyRepository policyRepository;
+
+    @Autowired
+    private ErrorGroupRepository errorGroupRepository;
+
+    @Autowired
+    private ErrorEventRepository errorEventRepository;
+
+    @Autowired
+    private ClassificationResultRepository classificationResultRepository;
+
+    @Autowired
+    private ReviewQueueRepository reviewQueueRepository;
 
     @Autowired
     private RetryProbe retryProbe;
@@ -108,6 +130,36 @@ class BaselineSmokeTest {
                 .as("3이 아니라 1이면 프록시가 만들어지지 않은 것이다. 그 경우 D-016 의 UNIQUE 충돌 "
                         + "재시도와 D-022 의 파싱 실패 재시도가 예외도 로그도 없이 사라진다")
                 .isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("팩토리가 만든 4엔티티가 실제로 저장된다 — NOT NULL 을 누가 채우는지가 코드에 있다")
+    void factoriesProducePersistableEntities() {
+        Instant seenAt = Instant.parse("2026-08-03T00:00:00Z");
+
+        ErrorGroup group = errorGroupRepository.save(ErrorGroup.create(
+                "smoke-" + UUID.randomUUID(), "NullPointerException at Foo.bar", seenAt));
+        ErrorEvent event = errorEventRepository.save(ErrorEvent.of(
+                group, "NullPointerException", "at Foo.bar(Foo.java:1)", "sdk-java", seenAt));
+        ClassificationResult result = classificationResultRepository.save(
+                ClassificationResult.failed(group, "claude-sonnet-5", "{broken", 3));
+        ReviewQueueItem item = reviewQueueRepository.save(ReviewQueueItem.from(result));
+
+        assertThat(group.getCreatedAt())
+                .as("created_at / updated_at 은 NOT NULL 인데 팩토리가 채우지 않는다 — "
+                        + "auditing 의 몫이라 이 둘이 함께 있어야 삽입이 성립한다 (D-025)")
+                .isNotNull();
+        assertThat(group.getUpdatedAt()).isNotNull();
+        assertThat(event.getCreatedAt()).isNotNull();
+        assertThat(result.getCreatedAt()).isNotNull();
+        assertThat(item.getCreatedAt()).isNotNull();
+
+        assertThat(item.getReason())
+                .as("계약 B — verdict=FAILED 는 CLASSIFY_FAILED 로 들어간다")
+                .isEqualTo(QueueReason.CLASSIFY_FAILED);
+        assertThat(result.getConfidence())
+                .as("D-022 — 저장 후에도 null 이어야 한다. 0 이면 측정 8 이 오염된다")
+                .isNull();
     }
 
     private int countIndex(String indexName) {

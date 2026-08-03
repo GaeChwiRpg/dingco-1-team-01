@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.Objects;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -56,6 +57,27 @@ public class ErrorEvent {
     private Instant createdAt;
 
     protected ErrorEvent() {
+    }
+
+    /**
+     * 발생 로그 1건. 그룹이 신규든 기존이든 <b>수신 요청마다</b> 만들어진다.
+     *
+     * <p>파라미터에 상태가 없다는 사실 자체가 불변 규칙 1 이다 — 판정은 {@link ErrorGroup} 의
+     * 속성이고 이쪽은 append-only 다.
+     *
+     * @param stackTrace 유일한 nullable 필드다. 클라이언트가 스택트레이스 없이 메시지만 보낼 수 있다
+     * @param occurredAt <b>클라이언트가 보고한 발생 시각</b>. 여기서만 보고값을 그대로 쓴다 —
+     *     {@code ErrorGroup.firstSeenAt} / {@code lastSeenAt} 은 서버 수신 시각이다 (D-025)
+     */
+    public static ErrorEvent of(ErrorGroup errorGroup, String rawMessage, String stackTrace,
+            String source, Instant occurredAt) {
+        ErrorEvent event = new ErrorEvent();
+        event.errorGroup = Objects.requireNonNull(errorGroup, "errorGroup");
+        event.rawMessage = Objects.requireNonNull(rawMessage, "rawMessage");
+        event.stackTrace = stackTrace;
+        event.source = Objects.requireNonNull(source, "source");
+        event.occurredAt = Objects.requireNonNull(occurredAt, "occurredAt");
+        return event;
     }
 
     public Long getId() {
