@@ -435,11 +435,13 @@
   | 항목 | 확정값 |
   | --- | --- |
   | SDK | `com.anthropic:anthropic-java:2.34.0` |
-  | 모델 | `claude-sonnet-5` — `API-CONTRACT.md` §3 의 기존 값 |
+  | 모델 | `claude-sonnet-5` — `GET /v1/models` 실물 조회로 존재 확인 (2026-08-03) |
   | API key | `ANTHROPIC_API_KEY` 환경변수. SDK 가 이 이름을 자동으로 읽어 `AnthropicOkHttpClient.fromEnv()` 로 끝난다 |
   | JSON 강제 | **프롬프트만.** structured outputs 를 쓰지 않는다 |
 
   **모델을 `claude-sonnet-5` 로 둔 이유**: 에러 분류는 10종 enum 중 하나를 고르는 단순 분류 작업이라 이 티어로 충분하다. 상위 모델은 분류 정확도가 올라가는 대신 **측정 8 이 재려는 "AI 가 자신 있게 틀리는 빈도"의 표본이 귀해진다** — 오분류율을 신뢰도의 함수로 관찰하는 것이 목표인 이상, 표본이 나오는 티어를 택한다.
+
+  **모델 ID 의 근거를 `API-CONTRACT.md` §3 에서 실물 조회로 바꾼 이유**: 원래 근거 사슬이 순환하고 있었다 — §3 의 값 자체가 AI 가 생성한 예시였는데, D-024 가 그것을 "기존 값"이라며 채택 근거로 인용하고, 다시 `.env.example`·테스트·workflow 로 퍼졌다. **어디에도 실물 확인이 없었다.** `GET /v1/models` 한 번으로 닫았고 값은 맞았지만, 맞은 것과 확인한 것은 다르다 (`evidence/failure-cases.md` 「미검출 위험」 참조).
 
   **structured outputs 를 쓰지 않는 이유 (중요)**: Anthropic SDK 는 JSON 스키마를 API 에 넘겨 응답 형식을 **보장**받는 기능을 제공한다. 이를 쓰면 enum 밖 카테고리도 깨진 JSON 도 API 레벨에서 차단되어 구현이 단순해지지만, **`CLASSIFY_FAILED` 가 거의 발생하지 않는다.** 그러면 D-022 가 규정한 `@Retryable(3)` → `@Recover` → `verdict=FAILED` 경로는 사실상 죽은 코드가 되고, 측정 2 의 판정 기준(`CLASSIFY_FAILED` 10% 초과 시 프롬프트/파서 수정)도 분모가 0 이라 의미를 잃는다.
 

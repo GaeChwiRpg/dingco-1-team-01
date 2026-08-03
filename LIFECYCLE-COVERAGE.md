@@ -7,11 +7,11 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-023) |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 기준 문서만 완료, `src/` 미착수 |
-| 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | ⏳ 스켈레톤만 (`test.skip`) |
-| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1 에 AI 리뷰 **5회** 수령·반영 (지적 21건) |
-| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | ⏳ 미착수 |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-025) |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. `service/`·`api/` 미착수, `.claude/` Commands·Hooks 미작성 |
+| 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 테스트 4개 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
+| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1~#5 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
+| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 산출물 3종 + `.env.example` 존재. 실기동·실 트래픽 검증은 Phase 3 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-002).
 > 코딩 단계는 전원 공동이며, 코드 범위 분할(P1/P2/P3)은 아래 참조.
@@ -26,7 +26,9 @@
 | **P2** 분류·검증 | 김준현 | AI 호출 + `@Retryable`, 카테고리별 임계값 비교, 감사 샘플링, 트랜잭션 ②, `SecurityConfig` | 계약 A 확정 (완료) + baseline `build.gradle` |
 | **P3** 검토·관측 | 김은빈 | 큐 조회·확정(트랜잭션 ③), 정책 API, `StatsService`, Actuator 메트릭 | 계약 B 확정 (완료) + baseline `V1__init_schema.sql` |
 
-> **baseline(PR #2) = 이용택.** 착수 조건이 없는 유일한 담당이고, `docker-compose.yml`·`Dockerfile` 이 본인의 배포·운영 단계 산출물이며, baseline 이 뜨는 순간 `tests/e2e` health 테스트가 통과해 테스트 단계 산출물도 함께 확보된다.
+> **baseline 은 PR #2~#5 로 완료됐다 — P1·P2·P3 의 착수 조건은 전부 해제된 상태다.** 셋 다 지금 바로 자기 패키지의 `service/`·`api/` 를 짜기 시작할 수 있다.
+>
+> **baseline = 이용택.** 착수 조건이 없는 유일한 담당이고, `docker-compose.yml`·`Dockerfile` 이 본인의 배포·운영 단계 산출물이며, baseline 이 뜨는 순간 `tests/e2e` health 테스트가 통과해 테스트 단계 산출물도 함께 확보된다.
 > 다만 **`settings.gradle` + `build.gradle` + wrapper 는 20분 안에 먼저 push** 한다 — 김준현의 첫 코드(`SecurityConfig`)는 도메인 의존이 0이라 이것만으로 착수 가능하고, baseline 전체를 완성한 뒤 push 하면 반나절을 통째로 대기시킨다.
 
 **배정 근거**
@@ -110,8 +112,11 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | PRD.md, DECISIONS.md | (Jira MCP 또는 dry-run) | ⏳ |
-| 코딩 | src/, CLAUDE.md, API-CONTRACT.md, .claude/ | claude.md/Commands/Hooks 모두 | ⏳ |
-| 테스트 | tests/e2e/, e2e.yml workflow | Playwright MCP 시나리오 sample | ⏳ |
-| 리뷰 | ai-review.yml | Claude Actions 통합 | ⏳ |
-| 운영 | MONITORING.md, docker-compose.yml, Dockerfile | Sentry MCP 가이드 | ⏳ |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-025) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 코딩 | ✅ src/ (엔티티·enum·repository·Flyway), CLAUDE.md, API-CONTRACT.md | 🔄 claude.md ✅ / Commands·Hooks 미작성 | 🔄 |
+| 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 테스트 4개 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
+| 리뷰 | ✅ ai-review.yml | ✅ PR #1~#5 전원 자동 리뷰 동작 | ✅ |
+| 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | ⏳ Sentry MCP 미연동 | 🔄 |
+
+> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장 / Sentry MCP.
+> 넷 다 산출물은 있고 **AI 도구 설정만 비어 있다.** 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서, 실제 잔여 작업이 가려진다.
