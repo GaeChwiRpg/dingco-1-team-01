@@ -4,6 +4,7 @@ import com.dingco.triage.domain.type.ErrorCategory;
 import com.dingco.triage.domain.type.Verdict;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
@@ -15,6 +16,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -25,9 +28,14 @@ import org.hibernate.type.SqlTypes;
  * {@code category} 를 덮어쓰면 오분류 증거가 사라지므로 절대 덮어쓰지 않는다 (불변 규칙 2).
  *
  * <p>소유: P2 (생성) / P3 ({@code finalCategory} 기록).
+ *
+ * <p><b>setter 를 만들지 않는다.</b> 특히 {@code category} 에 setter 가 열리면 불변 규칙 2
+ * ("{@code final_category} 기록 시 {@code category} 를 덮어쓰지 않는다")를 지킬 자리가 사라진다.
+ * 사람 확정은 {@code recordFinalCategory(...)} 처럼 의미를 가진 메서드로만 노출한다.
  */
 @Entity
 @Table(name = "classification_result")
+@EntityListeners(AuditingEntityListener.class)
 public class ClassificationResult {
 
     @Id
@@ -79,7 +87,8 @@ public class ClassificationResult {
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
-    @Column(name = "created_at", nullable = false)
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     protected ClassificationResult() {

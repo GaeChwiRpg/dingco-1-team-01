@@ -7,16 +7,21 @@ import com.dingco.triage.domain.repository.ClassificationPolicyRepository;
 import com.dingco.triage.domain.type.ErrorCategory;
 import com.dingco.triage.support.MySqlTestContainer;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -28,11 +33,14 @@ import org.springframework.test.context.ActiveProfiles;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@Import(MySqlTestContainer.class)
+@Import({MySqlTestContainer.class, BaselineSmokeTest.RetryProbeConfig.class})
 class BaselineSmokeTest {
 
     @Autowired
     private ClassificationPolicyRepository policyRepository;
+
+    @Autowired
+    private RetryProbe retryProbe;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -90,6 +98,18 @@ class BaselineSmokeTest {
         assertThat(countIndex("idx_error_group_status_category_last_seen")).isZero();
     }
 
+    @Test
+    @DisplayName("@Retryable 이 실제로 재시도한다 — @EnableRetry 가 붙어 있다는 것과 도는 것은 다르다")
+    void retryableActuallyRetries() {
+        retryProbe.reset();
+
+        assertThat(retryProbe.succeedOnThirdAttempt()).isEqualTo("ok");
+        assertThat(retryProbe.attempts())
+                .as("3이 아니라 1이면 프록시가 만들어지지 않은 것이다. 그 경우 D-016 의 UNIQUE 충돌 "
+                        + "재시도와 D-022 의 파싱 실패 재시도가 예외도 로그도 없이 사라진다")
+                .isEqualTo(3);
+    }
+
     private int countIndex(String indexName) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.statistics "
@@ -97,5 +117,39 @@ class BaselineSmokeTest {
                         + "AND index_name = ?",
                 Integer.class, indexName);
         return count == null ? 0 : count;
+    }
+
+    /**
+     * 재시도 인프라가 살아 있는지만 확인하는 탐침. 재시도 <b>정책</b>은 각 사용처가 정하므로
+     * 여기서는 "프록시가 만들어졌는가"만 본다.
+     */
+    @TestConfiguration(proxyBeanMethods = false)
+    static class RetryProbeConfig {
+
+        @Bean
+        RetryProbe retryProbe() {
+            return new RetryProbe();
+        }
+    }
+
+    static class RetryProbe {
+
+        private final AtomicInteger attempts = new AtomicInteger();
+
+        @Retryable(retryFor = IllegalStateException.class, maxAttempts = 3)
+        String succeedOnThirdAttempt() {
+            if (attempts.incrementAndGet() < 3) {
+                throw new IllegalStateException("attempt " + attempts.get() + " at " + Instant.now());
+            }
+            return "ok";
+        }
+
+        void reset() {
+            attempts.set(0);
+        }
+
+        int attempts() {
+            return attempts.get();
+        }
     }
 }

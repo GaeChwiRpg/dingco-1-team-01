@@ -4,6 +4,7 @@ import com.dingco.triage.domain.type.ErrorCategory;
 import com.dingco.triage.domain.type.GroupStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
@@ -12,6 +13,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 /**
  * 분류의 단위. 같은 에러가 1000번 발생해도 판정은 1번이다 (D-004).
@@ -28,9 +32,13 @@ import java.time.Instant;
  * <p>{@code current_category} / {@code current_confidence} 는 {@link ClassificationResult} 의
  * 역정규화 사본이다 (D-011). <b>판정이 확정되는 트랜잭션(②③) 안에서만</b> 갱신한다 —
  * 다른 경로에서 손대면 원본과 어긋난다 (불변 규칙 4).
+ *
+ * <p><b>setter 를 만들지 않는다.</b> 상태 변경은 의미를 가진 메서드로만 노출한다
+ * ({@code markClassified(...)} 처럼). 필드마다 setter 를 열면 위 두 규칙을 지킬 자리가 사라진다.
  */
 @Entity
 @Table(name = "error_group")
+@EntityListeners(AuditingEntityListener.class)
 public class ErrorGroup {
 
     @Id
@@ -71,9 +79,16 @@ public class ErrorGroup {
     @Column(name = "last_seen_at", nullable = false)
     private Instant lastSeenAt;
 
-    @Column(name = "created_at", nullable = false)
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /**
+     * ⚠️ P1 의 {@code occurrence_count} 원자적 UPDATE 는 영속성 컨텍스트를 거치지 않으므로
+     * 이 어노테이션이 동작하지 않는다. 해당 JPQL 에서 {@code updated_at} 과
+     * {@code last_seen_at} 을 직접 SET 해야 한다.
+     */
+    @LastModifiedDate
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

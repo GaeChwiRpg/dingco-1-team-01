@@ -1,9 +1,13 @@
 # 시연·측정용 스택 (배포·운영 단계 산출물).
 #
-# 측정 5ⓔ 의 A/B:
-#   docker compose up -d                                          → V1 만 (후보 인덱스 없음)
-#   FLYWAY_TARGET=2 docker compose up -d --force-recreate app      → V2 적용
-#   docker compose down -v                                        → 되돌림 (Flyway 는 undo 가 없다)
+# 측정 5ⓔ 의 A/B — 반드시 같은 데이터 위에서 한다:
+#   1) docker compose up -d                                       → V1 만 (후보 인덱스 없음)
+#   2) 부하 투입 → p95 기록                                          ← A
+#   3) FLYWAY_TARGET=2 docker compose up -d --force-recreate app   → 데이터 유지된 채 인덱스만 추가
+#   4) 같은 부하 재투입 → p95 기록                                    ← B
+#
+# docker compose down -v 는 "다음 실험을 처음부터" 할 때만. 3)~4) 사이에 쓰면 데이터 분포가
+# 달라져 두 수치를 비교할 수 없다. 인덱스만 되돌리는 방법은 V2__candidate_index.sql 주석 참조.
 
 services:
   mysql:

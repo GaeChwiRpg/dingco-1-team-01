@@ -4,6 +4,7 @@ import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.domain.type.QueueStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
@@ -15,6 +16,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 /**
  * 검토 큐 항목. 계약 B 의 실체 — P2 가 삽입하고 P3 가 소비한다.
@@ -24,9 +27,14 @@ import java.time.Instant;
  *
  * <p>{@code classificationResult} 는 세 reason 모두 <b>반드시 존재</b>한다 —
  * {@code FAILED} 도 행은 남기기 때문이다 (계약 B).
+ *
+ * <p><b>setter 를 만들지 않는다.</b> {@code status} 에 setter 가 열리면 상태 검사와
+ * {@code @Version} 을 함께 통과해야 확정된다는 D-021 의 규칙이 우회 가능해진다.
+ * 확정은 {@code resolve(reviewerId, finalCategory)} 처럼 한 메서드로만 노출한다.
  */
 @Entity
 @Table(name = "review_queue")
+@EntityListeners(AuditingEntityListener.class)
 public class ReviewQueueItem {
 
     @Id
@@ -55,7 +63,8 @@ public class ReviewQueueItem {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
-    @Column(name = "created_at", nullable = false)
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     /**
