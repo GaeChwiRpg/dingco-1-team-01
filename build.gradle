@@ -1,0 +1,54 @@
+plugins {
+    id 'java'
+    // D-003: Spring Boot 3.3 + Java 21. start.spring.io 는 3.3.x 를 더 이상 제공하지 않으므로
+    // (현재 4.0.7 / 4.1.0 만) 플러그인 버전을 직접 못박는다.
+    id 'org.springframework.boot' version '3.3.13'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.dingco'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    // 컴파일 타깃은 21 로 고정한다. 팀원 머신의 기본 JDK 가 무엇이든 산출물이 같아야 한다.
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.boot:spring-boot-starter-cache'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // @Retryable / @Recover — AI 호출 재시도(D-022)와 UNIQUE 충돌 재시도(D-016) 양쪽에서 쓴다.
+    // spring-retry 는 AOP 프록시가 필요하므로 starter-aop 가 함께 있어야 한다.
+    implementation 'org.springframework.retry:spring-retry'
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+    // D-023: 스키마는 Flyway 로 관리한다. ddl-auto 로는 후보 인덱스 A/B 측정(측정 5ⓔ)이 불가능하다.
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-mysql'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    // AI SDK 는 여기에 없다 — AI 호출은 P2 범위이고, 프로바이더가 문서 간에 어긋나 있어
+    // (D-003/PRD 는 OpenAI, API-CONTRACT §3 예시는 claude-sonnet-5) baseline 이 선점하지 않는다.
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // 측정 5(EXPLAIN)·7(동시성)이 의미를 가지려면 테스트 DB 가 운영과 같은 엔진이어야 한다.
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:mysql'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
