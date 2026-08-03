@@ -1,0 +1,14 @@
+# 테스트 전용 오버레이. main 의 application.yml 위에 덮인다 (profile 별 파일은 additive).
+#
+# datasource 는 @ServiceConnection 이 Testcontainers 값으로 채우므로 여기 없다.
+spring:
+  cache:
+    # Redis 컨테이너를 하나 더 띄우지 않기 위한 절충.
+    # 캐시 hit rate(측정 11)는 실행 프로파일에서 재는 것이지 여기서 재는 값이 아니다.
+    type: simple
+
+management:
+  health:
+    redis:
+      # 위와 같은 이유 — Redis 가 없으므로 health 를 DOWN 으로 만들지 않는다.
+      enabled: false

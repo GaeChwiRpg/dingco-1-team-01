@@ -135,7 +135,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant W as AiClassifyWorker (@Async)
-    participant AI as OpenAI API
+    participant AI as Anthropic API
     participant P as ClassificationPolicy
     participant DB as RDB
 
@@ -214,7 +214,7 @@ stateDiagram-v2
 | AI 신뢰성 | 신뢰도 0.8 이상 구간 분류 일치율 ≥ 90% | 정답 레이블 50건 대조 |
 | **감사 유효성** | 자동 승인 건의 오분류율을 수치로 산출 가능. 단 앵커링 편향으로 **하한값** | 감사 표본 `category` vs `final_category` 대조 |
 | **blind 무결성** | 검토 큐 응답만으로 감사 표본을 역산할 수 없어야 함 | 응답 필드 전수 점검 + 역산 가능성 리뷰 |
-| 보안 | 에러 수신은 API key, 검토/정책 endpoint는 역할 기반 인가. OpenAI API key는 환경변수만 (`.env` commit 금지) | 403 케이스 E2E |
+| 보안 | 에러 수신은 API key, 검토/정책 endpoint는 역할 기반 인가. Anthropic API key는 환경변수만 (`.env` commit 금지) | 403 케이스 E2E |
 
 > `CLAUDE.md` AI 검증 규칙에 따라 **응답시간·throughput 수치는 AI 추정값을 evidence로 쓰지 않는다.** 위 목표치는 목표일 뿐이고, 확정 수치는 본인 `hey` / `wrk` 실측으로만 기록한다.
 
@@ -265,7 +265,7 @@ stateDiagram-v2
 | --- | --- |
 | **fingerprint 과도 병합** — 정규화가 공격적이면 다른 에러가 한 그룹에 묶여 **오분류 1건이 그룹 전체(수천 건)로 전파** | 정규화 단계를 예외클래스 + 상위 3프레임 + 값 마스킹으로 한정. 그룹마다 `sample_message` 보관해 검토자가 이상 병합을 감지 가능하게. 투입 건수 대비 그룹 수를 측정해 검증 |
 | **fingerprint 과소 병합** — 라인번호·동적값이 남아 같은 에러가 여러 그룹 → AI 절감 실패 | 마스킹 규칙(숫자·UUID·타임스탬프·경로) 단위 테스트. 절감률 목표(95%) 미달 시 규칙 보강 |
-| OpenAI API가 신뢰도 점수를 직접 주지 않음 | 프롬프트로 `{"category":..., "confidence":0.0~1.0}` JSON 강제. 파싱 실패 시 **무조건 격리** (fail-safe 방향) — 단 이는 판정 방향 지시이지 저장 값이 아니다. `confidence` 에 `0` 을 쓰지 않고 재시도 소진 시 `verdict=FAILED` + `category`·`confidence` 모두 `null` 로 남긴다 (D-022). `0` 을 쓰면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염된다 |
+| Anthropic API가 신뢰도 점수를 직접 주지 않음 | 프롬프트로 `{"category":..., "confidence":0.0~1.0}` JSON 강제 (structured outputs 는 쓰지 않는다 — 파싱 실패를 관찰 가능하게 두기 위해서다, D-024). 파싱 실패 시 **무조건 격리** (fail-safe 방향) — 단 이는 판정 방향 지시이지 저장 값이 아니다. `confidence` 에 `0` 을 쓰지 않고 재시도 소진 시 `verdict=FAILED` + `category`·`confidence` 모두 `null` 로 남긴다 (D-022). `0` 을 쓰면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염된다 |
 | 트랜잭션 범위 설계 실수로 롤백이 안 먹음 | 롤백 시나리오 통합 테스트를 **Day 3 필수 체크포인트**로 지정 |
 | **감사 표본이 통계적으로 부족** — 자동 승인이 하루 100건이면 5건/일 | 감사 비율을 설정 가능하게 (ADMIN). Phase 2 측정은 정답 레이블 50건 실험 투입으로 표본 확보 |
 | **감사 blind 누설** — 검토자가 감사 건임을 알면 결과가 낙관적으로 편향 | `reason` 뿐 아니라 `confidence`·`threshold`·`category` 필터까지 모두 미노출. `AUDIT_SAMPLE` 은 정의상 `confidence >= threshold` 라 두 값만으로 역산되기 때문 (D-010). 신규 응답 필드 추가 시 역산 가능성 점검을 의무화 |

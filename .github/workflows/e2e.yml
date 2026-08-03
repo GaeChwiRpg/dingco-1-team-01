@@ -1,0 +1,93 @@
+name: e2e
+
+# 테스트 단계 (라이프사이클 3단계) 산출물.
+#
+# baseline 이 뜨는 순간 tests/e2e 의 health 테스트가 통과하므로, 그 사실을 CI 로 고정한다.
+# 여기서 검증하는 것은 "앱이 실제로 기동한다"이고, 그 안에는 다음이 함께 들어 있다:
+#   · Flyway V1 이 깨끗이 적용됨
+#   · ddl-auto=validate 아래에서 엔티티 5개가 V1 DDL 과 일치함 (어긋나면 부팅 실패)
+#   · MySQL / Redis 와의 연결이 실제로 성립함
+#
+# 즉 이 workflow 가 red 면 세 패키지 전부의 착수 전제가 깨진 것이다.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  # develop 머지 후 한 번 더 도는 것은 의도한 것이다. PR 은 "머지되면 어떻게 되는가"를
+  # 예측한 결과이고, 이쪽은 실제로 머지된 develop 이 green 인지를 본다.
+  # 세 패키지가 병렬로 머지하는 동안 서로의 변경이 겹쳐 깨지는 것은 여기서만 잡힌다.
+  push:
+    branches: [develop]
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    # compose 를 부르는 스텝이 기동 말고도 있다 (로그 수집·정리).
+    # 이 값들을 기동 스텝에만 걸면 docker compose down 이 변수를 못 찾아 실패하므로 job 레벨에 둔다.
+    env:
+      # CI 전용 값. 운영 비밀은 여기 두지 않는다 — 헌법 「작업 경계」.
+      MYSQL_ROOT_PASSWORD: ci-root
+      DB_PASSWORD: ci-pw
+      # 기본 1 = V1 만. 후보 인덱스는 측정 5ⓔ 로 이득이 확인되기 전까지 켜지 않는다 (D-023).
+      FLYWAY_TARGET: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # --wait 는 compose 의 healthcheck 에 기대고 있다. app 서비스의 healthcheck 를
+      # docker-compose.yml 에서 없애면 여기는 "컨테이너가 떴다"까지만 보고 통과하고,
+      # 부팅 미완 상태에서 Playwright 가 붙어 간헐 실패가 된다. 셋 다 healthcheck 필수.
+      - name: 스택 기동 (mysql + redis + app)
+        run: |
+          docker compose up -d --build --wait --wait-timeout 300
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      # 브라우저 바이너리를 받지 않는다 (팀 리뷰 반영).
+      # tests/e2e 는 전부 Playwright 의 `request` fixture(APIRequestContext)로 HTTP 를 직접
+      # 호출한다 — 브라우저를 띄우는 `page` fixture 를 쓰지 않으므로 chromium 이 필요 없다.
+      # playwright.config.ts 에 projects·browserName 설정이 없는 것도 같은 이유다.
+      # 검증: PLAYWRIGHT_BROWSERS_PATH 를 빈 디렉토리로 강제해도 통과한다 (1 passed / 1 skipped).
+      #
+      # 검토자용 화면이 생겨 `page` fixture 를 쓰게 되면 아래를 되살린다:
+      #   npx playwright install --with-deps chromium
+      - name: 의존성 설치
+        working-directory: tests/e2e
+        run: npm ci
+
+      # BASE_URL 을 여기서 주지 않는다. playwright.config.ts 가
+      # `process.env.BASE_URL ?? "http://localhost:8080"` 로 기본값을 갖고 있어,
+      # 여기 또 적으면 포트가 두 곳에 박혀 한쪽만 바뀌었을 때 조용히 깨진다.
+      - name: E2E 실행
+        working-directory: tests/e2e
+        run: npx playwright test
+
+      - name: 실패 시 컨테이너 로그 수집
+        if: failure()
+        # redis 를 포함한다 — 이 workflow 는 "Redis 연결이 실제로 성립함"까지 검증 범위로 두는데
+        # 로그에서 빼면 Redis 기동 실패를 app 로그 추측으로만 좇게 된다.
+        run: |
+          docker compose logs --no-color app mysql redis | tee compose.log
+
+      - name: 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          # 콘솔 로그는 UI 에서 잘리기 쉬워 compose.log 를 함께 올린다.
+          path: |
+            tests/e2e/playwright-report/
+            compose.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: 스택 정리
+        if: always()
+        run: docker compose down -v

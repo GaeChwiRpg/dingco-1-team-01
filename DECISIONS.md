@@ -47,7 +47,7 @@
 ### D-003. 기술 스택 — Spring Boot 3.3 + Java 21 + JPA + MySQL 8 + Redis
 
 - **일자**: 2026-07-30
-- **상태**: 채택
+- **상태**: 채택 — AI 프로바이더는 D-024 로 대체 (OpenAI → Anthropic)
 - **배경**: 부트캠프 학습 자산이 Spring Boot 3.3 / Java 21 기준. 5일 안에 완주해야 하므로 학습 비용이 드는 선택은 배제.
 - **선택지**: Kotlin / Spring WebFlux / Quarkus 검토 후 모두 기각 — WebFlux 는 `@Async` + `@Retryable` 실습 의도와 충돌하고, 나머지는 학습 비용 대비 이득 없음.
 - **결정**: Spring Boot 3.3 + Java 21 + Spring Data JPA + MySQL 8 + Redis(캐시) + Docker Compose. AI 는 OpenAI API. 인증은 Phase 2 헤더 stub → Phase 3 JWT.
@@ -421,4 +421,40 @@
 - **영향**: `build.gradle`(flyway 의존성), `application.yml`, `src/main/resources/db/migration/`, `PRD.md` 측정 5, `CLAUDE.md` 인덱스 표 ⚠️ 2행
 - **재평가**: 측정 5ⓔ 에서 쓰기 지연 증가가 유의하지 않으면(p95 차이가 측정 노이즈 이내) V2 를 V1 으로 승격한다. 유의하면 D-013 대로 `sort=lastSeenAt` 유도를 유지하고 후보 인덱스를 폐기한다
 
-<!-- 다음 결정 추가 시 D-024 부터 -->
+### D-024. AI 프로바이더를 Anthropic 으로 확정 — D-003 의 "OpenAI API" 대체
+
+- **일자**: 2026-08-03
+- **상태**: 채택
+- **배경**: 프로바이더가 문서 간에 어긋난 채로 남아 있었다. D-003 과 `PRD.md`(시퀀스 다이어그램·보안·리스크 3곳)는 **OpenAI**, `API-CONTRACT.md` §3 의 응답 예시는 `"model": "claude-sonnet-5"`. baseline PR 은 이 충돌을 알고도 선점을 피해 `build.gradle` 에 AI SDK 의존성을 넣지 않고 주석으로만 남겼다. `TRI-14`(US-4) 는 착수 전 확정을 선결 과제로 명시하고 있고, 확정 없이는 SDK 의존성·모델 ID·API key 이름·JSON 강제 방식이 모두 갈린다.
+- **선택지**:
+  1. **OpenAI** — D-003·PRD 다수결. `API-CONTRACT.md` §3 만 고치면 됨
+  2. **Anthropic** — `API-CONTRACT.md` 의 기존 값과 일치. `.github/workflows/ai-review.yml` 이 이미 `ANTHROPIC_API_KEY` 시크릿을 쓰고 있어 키 확보 경로가 하나 줄어든다. 대신 `PRD.md` 3곳 정정 필요
+  3. 프로바이더 추상화 계층을 두고 둘 다 지원 — Phase 2 범위 초과. 5일 안에 완주해야 하는 D-003 의 전제와 어긋난다
+- **결정**: 2번 Anthropic.
+
+  | 항목 | 확정값 |
+  | --- | --- |
+  | SDK | `com.anthropic:anthropic-java:2.34.0` |
+  | 모델 | `claude-sonnet-5` — `API-CONTRACT.md` §3 의 기존 값 |
+  | API key | `ANTHROPIC_API_KEY` 환경변수. SDK 가 이 이름을 자동으로 읽어 `AnthropicOkHttpClient.fromEnv()` 로 끝난다 |
+  | JSON 강제 | **프롬프트만.** structured outputs 를 쓰지 않는다 |
+
+  **모델을 `claude-sonnet-5` 로 둔 이유**: 에러 분류는 10종 enum 중 하나를 고르는 단순 분류 작업이라 이 티어로 충분하다. 상위 모델은 분류 정확도가 올라가는 대신 **측정 8 이 재려는 "AI 가 자신 있게 틀리는 빈도"의 표본이 귀해진다** — 오분류율을 신뢰도의 함수로 관찰하는 것이 목표인 이상, 표본이 나오는 티어를 택한다.
+
+  **structured outputs 를 쓰지 않는 이유 (중요)**: Anthropic SDK 는 JSON 스키마를 API 에 넘겨 응답 형식을 **보장**받는 기능을 제공한다. 이를 쓰면 enum 밖 카테고리도 깨진 JSON 도 API 레벨에서 차단되어 구현이 단순해지지만, **`CLASSIFY_FAILED` 가 거의 발생하지 않는다.** 그러면 D-022 가 규정한 `@Retryable(3)` → `@Recover` → `verdict=FAILED` 경로는 사실상 죽은 코드가 되고, 측정 2 의 판정 기준(`CLASSIFY_FAILED` 10% 초과 시 프롬프트/파서 수정)도 분모가 0 이라 의미를 잃는다.
+
+  이 프로젝트의 주제는 **AI 가 실패하는 방식을 수치로 관찰하는 것**이다. 실패를 관찰하겠다고 선언한 시스템이 실패를 발생시키지 않는 장치를 먼저 켜면 앞뒤가 맞지 않는다. 편의를 포기하고 관찰 가능성을 택한다 — D-022 와 같은 판단이다.
+- **영향**:
+  - `build.gradle` — SDK 의존성 1행 추가 (baseline 의 보류 주석 제거)
+  - `.env` / `.env.example` — `AI_API_KEY` → `ANTHROPIC_API_KEY` 로 이름 변경 (SDK 자동 인식)
+  - `application.yml` — 모델 ID·타임아웃 설정 키
+  - `PRD.md` — "OpenAI API" 3곳 (§시퀀스 다이어그램 / 보안 / 리스크)
+  - `DECISIONS.md` — D-003 `상태` 필드 1줄 (본문 불변, D-020 선례)
+  - `CLAUDE.md` 「작업 경계」 — 비밀 정보 예시의 "OpenAI API key" 1곳. 규칙의 실질은 그대로이고 프로바이더 이름만 따라간다
+  - `service/AiClassificationService` — `TRI-14` 구현 시점
+- **재평가**:
+  - 신뢰도 0.8 이상 구간의 분류 일치율이 90% 미달이면(E2 완료 기준) 모델을 `claude-opus-5` 로 올리는 것을 검토한다. 단 **모델을 바꾸면 측정 8 의 수치는 그 모델에 한정된 결론**이 되므로 evidence 에 모델 ID 를 함께 기록한다
+  - 측정 2 에서 `CLASSIFY_FAILED` 가 10% 를 넘고 재시도로 회수되지 않으면(D-022 재평가 조건) 프롬프트를 먼저 고치고, 그래도 안 되면 structured outputs 도입을 후속 항목으로 재검토한다
+  - AI API 장기 장애 시 전건이 수동 처리 대상이 되는 한계는 Phase 2 에서 명시만 한다. 백오프 재분류·circuit breaker 는 Phase 3 항목 G
+
+<!-- 다음 결정 추가 시 D-025 부터 -->

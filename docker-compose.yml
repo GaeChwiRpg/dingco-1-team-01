@@ -1,0 +1,79 @@
+# 시연·측정용 스택 (배포·운영 단계 산출물).
+#
+# 측정 5ⓔ 의 A/B — 반드시 같은 데이터 위에서 한다:
+#   1) docker compose up -d                                       → V1 만 (후보 인덱스 없음)
+#   2) 부하 투입 → p95 기록                                          ← A
+#   3) FLYWAY_TARGET=2 docker compose up -d --force-recreate app   → 데이터 유지된 채 인덱스만 추가
+#   4) 같은 부하 재투입 → p95 기록                                    ← B
+#
+# docker compose down -v 는 "다음 실험을 처음부터" 할 때만. 3)~4) 사이에 쓰면 데이터 분포가
+# 달라져 두 수치를 비교할 수 없다. 인덱스만 되돌리는 방법은 V2__candidate_index.sql 주석 참조.
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 를 .env 에 설정하세요}
+      MYSQL_DATABASE: ${DB_NAME:-triage_db}
+      MYSQL_USER: ${DB_USER:-triage}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 를 .env 에 설정하세요}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-triage_db}
+      DB_USER: ${DB_USER:-triage}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # 기본 1 = V1 만. 측정 5ⓔ 때만 2 로 올린다 (D-023).
+      FLYWAY_TARGET: ${FLYWAY_TARGET:-1}
+      # AI 분류용 (D-024, Anthropic). 이 이름이어야 SDK 가 자동으로 읽는다.
+      # ⚠️ 지금은 빈 값을 허용한다 — AI 호출 코드가 아직 없어 P1/P3 담당자는 키 없이도
+      #    인프라를 띄울 수 있어야 하기 때문이다. TRI-14 착수로 AiClassificationService 가
+      #    들어오면 ${ANTHROPIC_API_KEY:?} 로 승격한다. 그때부터는 키 없이 뜨는 앱이
+      #    "분류가 조용히 전부 실패하는 앱"이 되므로 기동 자체를 막는 편이 맞다.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # POST /api/errors 의 X-Api-Key (Phase 2 헤더 stub). TRI-26 착수 시 :? 로 승격.
+      SDK_API_KEY: ${SDK_API_KEY:-}
+    depends_on:
+      mysql:
+        # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  mysql-data:
