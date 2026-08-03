@@ -50,11 +50,17 @@ jobs:
           cache: npm
           cache-dependency-path: tests/e2e/package-lock.json
 
-      - name: Playwright 설치
+      # 브라우저 바이너리를 받지 않는다 (팀 리뷰 반영).
+      # tests/e2e 는 전부 Playwright 의 `request` fixture(APIRequestContext)로 HTTP 를 직접
+      # 호출한다 — 브라우저를 띄우는 `page` fixture 를 쓰지 않으므로 chromium 이 필요 없다.
+      # playwright.config.ts 에 projects·browserName 설정이 없는 것도 같은 이유다.
+      # 검증: PLAYWRIGHT_BROWSERS_PATH 를 빈 디렉토리로 강제해도 통과한다 (1 passed / 1 skipped).
+      #
+      # 검토자용 화면이 생겨 `page` fixture 를 쓰게 되면 아래를 되살린다:
+      #   npx playwright install --with-deps chromium
+      - name: 의존성 설치
         working-directory: tests/e2e
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npm ci
 
       # BASE_URL 을 여기서 주지 않는다. playwright.config.ts 가
       # `process.env.BASE_URL ?? "http://localhost:8080"` 로 기본값을 갖고 있어,
