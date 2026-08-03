@@ -31,6 +31,7 @@ ClassificationResult(id, error_group_id, category, confidence, model, raw_respon
                      verdict, final_category, attempt_count, created_at)
   └ verdict: AUTO_ACCEPTED | NEEDS_REVIEW | FAILED
   └ category = AI 제안, final_category = 사람 확정. 둘 다 보존 (덮어쓰기 금지)
+  └ category / confidence 는 nullable. verdict=FAILED 일 때만 둘 다 null (D-022)
 
 ReviewQueueItem(id, error_group_id, classification_result_id, reason, status,
                 reviewer_id, resolved_at, created_at, version)
@@ -142,8 +143,8 @@ ingest(cmd)                      ← 트랜잭션 없음. 재시도 루프는 �
 ### AI 호출 규칙
 
 - 프롬프트로 `{"category": ..., "confidence": 0.0~1.0}` JSON 강제
-- **파싱 실패 = `confidence 0` 으로 간주해 무조건 격리** (fail-safe 는 항상 격리 쪽)
-- 재시도 3회 소진 시 `@Recover` 에서 `CLASSIFY_FAILED` 로 큐 삽입. 조용히 삼키지 말 것
+- **파싱 실패는 무조건 격리** (fail-safe 는 항상 격리 쪽). 단 이는 **판정 방향 지시이지 저장 값이 아니다** — `confidence` 컬럼에 `0` 을 쓰지 않는다 (D-022). 0 을 쓰면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염된다
+- 파싱 실패도 `@Retryable` 재시도 대상. 3회 소진 시 `@Recover` 에서 `verdict=FAILED` (`category`·`confidence` 모두 null) + `CLASSIFY_FAILED` 로 큐 삽입. 조용히 삼키지 말 것
 - API key 는 환경변수만. 코드/설정 파일 하드코딩 금지
 
 ### 감사 샘플링 blind 규칙
@@ -171,8 +172,11 @@ ErrorGroupCreatedEvent(errorGroupId, fingerprint, sampleMessage, stackTrace)
 
 ```text
 error_group_id, classification_result_id, reason, status=PENDING, created_at, version=0
-  └ reason 별 보장: LOW_CONFIDENCE / AUDIT_SAMPLE 은 classification_result_id 반드시 존재
-                    CLASSIFY_FAILED 는 classification_result.category = null
+  └ classification_result_id 는 세 reason 모두 반드시 존재 (FAILED 도 행은 남긴다)
+  └ reason 판별 기준은 verdict 다. category=null 은 결과일 뿐 판별식이 아니다 — D-022
+       LOW_CONFIDENCE  ← verdict=NEEDS_REVIEW   (category != null, confidence < threshold)
+       CLASSIFY_FAILED ← verdict=FAILED         (category, confidence 모두 null)
+       AUDIT_SAMPLE    ← verdict=AUTO_ACCEPTED  (confidence >= threshold)
   └ P3 는 reason 을 조회 응답에 노출하지 않는다 (blind, D-010)
 ```
 

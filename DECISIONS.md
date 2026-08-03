@@ -350,4 +350,47 @@
 - **영향**: `API-CONTRACT.md` v0.5 → v0.6 (공통 오류 표 + §5 원인 표 신설), `CLAUDE.md` 락 전략 3행, `PRD.md` US-10 + 측정 7
 - **재평가**: 검토자 수가 늘어 `CONCURRENT_UPDATE` 가 빈발하면 claim(선점) 모델로 전환 (Phase 3 항목 E)
 
-<!-- 다음 결정 추가 시 D-022 부터 -->
+### D-022. 파싱 실패는 `confidence 0` 이 아니라 `FAILED` 다 — 판정 의미와 저장 값의 분리
+
+- **일자**: 2026-07-31
+- **상태**: 채택
+- **배경**: 코드 착수 직전 문서 정합 점검에서 발견. 파싱 실패 처리를 두고 문서 3곳이 서로 다른 전제를 깔고 있다.
+  - `CLAUDE.md` 「AI 호출 규칙」: *"파싱 실패 = `confidence 0` 으로 간주해 무조건 격리"*
+  - `PRD.md` §시퀀스: 재시도 소진 시 `classification_result(FAILED)` + `review_queue(CLASSIFY_FAILED)`
+  - 계약 B: *"`CLASSIFY_FAILED` 는 `classification_result.category = null`"*
+
+  **충돌 지점**: `confidence 0` 을 그대로 저장하면 파싱 실패 건은 `0 < threshold` 이므로 `LOW_CONFIDENCE` 로 흘러간다. 그런데 파싱이 깨졌으니 `category` 도 null 이다. 즉 계약 B 가 구분자로 쓰는 `category = null` 이 `CLASSIFY_FAILED` 를 더 이상 특정하지 못한다. 게다가 파싱 실패가 `@Retryable` 재시도 대상인지도 어디에도 없다 — D-008 이 일시적/영구적 실패 구분을 Phase 3(항목 G)으로 이월하면서 생긴 틈이다.
+  세 담당자의 코드가 전부 여기에 걸린다: 측정 2의 사유별 분모(P2), 측정 8의 감사 모집단(P2), `suggestedCategory` 표시 로직(P3), `@Recover` 경로(P2).
+- **선택지**:
+  1. `confidence = 0` 을 실제로 저장하고 `LOW_CONFIDENCE` 로 처리 — 구현은 가장 단순하나 **측정 8의 신뢰도 구간 집계가 오염된다.** 최하위 구간에 "AI 가 스스로 0 에 가깝다고 신고한 건"과 "응답이 깨져서 신뢰도라는 게 애초에 없는 건"이 섞인다. 오분류율을 신뢰도의 함수로 보겠다는 이 프로젝트의 핵심 측정이 무너짐
+  2. `category = null` 대신 새 컬럼(`parse_failed` 플래그)을 추가 — `verdict = FAILED` 가 이미 그 정보를 담고 있어 중복
+  3. **판정 의미와 저장 값을 분리한다** — "`confidence 0` 으로 간주"는 *격리 쪽으로 실패하라*는 **판정 방향 지시**이지 컬럼에 쓸 값이 아니다
+- **결정**: 3번. 확정 규격은 다음과 같다.
+
+  ```text
+  파싱 실패 → @Retryable 재시도 대상에 포함한다
+    ├ 재시도 중 성공 : 정상 경로
+    └ 3회 소진      : @Recover →
+                       classification_result(verdict=FAILED,
+                                              category=null, confidence=null)
+                       review_queue(reason=CLASSIFY_FAILED)
+                       error_group.status=UNCLASSIFIED
+
+  confidence 컬럼에 0 을 쓰지 않는다. nullable 이다.
+  ```
+
+  **파싱 실패를 재시도 대상에 넣는 이유**: LLM 응답 형식 흔들림은 재현 가능한 영구 실패가 아니라 확률적 사건이다. 재시도로 회수되는 건이 실제로 있다면 큐 적체가 줄고, 없다면 측정 2에서 `CLASSIFY_FAILED` 건수로 드러난다. 어느 쪽이든 관찰된다. (429/5xx 와의 구분은 D-008 대로 Phase 3 이월 — **재시도 여부는 같고 백오프 전략만 다르므로 Phase 2 에서 구분하지 않아도 정확도가 떨어지지 않는다.**)
+
+  **큐 사유 판별 기준을 `reason` 자체로 고정한다.** `category = null` 은 결과일 뿐 판별식이 아니다.
+
+  | reason | 성립 조건 |
+  | --- | --- |
+  | `LOW_CONFIDENCE` | `verdict = NEEDS_REVIEW` — `category != null` **AND** `confidence < threshold` |
+  | `CLASSIFY_FAILED` | `verdict = FAILED` — `category`, `confidence` 모두 null |
+  | `AUDIT_SAMPLE` | `verdict = AUTO_ACCEPTED` — `confidence >= threshold` |
+
+  **blind 규칙과의 관계 (D-010/D-019)**: `CLASSIFY_FAILED` 는 `suggestedCategory: null` 로 응답하므로 검토자에게 구별된다. 이는 blind 위반이 아니다 — 가려야 하는 것은 **감사 표본**이고, 감사 표본은 정의상 `AUTO_ACCEPTED` 라 `suggestedCategory` 가 **항상 존재**한다. null 여부로 드러나는 건 `CLASSIFY_FAILED` 쪽이며, 그것은 감사 표본이 아님을 알려줄 뿐 어느 것이 감사 표본인지는 알려주지 않는다. D-019 분류로는 **결정적 역산 아님**.
+- **영향**: `CLAUDE.md` 「AI 호출 규칙」 1줄 + 계약 B 구분자 문구, `PRD.md` §기술 리스크 1행, `API-CONTRACT.md` `confidence` nullable 명시, `evidence/failure-cases.md` 미검증 항목 2줄
+- **재평가**: 측정 2에서 `CLASSIFY_FAILED` 가 전체의 10% 를 넘으면 재시도로 회수되지 않는 구조적 실패이므로 프롬프트/파서를 고친다. 반대로 0 건이면 재시도가 실제로 회수하고 있는지(재시도 횟수 로그)를 확인한다 — 0 건이 "문제 없음"과 "측정 안 됨" 둘 다일 수 있기 때문
+
+<!-- 다음 결정 추가 시 D-023 부터 -->

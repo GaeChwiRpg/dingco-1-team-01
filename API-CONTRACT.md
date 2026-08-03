@@ -201,7 +201,8 @@ X-Api-Key: sdk-live-a1b2c3
 ```
 
 - `suggestedCategory` 는 남긴다 — 이것까지 가리면 `CLASSIFY_FAILED`(제안 없음)와 나머지가 구별되고, 검토 생산성도 크게 떨어진다
-- `CLASSIFY_FAILED` 항목은 `suggestedCategory: null`
+- `CLASSIFY_FAILED` 항목은 `suggestedCategory: null` (분류 결과의 `category` 가 null 이므로 — D-022)
+- **이 null 은 blind 위반이 아니다 (D-022)**: 가려야 하는 대상은 **감사 표본**이고, 감사 표본은 정의상 `AUTO_ACCEPTED` 라 `suggestedCategory` 가 **항상 존재**한다. 즉 null 인 항목은 "감사 표본이 **아님**"만 알려줄 뿐, 나머지 중 어느 것이 감사 표본인지는 여전히 알려주지 않는다. D-019 분류로 **결정적 역산 아님**
 - **알려진 한계 1 — 앵커링 (D-010)**: AI 제안을 보여주므로 검토자에게 앵커링 편향이 남는다. 사람이 먼저 분류하고 그 다음 AI 제안을 공개하는 2단계 방식은 Phase 3 (항목 I)
 - **알려진 한계 2 — 확률적 추론 (D-019)**: `sampleMessage` 는 **제거할 수 없다.** 검토자가 에러 원문을 못 읽으면 분류 작업 자체가 불가능하기 때문이다. 다만 숙련된 검토자는 *"이건 딱 봐도 명확한데 왜 내 큐에 있지"* 로 감사 표본을 **확률적으로** 추론할 수 있다. `occurrenceCount` 도 약한 신호가 된다
 - 두 한계의 성격이 다르다 — **결정적 역산은 0건이어야 하고**(그건 결함이다), **확률적 추론은 남는다**(그건 감수한다). 따라서 `audit.misclassificationRate` 는 **하한값**으로만 해석한다
@@ -244,6 +245,7 @@ X-User-Role: REVIEWER
 ```
 
 - `matched: false` = AI 제안과 사람 확정 불일치 → 오분류 집계 대상
+- **`suggestedCategory` 가 null(= `CLASSIFY_FAILED`)이면 `matched` 도 `null`** — 비교할 AI 제안이 없으므로 `false` 가 아니다 (D-022). `false` 로 채우면 측정 8 의 오분류 건수에 "AI 가 틀린 건"과 "AI 가 아예 답을 못 낸 건"이 합산된다
 - 감사 표본이었더라도 응답에 그 사실은 드러내지 않는다 (blind 유지)
 
 **오류**: 400 (`finalCategory` enum 불일치), 404, **409 (확정 충돌 — 아래 2종)**
@@ -414,4 +416,5 @@ X-User-Role: ADMIN
 | v0.4 | 2026-07-30 | AI 리뷰 3차 반영 — `GET /api/stats` 의 `cacheHitRate` 를 `aiCallSavings` 밖으로 분리해 `cache` 객체로 독립 (캐시 hit rate ≠ AI 절감률, D-014) | #1 |
 | v0.5 | 2026-07-30 | AI 리뷰 4차 반영 — `GET /api/stats` 에 `classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 추가 (판정 롤백으로 방치된 그룹 탐지, D-017). §4 blind 한계를 결정적 역산/확률적 추론으로 구분 (D-019) | #1 |
 | v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — `PATCH /api/review-queue/{id}` 의 409 를 `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 경합) 2종 `code` 로 분리. 상태 검사와 `@Version` 이 각각 다른 창을 막는다는 근거 명시 (D-021) | #1 |
+| v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. §4 `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, §5 `matched` 를 nullable 로 정정 (AI 제안이 없으면 `false` 가 아니라 `null`) (D-022) | #2 |
 <!-- 변경 시 한 줄씩 추가 -->
