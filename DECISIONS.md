@@ -393,4 +393,32 @@
 - **영향**: `CLAUDE.md` 「AI 호출 규칙」 1줄 + 계약 B 구분자 문구, `PRD.md` §기술 리스크 1행, `API-CONTRACT.md` `confidence` nullable 명시, `evidence/failure-cases.md` 미검증 항목 2줄
 - **재평가**: 측정 2에서 `CLASSIFY_FAILED` 가 전체의 10% 를 넘으면 재시도로 회수되지 않는 구조적 실패이므로 프롬프트/파서를 고친다. 반대로 0 건이면 재시도가 실제로 회수하고 있는지(재시도 횟수 로그)를 확인한다 — 0 건이 "문제 없음"과 "측정 안 됨" 둘 다일 수 있기 때문
 
-<!-- 다음 결정 추가 시 D-023 부터 -->
+### D-023. 스키마는 Flyway 로 관리하고 후보 인덱스를 V2 로 분리한다 — `ddl-auto` 로는 D-018 을 측정할 수 없다
+
+- **일자**: 2026-07-31
+- **상태**: 채택
+- **배경**: D-003 이 스택만 정하고 스키마 관리 방식을 정하지 않았다. 기본값대로 `ddl-auto=update` 를 쓰면 **측정 5ⓔ 를 실행할 방법이 없다.** D-018 은 "`occurrence_count` 를 포함한 인덱스가 최고 QPS 쓰기 경로에 비용을 얹는지"를 인덱스 유무별 `POST /api/errors` 지연으로 확인하라고 요구하는데, `ddl-auto` 에는 인덱스를 붙였다 떼는 수단이 없다. 결국 조회 이득만 보고 인덱스를 추가하게 되는데, 그것이 D-018 이 "이 프로젝트에서 가장 하기 쉬운 실수"라고 지목한 바로 그 행동이다.
+  루트 패키지명도 미정이라 3명이 서로 다른 패키지로 짜면 Day 3 통합에서 전부 이동해야 한다.
+- **선택지**:
+  1. `ddl-auto=update` — 착수는 빠르나 측정 5ⓔ 불가. 엔티티 변경이 운영 스키마에 조용히 반영되는 것도 이 프로젝트 주제("조용히 틀리지 않기")와 정면으로 어긋남
+  2. Flyway 단일 마이그레이션 — 스키마는 재현 가능하나 인덱스 A/B 를 하려면 매번 파일을 고쳐야 하고, 그러면 "무엇을 켜고 잰 수치인지"가 이력에 안 남음
+  3. **Flyway + 확정/후보 인덱스 분리**
+- **결정**: 3번.
+
+  ```text
+  V1__init_schema.sql      5테이블 + 확정 인덱스 + classification_policy 10행 seed
+  V2__candidate_index.sql  후보 인덱스만 (D-018 의 ⚠️ 표시 2개)
+                             (status, current_category, occurrence_count DESC)
+                             (status, current_category, last_seen_at)
+  ```
+
+  `spring.jpa.hibernate.ddl-auto=validate` 로 고정한다 — 엔티티와 DDL 이 어긋나면 **부팅이 실패**해야 한다. 측정 5ⓔ 는 V2 적용 전/후로 `POST /api/errors` p95 를 비교하고, 양쪽 수치를 `evidence/` 에 함께 남긴다. **후보 인덱스는 측정으로 이득이 확인되기 전까지 V1 으로 승격하지 않는다.**
+
+  부수 확정 3건 (baseline PR 에서 함께 고정):
+  - 루트 패키지: `com.dingco.triage` — 하위는 `api` / `service` / `domain` (CLAUDE.md 3계층)
+  - `stuckNew` 임계값을 `monitoring.stuck-new-threshold` property 로 분리. 기본 10분이나 **테스트에서 초 단위로 낮출 수 없으면 D-017 을 검증할 방법이 없다**
+  - `classification.policy.mode = PER_CATEGORY | GLOBAL` + `global-threshold` — 측정 9(카테고리별 임계값의 효과)의 대조군이자, D-008 이 Day 3 에 막혔을 때의 탈출 경로
+- **영향**: `build.gradle`(flyway 의존성), `application.yml`, `src/main/resources/db/migration/`, `PRD.md` 측정 5, `CLAUDE.md` 인덱스 표 ⚠️ 2행
+- **재평가**: 측정 5ⓔ 에서 쓰기 지연 증가가 유의하지 않으면(p95 차이가 측정 노이즈 이내) V2 를 V1 으로 승격한다. 유의하면 D-013 대로 `sort=lastSeenAt` 유도를 유지하고 후보 인덱스를 폐기한다
+
+<!-- 다음 결정 추가 시 D-024 부터 -->

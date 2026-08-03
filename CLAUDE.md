@@ -69,6 +69,8 @@ ErrorCategory (10종): DB_CONNECTION, DB_QUERY, TIMEOUT, AUTH, VALIDATION,
 >
 > ⚠️ **인덱스 컬럼의 갱신 빈도를 반드시 함께 본다 (D-018).** `error_group` 의 컬럼별 갱신 빈도는 극단적으로 다르다 — `occurrence_count` 는 **수신 요청마다**, `status`·`current_*` 는 **그룹당 1~2회**뿐이다. `occurrence_count` 를 포함한 인덱스는 조회를 빠르게 하는 대신 **시스템에서 가장 빈번한 쓰기 경로를 느리게 만든다.** 따라서 측정 5는 조회 `EXPLAIN` 만이 아니라 **인덱스 유무별 `POST /api/errors` 쓰기 지연**도 함께 측정해야 판단 근거가 된다. 조회 이득만 보고 인덱스를 추가하는 것이 이 프로젝트에서 가장 하기 쉬운 실수다.
 > 검토 큐에 `category` 필터가 없는 이유는 blind 규칙 — 아래 참조.
+>
+> ⚠️ 가 붙은 **후보 인덱스 2개는 `V2__candidate_index.sql` 로 분리**한다 (D-023). `ddl-auto` 로는 인덱스를 붙였다 뗄 수 없어 위 A/B 측정 자체가 불가능하다. **측정 5ⓔ 로 이득이 확인되기 전까지 `V1` 으로 승격하지 않는다.**
 
 ## 6 공통 필수 기능 매핑
 
