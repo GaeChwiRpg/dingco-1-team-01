@@ -3,12 +3,15 @@ package com.dingco.triage.domain;
 import com.dingco.triage.domain.type.ErrorCategory;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 /**
  * 카테고리별 신뢰도 임계값 (D-006). 오분류 비용이 큰 쪽을 높게 배정한다.
@@ -22,6 +25,7 @@ import java.time.Instant;
  */
 @Entity
 @Table(name = "classification_policy")
+@EntityListeners(AuditingEntityListener.class)
 public class ClassificationPolicy {
 
     /** PK 가 곧 카테고리다. 카테고리당 정책은 최대 1개. */
@@ -37,6 +41,7 @@ public class ClassificationPolicy {
     @Column(name = "updated_by")
     private Long updatedBy;
 
+    @LastModifiedDate
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

@@ -1,4 +1,4 @@
-# API-CONTRACT v0.6
+# API-CONTRACT v0.7
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -416,5 +416,5 @@ X-User-Role: ADMIN
 | v0.4 | 2026-07-30 | AI 리뷰 3차 반영 — `GET /api/stats` 의 `cacheHitRate` 를 `aiCallSavings` 밖으로 분리해 `cache` 객체로 독립 (캐시 hit rate ≠ AI 절감률, D-014) | #1 |
 | v0.5 | 2026-07-30 | AI 리뷰 4차 반영 — `GET /api/stats` 에 `classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 추가 (판정 롤백으로 방치된 그룹 탐지, D-017). §4 blind 한계를 결정적 역산/확률적 추론으로 구분 (D-019) | #1 |
 | v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — `PATCH /api/review-queue/{id}` 의 409 를 `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 경합) 2종 `code` 로 분리. 상태 검사와 `@Version` 이 각각 다른 창을 막는다는 근거 명시 (D-021) | #1 |
-| v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. §4 `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, §5 `matched` 를 nullable 로 정정 (AI 제안이 없으면 `false` 가 아니라 `null`) (D-022) | #2 |
+| v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. §4 `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, §5 `matched` 를 nullable 로 정정 (AI 제안이 없으면 `false` 가 아니라 `null`) (D-022) | develop 직접 (구현 #3) |
 <!-- 변경 시 한 줄씩 추가 -->

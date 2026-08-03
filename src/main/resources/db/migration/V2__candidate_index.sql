@@ -3,9 +3,20 @@
 -- application.yml 의 spring.flyway.target 이 1 이므로 평소 기동에서 이 파일은 건너뛴다.
 -- 측정 5ⓔ 를 돌릴 때만 SPRING_FLYWAY_TARGET=2 로 재기동해 켠다.
 --
---   측정 전 : docker compose up -d                                  → V1 만 (후보 인덱스 없음)
---   측정 후 : SPRING_FLYWAY_TARGET=2 docker compose up -d --force-recreate app
---   되돌림 : docker compose down -v   (Flyway 는 forward-only 라 undo 가 없다)
+-- ⚠️ A/B 는 반드시 같은 데이터 위에서 한다. V2 는 인덱스 추가일 뿐 데이터를 건드리지 않으므로
+--    측정 중간에 DB 를 비울 이유가 없다. 데이터가 달라지면 두 수치를 비교할 수 없다.
+--
+--   1) docker compose up -d                                       → V1 만 (후보 인덱스 없음)
+--   2) 부하 투입 → POST /api/errors p95 기록                        ← A
+--   3) FLYWAY_TARGET=2 docker compose up -d --force-recreate app   ← 데이터 유지된 채 인덱스만 추가
+--   4) 같은 부하 재투입 → p95 기록                                   ← B
+--
+--   docker compose down -v 는 "다음 실험을 처음부터" 할 때만 쓴다. 3)~4) 사이에 쓰면
+--   A 와 B 의 데이터 분포가 달라져 측정이 무의미해진다. Flyway 는 forward-only 라
+--   인덱스만 되돌리려면 아래 DROP 을 수동 실행해야 한다:
+--     DROP INDEX idx_error_group_status_category_count ON error_group;
+--     DROP INDEX idx_error_group_status_category_last_seen ON error_group;
+--     DELETE FROM flyway_schema_history WHERE version = '2';
 --
 -- 여기 있는 두 인덱스는 조회를 빠르게 하는 대신 시스템에서 가장 빈번한 쓰기 경로를
 -- 느리게 만든다. occurrence_count 는 수신 요청마다 UPDATE 되기 때문이다 (D-018).
