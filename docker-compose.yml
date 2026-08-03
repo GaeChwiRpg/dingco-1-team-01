@@ -14,7 +14,7 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 를 .env 에 설정하세요}
-      MYSQL_DATABASE: ${DB_NAME:-triagedb}
+      MYSQL_DATABASE: ${DB_NAME:-triage_db}
       MYSQL_USER: ${DB_USER:-triage}
       MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 를 .env 에 설정하세요}
     ports:
@@ -47,7 +47,7 @@ services:
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
-      DB_NAME: ${DB_NAME:-triagedb}
+      DB_NAME: ${DB_NAME:-triage_db}
       DB_USER: ${DB_USER:-triage}
       DB_PASSWORD: ${DB_PASSWORD:?}
       REDIS_HOST: redis
