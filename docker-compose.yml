@@ -54,6 +54,14 @@ services:
       REDIS_PORT: 6379
       # 기본 1 = V1 만. 측정 5ⓔ 때만 2 로 올린다 (D-023).
       FLYWAY_TARGET: ${FLYWAY_TARGET:-1}
+      # AI 분류용 (D-024, Anthropic). 이 이름이어야 SDK 가 자동으로 읽는다.
+      # ⚠️ 지금은 빈 값을 허용한다 — AI 호출 코드가 아직 없어 P1/P3 담당자는 키 없이도
+      #    인프라를 띄울 수 있어야 하기 때문이다. TRI-14 착수로 AiClassificationService 가
+      #    들어오면 ${ANTHROPIC_API_KEY:?} 로 승격한다. 그때부터는 키 없이 뜨는 앱이
+      #    "분류가 조용히 전부 실패하는 앱"이 되므로 기동 자체를 막는 편이 맞다.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # POST /api/errors 의 X-Api-Key (Phase 2 헤더 stub). TRI-26 착수 시 :? 로 승격.
+      SDK_API_KEY: ${SDK_API_KEY:-}
     depends_on:
       mysql:
         # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.
