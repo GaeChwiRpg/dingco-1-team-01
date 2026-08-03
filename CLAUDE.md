@@ -201,7 +201,7 @@ evict : 없음 (그룹은 삭제되지 않음). TTL 은 메모리 상한 목적�
 - `src/main/` 외는 별도 PR — `docs/`, `tests/e2e/`, `.github/`
 - `API-CONTRACT.md` 는 코드 PR 에 **동반 변경만** 허용 (계약과 구현의 괴리 방지)
 - 기획 단계 산출물(`PRD.md`, `DECISIONS.md`)은 단독 PR 허용 — D-009
-- 비밀 정보 (`.env`, JWT secret, OpenAI API key) commit 절대 금지
+- 비밀 정보 (`.env`, JWT secret, Anthropic API key) commit 절대 금지
 
 ## 출력 형식
 
