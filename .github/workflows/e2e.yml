@@ -1,0 +1,71 @@
+name: e2e
+
+# 테스트 단계 (라이프사이클 3단계) 산출물.
+#
+# baseline 이 뜨는 순간 tests/e2e 의 health 테스트가 통과하므로, 그 사실을 CI 로 고정한다.
+# 여기서 검증하는 것은 "앱이 실제로 기동한다"이고, 그 안에는 다음이 함께 들어 있다:
+#   · Flyway V1 이 깨끗이 적용됨
+#   · ddl-auto=validate 아래에서 엔티티 5개가 V1 DDL 과 일치함 (어긋나면 부팅 실패)
+#   · MySQL / Redis 와의 연결이 실제로 성립함
+#
+# 즉 이 workflow 가 red 면 세 패키지 전부의 착수 전제가 깨진 것이다.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 스택 기동 (mysql + redis + app)
+        env:
+          # CI 전용 값. 운영 비밀은 여기 두지 않는다 — 헌법 「작업 경계」.
+          MYSQL_ROOT_PASSWORD: ci-root
+          DB_PASSWORD: ci-pw
+          # 기본 1 = V1 만. 후보 인덱스는 측정 5ⓔ 로 이득이 확인되기 전까지 켜지 않는다 (D-023).
+          FLYWAY_TARGET: "1"
+        run: |
+          docker compose up -d --build --wait --wait-timeout 300
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Playwright 설치
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: E2E 실행
+        working-directory: tests/e2e
+        env:
+          BASE_URL: http://localhost:8080
+        run: npx playwright test
+
+      - name: 실패 시 앱 로그 (부팅 실패 원인은 여기에만 남는다)
+        if: failure()
+        run: docker compose logs --no-color app mysql
+
+      - name: 리포트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+
+      - name: 스택 정리
+        if: always()
+        run: docker compose down -v
