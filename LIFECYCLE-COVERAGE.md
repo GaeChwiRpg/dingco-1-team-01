@@ -7,7 +7,7 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-021) |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-023) |
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 기준 문서만 완료, `src/` 미착수 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | ⏳ 스켈레톤만 (`test.skip`) |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1 에 AI 리뷰 **5회** 수령·반영 (지적 21건) |
@@ -22,9 +22,12 @@
 
 | 패키지 | 담당 | 범위 | 착수 조건 |
 | --- | --- | --- | --- |
-| **P1** 수신·그룹핑 | 이용택 | `POST /api/errors`, fingerprint 정규화, 그룹 upsert, 원자적 카운트 증가, UNIQUE 충돌 흡수, 캐시 put | **없음 — 즉시 착수** |
-| **P2** 분류·검증 | 김준현 | AI 호출 + `@Retryable`, 카테고리별 임계값 비교, 감사 샘플링, 트랜잭션 ②, `SecurityConfig` | 계약 A 확정 (완료) |
-| **P3** 검토·관측 | 김은빈 | 큐 조회·확정(트랜잭션 ③), 정책 API, `StatsService`, Actuator 메트릭 | 계약 B 확정 (완료) |
+| **P1** 수신·그룹핑 | 이용택 | `POST /api/errors`, fingerprint 정규화, 그룹 upsert, 원자적 카운트 증가, UNIQUE 충돌 흡수, 캐시 put | **없음 — baseline PR 도 본인 담당이므로 즉시 착수** |
+| **P2** 분류·검증 | 김준현 | AI 호출 + `@Retryable`, 카테고리별 임계값 비교, 감사 샘플링, 트랜잭션 ②, `SecurityConfig` | 계약 A 확정 (완료) + baseline `build.gradle` |
+| **P3** 검토·관측 | 김은빈 | 큐 조회·확정(트랜잭션 ③), 정책 API, `StatsService`, Actuator 메트릭 | 계약 B 확정 (완료) + baseline `V1__init_schema.sql` |
+
+> **baseline(PR #2) = 이용택.** 착수 조건이 없는 유일한 담당이고, `docker-compose.yml`·`Dockerfile` 이 본인의 배포·운영 단계 산출물이며, baseline 이 뜨는 순간 `tests/e2e` health 테스트가 통과해 테스트 단계 산출물도 함께 확보된다.
+> 다만 **`settings.gradle` + `build.gradle` + wrapper 는 20분 안에 먼저 push** 한다 — 김준현의 첫 코드(`SecurityConfig`)는 도메인 의존이 0이라 이것만으로 착수 가능하고, baseline 전체를 완성한 뒤 push 하면 반나절을 통째로 대기시킨다.
 
 **배정 근거**
 
@@ -37,6 +40,29 @@
 - 캐시(계약 C)는 P1 이 읽고 P2 가 쓴다 → 값 구조 변경 시 양쪽 합의 필요
 - 트랜잭션 ②(P2)가 삽입한 `review_queue` 행을 ③(P3)이 소비한다 → `reason` 별 보장 사항은 계약 B 고정
 - `ErrorGroupCreatedEvent`(계약 A)는 P1 발행 → P2 수신
+
+## 측정 11개 실행 책임자
+
+측정은 코드와 달리 **누구든 돌릴 수 있어서 아무도 안 돌리기 쉽다.** 따라서 자기 패키지가 만든 장치를 자기가 잰다 — 수치가 이상할 때 원인을 아는 사람이 같은 사람이어야 한다.
+
+| 측정 | 내용 | 책임자 | 시점 |
+| --- | --- | --- | --- |
+| 1 | AI 호출 절감률 (그룹핑 효과) | 이용택 (P1) | Day 4 |
+| 2 | 검토 큐 적체율 — 사유별 삽입 건수 | 김준현 (P2) | Day 4 |
+| 3 | 판정 트랜잭션 롤백 + `stuckNew` 증가 확인 | 김은빈 (P3) | **Day 3 필수 체크포인트** |
+| 4 | 수신 API 응답시간 (AI 지연 비전파 확인) | 이용택 (P1) | Day 4 |
+| 5ⓐ~ⓓ | 조회 `EXPLAIN` 4 케이스 | 김은빈 (P3) | Day 4 |
+| 5ⓔ | **인덱스 유무별 `POST /api/errors` 쓰기 p95** (V2 전/후) | 이용택 (P1) | Day 4 |
+| 6 | `GET /api/review-queue` N+1 제거 전후 쿼리 수 | 김은빈 (P3) | Day 4 |
+| 7ⓐ | 20스레드 동시 `POST` → 그룹 1개만 생성 | 이용택 (P1) | Day 2 오후 |
+| 7ⓑ | 동시 `PATCH` → 409 2종 비율 (`CONCURRENT_UPDATE` 0 이면 무효) | 김은빈 (P3) | Day 2 오후 |
+| 8 | 신뢰도 구간별 실측 오분류율 — **이 프로젝트의 결론** | 김준현 (P2) | Day 4 |
+| 9 | 카테고리별 임계값 vs 단일 임계값 대조 (`policy.mode`) | 김준현 (P2) | Day 4 |
+| 10 | blind 무결성 — 결정적 역산 0건 / 확률적 추론 목록화 | 김준현 (P2) | Day 5 재점검 |
+| 11 | 캐시 hit rate (절감률과 별개 지표임을 수치로 확인) | 김은빈 (P3) | Day 4 |
+
+> 측정 5ⓔ 만 P1 이 맡는 이유: A/B 대상이 **수신 경로의 쓰기 지연**이라 부하 스크립트를 P1 이 이미 갖고 있다 (측정 1·4·7ⓐ 와 같은 도구).
+> 측정 3 을 P3 가 맡는 이유: `stuckNew` gauge 를 노출하는 코드가 P3 소유다. 만든 사람이 지표가 0 인 것이 "정상"인지 "안 세고 있는 것"인지 구분할 수 있다.
 
 ## 단계별 적용 흐름
 
