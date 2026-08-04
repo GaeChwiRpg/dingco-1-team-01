@@ -11,7 +11,7 @@
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. `service/`·`api/` 미착수, `.claude/` Commands·Hooks 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 테스트 4개 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1~#5 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
-| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 산출물 3종 + `.env.example` 존재. 실기동·실 트래픽 검증은 Phase 3 |
+| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`). 단 검증은 전부 의도적 테스트 컨트롤러 기준 — 실제 `api/`·`service/` 트래픽 검증은 Phase 3 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-002).
 > 코딩 단계는 전원 공동이며, 코드 범위 분할(P1/P2/P3)은 아래 참조.
@@ -116,7 +116,7 @@
 | 코딩 | ✅ src/ (엔티티·enum·repository·Flyway), CLAUDE.md, API-CONTRACT.md | 🔄 claude.md ✅ / Commands·Hooks 미작성 | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 테스트 4개 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
 | 리뷰 | ✅ ai-review.yml | ✅ PR #1~#5 전원 자동 리뷰 동작 | ✅ |
-| 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | ⏳ Sentry MCP 미연동 | 🔄 |
+| 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | ✅ Sentry SDK + Source Context + MCP 연동, 실측 검증 완료 (`SENTRY-GUIDE.md`) | ✅ |
 
-> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장 / Sentry MCP.
+> **남은 3건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장. (Sentry MCP 는 완료로 전환)
 > 넷 다 산출물은 있고 **AI 도구 설정만 비어 있다.** 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서, 실제 잔여 작업이 가려진다.
