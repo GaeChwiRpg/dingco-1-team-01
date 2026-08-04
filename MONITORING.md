@@ -22,15 +22,19 @@
 
 ### SDK 설정 (실제 적용값)
 
+> 버전 번호는 여기 적지 않는다 — `build.gradle`에 실측 확인 근거 주석과 함께 있는 게
+> 유일한 출처(SoT)다. 여기 숫자를 박아두면 SDK 를 올릴 때 이 문서가 조용히 낡는다
+> (AI 코드리뷰 지적). 최신 값은 `build.gradle` 의 `plugins`/`dependencies` 블록 참조.
+
 ```gradle
-implementation 'io.sentry:sentry-spring-boot-starter-jakarta:8.51.0'  // Maven Central 실측 확인
-id 'io.sentry.jvm.gradle' version '6.17.0'  // Source Context, Gradle Plugin Portal 실측 확인
+implementation 'io.sentry:sentry-spring-boot-starter-jakarta:<build.gradle 참조>'
+id 'io.sentry.jvm.gradle' version '<build.gradle 참조>'  // Source Context
 ```
 
 ```yaml
 sentry:
   dsn: ${SENTRY_DSN:}
-  traces-sample-rate: 0.1
+  traces-sample-rate: ${SENTRY_TRACES_SAMPLE_RATE:0.1}  # 기본 0.1(안전), 로컬만 올림
   send-default-pii: false
   environment: ${ENV:local}
 ```
