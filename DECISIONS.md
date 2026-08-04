@@ -509,4 +509,17 @@
   - `README.md` 또는 `MONITORING.md` 에 로컬 환경 요구사항으로 명시 필요(본 PR 범위 밖 — 후속 PR)
 - **재평가**: Testcontainers 2.x 의 `mysql`/`junit-jupiter` 2.x 좌표가 확인되거나 커뮤니티에서 `2.0.2` 이후 패치의 안정성 보고가 쌓이면 1번으로 전환한다. 반대로 Docker Desktop 자동 업데이트로 이 문제가 팀 내 재발하는 사례가 관측되면 3번(CI 전용 검증)으로 축소한다.
 
-<!-- 다음 결정 추가 시 D-027 부터 -->
+### D-027. 예외 처리 규칙을 CLAUDE.md 에 못박음 — Sentry 캡처 사각지대 방지
+
+- **일자**: 2026-08-04
+- **상태**: 채택
+- **배경**: PR #9 AI 코드리뷰가 지적 — `SENTRY-GUIDE.md` 2-3 이 실측으로 확인한 사각지대(catch 해서 로그만 찍고 `Sentry.captureException()` 을 안 부르면 자동 캡처(`UncaughtExceptionHandler`/Spring 필터 체인)도 수동 캡처도 아니라서 `Envelope sent successfully` 가 0번 — 영구히 전송 안 됨)를, `service/` 코드를 P1/P2/P3 가 각자 작성할 때 서로 다르게 판단할 위험이 있다. 판단 기준은 이미 `SENTRY-GUIDE.md` 2-4 표에 있지만 참조 문서라 강제력이 없다 — `CLAUDE.md` 는 매 prompt 에 자동 포함되는 팀 헌법이라 여기 있어야 실제 작업 시점에 놓치지 않는다.
+- **선택지**:
+  1. 현행 유지 — `SENTRY-GUIDE.md` 참조 문서로만 둔다. 지금 당장 이 규칙을 어길 코드가 없어 시급하지 않다는 반론이 가능하나, `service/` 착수 시점에 놓칠 위험은 그대로 남는다
+  2. **`CLAUDE.md` 코딩 규칙에 한 줄 규칙 + `SENTRY-GUIDE.md` 링크만 추가** — 판단 기준 표 전체를 복제하지 않아 버전 번호 3중 기록(`MONITORING.md`/`SENTRY-GUIDE.md`/`build.gradle`) 같은 드리프트를 반복하지 않는다
+  3. `API-CONTRACT.md` 에 추가 — 기각. 그 문서는 endpoint 계약 전용이고 예외 처리는 내부 구현 규칙이라 성격이 다르다
+- **결정**: 2번. 이 프로젝트의 `CLAUDE.md`/`DECISIONS.md` 자체가 baseline 코드보다 먼저 쓰인 선례(D-001~D-021)가 있어, 코드가 아직 없다는 것이 규칙을 미리 못박지 않을 이유는 아니다. 다만 강제력의 실체를 정확히 이해해야 한다 — 지금 있는 훅(`verify-before-push.sh`)은 `./gradlew test` 통과 여부만 보고 **Java 코드에서 catch 블록에 Sentry 호출이 있는지 정적 분석하지 않는다.** 그러므로 이 규칙의 실질적 강제력은 "hook 이 자동 차단"이 아니라 "매 prompt 컨텍스트에 규칙이 있어 놓치기 어려워진다"는 수준이다 — `CLAUDE.md` 서두의 "위반 시 hook 이 차단"이라는 문구를 이 규칙에 그대로 적용해 과신하지 않는다.
+- **영향**: `CLAUDE.md` 「코딩 규칙」에 신설 서브섹션 1개(3줄), `SENTRY-GUIDE.md` 와 중복 없이 링크만
+- **재평가**: P1/P2/P3 가 실제 `service/` 코드에서 이 규칙이 애매한 케이스를 만나면 사례를 `SENTRY-GUIDE.md` 에 추가하고 이 규칙 문구도 재검토한다. Java 정적 분석 기반 훅(예: catch 블록 검출)이 실제로 필요해지면 별도 항목으로 검토한다.
+
+<!-- 다음 결정 추가 시 D-028 부터 -->

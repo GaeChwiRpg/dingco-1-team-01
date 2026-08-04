@@ -149,6 +149,12 @@ ingest(cmd)                      ← 트랜잭션 없음. 재시도 루프는 �
 - 파싱 실패도 `@Retryable` 재시도 대상. 3회 소진 시 `@Recover` 에서 `verdict=FAILED` (`category`·`confidence` 모두 null) + `CLASSIFY_FAILED` 로 큐 삽입. 조용히 삼키지 말 것
 - API key 는 환경변수만. 코드/설정 파일 하드코딩 금지
 
+### 예외 처리 — Sentry 캡처 규칙 (D-027)
+
+- catch 해서 로그만 찍고 끝내지 않는다 — 처리할 게 없으면 애초에 catch 하지 않는다 (자동 캡처됨). catch 했는데 아무것도 안 하면 자동도 수동도 아니라서 Sentry 가 영구히 모른다 (`SENTRY-GUIDE.md` 2-3, 실측 확인됨)
+- 복구/재시도하다 최종 실패로 확정되는 지점에서는 `Sentry.captureException(e)` 를 명시적으로 부른다
+- 판단 기준 전체 표는 `SENTRY-GUIDE.md` 2-4 참조 — 여기서 중복 안 함
+
 ### 감사 샘플링 blind 규칙
 
 - `GET /api/review-queue` 는 **`reason` · `confidence` · `threshold` 를 파라미터로도 응답으로도 제공하지 않는다**. `category` 필터도 없다 — D-010
