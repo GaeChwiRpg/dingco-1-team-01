@@ -62,6 +62,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # POST /api/errors 의 X-Api-Key (Phase 2 헤더 stub). TRI-26 착수 시 :? 로 승격.
       SDK_API_KEY: ${SDK_API_KEY:-}
+      # Sentry DSN (배포·운영, MONITORING.md). 비어 있으면 SDK 가 no-op — 키 없이도 기동된다.
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       mysql:
         # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.
