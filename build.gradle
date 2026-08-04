@@ -4,6 +4,11 @@ plugins {
     // (현재 4.0.7 / 4.1.0 만) 플러그인 버전을 직접 못박는다.
     id 'org.springframework.boot' version '3.3.13'
     id 'io.spring.dependency-management' version '1.1.7'
+    // Source Context (SENTRY-GUIDE.md §5) — 스택트레이스에서 실제 소스 코드를 Sentry
+    // 화면에서 바로 보이게 한다. 버전은 Gradle Plugin Portal maven-metadata.xml 실측
+    // 확인(2026-08-04, latest=6.17.0), 프로퍼티명(org/projectName/authToken)은 플러그인
+    // 소스(SentryPluginExtension.kt) 직접 대조.
+    id 'io.sentry.jvm.gradle' version '6.17.0'
 }
 
 group = 'com.dingco'
@@ -56,4 +61,13 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+// SENTRY_AUTH_TOKEN 이 없는 팀원 환경(로컬)에서도 빌드가 실패하면 안 된다 — 소스 업로드는
+// 배포·운영 산출물이지 컴파일 전제조건이 아니다. 토큰 없으면 업로드만 건너뛴다.
+sentry {
+    includeSourceContext = true
+    org = "dingcodingco"
+    projectName = "java-spring-boot"
+    authToken = System.getenv("SENTRY_AUTH_TOKEN")
 }

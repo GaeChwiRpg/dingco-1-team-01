@@ -161,8 +161,48 @@ set -a; source .env; set +a
 
 검증용 클래스는 `@EnabledIfEnvironmentVariable(named = "SENTRY_DSN", matches = ".+")` 로 DSN 없으면 자동 스킵되게 작성했다 — DSN 없는 팀원 환경에서 돌려도 실패하지 않는다. 2-3 의 사각지대 실험도 같은 패턴으로 재현 가능(`SentrySwallowedExceptionVerification`, 검증 후 삭제) — `Envelope sent successfully` 카운트가 0인지로 확인한다.
 
-## 5. 참고
+## 5. 스택트레이스에서 실제 소스 코드 보기 (Source Context) — 적용 완료·실측 확인
 
-- 스택트레이스에서 클래스명·메서드명·라인 번호는 지금 이대로도 다 보인다 (실측 확인, 2번 참조). **실제 소스 코드 내용**까지 Sentry 화면에서 보려면 별도 작업(Source Context)이 필요 — 후속 작업으로 진행 예정
+프론트엔드(NestJS/Next.js 등)에서 Sentry 를 써봤다면 스택트레이스에 `app:///_next/static/chunks/...` 같은 경로가 뜨면서 원본 소스가 보이는 걸 본 적 있을 텐데, 그건 **JS 소스맵**(번들링된 코드를 원본으로 역매핑하는 `.map` 파일) 방식이다. Spring Boot(JVM)는 소스가 애초에 번들링되지 않으므로 **역매핑이 아니라 다른 메커니즘**을 쓴다 — Sentry 에서는 이걸 **"Source Context"** 라고 부른다.
+
+**작동 방식**: 빌드 시점에 소스 파일 자체를 번들로 묶어 Sentry 서버에 업로드해두고, 에러가 발생하면 UUID(`sentry-debug-meta.properties`)로 매칭해서 그 소스를 보여준다.
+
+```groovy
+plugins {
+    id "io.sentry.jvm.gradle" version "6.17.0"  // Gradle Plugin Portal maven-metadata.xml 실측 확인
+}
+
+sentry {
+    includeSourceContext = true
+    org = "dingcodingco"          // 비밀값 아님 — Sentry 대시보드 URL 에 그대로 노출됨
+    projectName = "java-spring-boot"
+    authToken = System.getenv("SENTRY_AUTH_TOKEN")  // 비밀값 — .env 로만 주입
+}
+```
+
+- `SENTRY_AUTH_TOKEN` 환경변수 필요 — **`SENTRY_DSN` 과는 별개의 값**이다. Sentry 조직 Settings → Auth Tokens 에서 발급하는 토큰이고, DSN 은 "어디로 보낼지"만 알려주는 값이라 소스 업로드 권한이 없다
+- `org`/`projectName` 프로퍼티명은 플러그인 소스(`SentryPluginExtension.kt`) 직접 대조로 확정 — 문서마다 표기가 부분적이라 소스 코드로 최종 확인했다
+- `SENTRY_AUTH_TOKEN` 없는 팀원 환경에서도 빌드는 깨지지 않는다 — 소스 업로드만 건너뛴다 (직접 재현 확인: `env -u SENTRY_AUTH_TOKEN ./gradlew clean compileJava` 도 `BUILD SUCCESSFUL`)
+
+### 5-1. 실제로 겪은 함정 두 가지
+
+**함정 1 — 소스 번들링 태스크는 `main` 소스셋 전용이다.** `./gradlew tasks --all | grep sentry` 로 확인하면 `sentryUploadSourceBundleJava` 등 전부 `...Java`(main) 접미사만 있고 test 소스셋용 태스크는 없다. 처음에 `src/test/java` 에 검증 코드를 두고 테스트했을 때는 이 이유로 소스가 안 보였다 — **검증 코드를 `src/main/java` 로 옮기고 나서야** 됐다.
+
+**함정 2 — 소스 업로드와 실행이 같은 빌드 안에서 순서대로 일어나야 한다.** `sentryUploadSourceBundleJava` 는 `bootRun`/`test` 같은 실행 태스크에 자동으로 안 딸려온다. 각자 다른 시점에 실행하면, 지금 실행 중인 코드가 들고 있는 debug ID 와 실제로 업로드된 번들의 debug ID 가 서로 다른 빌드에서 생성돼 어긋날 수 있다. 그래서 명시적으로 의존관계를 걸어야 한다:
+
+```groovy
+tasks.named('bootRun') {
+    dependsOn('sentryUploadSourceBundleJava')
+}
+```
+
+(검증 후 이 블록은 제거했다 — 매 실행마다 소스를 재업로드할 필요는 없어서, 필요할 때만 켜는 용도로 기록만 남긴다.)
+
+### 5-2. 최종 검증
+
+임시 컨트롤러(2-5 와 동일)로 `curl` 요청을 보내 확인 — 스택트레이스 상단 프레임(`SentryMvcVerificationController.java`)에 실제 소스 코드가 문법 하이라이팅과 함께 표시되는 것을 육안으로 확인했다.
+
+## 6. 참고
+
 - Sentry MCP(Claude Code 가 Sentry 이슈를 조회·분석하는 것)는 이 문서와 별개다 — SDK 는 "이벤트를 보내는 쪽", MCP 는 "보내진 이벤트를 AI 가 조회하는 쪽". `MONITORING.md` 참조
 - 버전(`8.51.0`)은 Maven Central `maven-metadata.xml` 을 직접 curl 로 대조해 확정한 값이다 — 웹 검색 요약 결과는 이보다 낮은 버전을 얘기해서(8.28.0) 신뢰하지 않았다 (`evidence/failure-cases.md` 13번과 같은 이유)
