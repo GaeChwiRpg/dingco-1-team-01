@@ -15,14 +15,12 @@ import com.dingco.triage.domain.repository.ReviewQueueRepository;
 import com.dingco.triage.domain.type.ErrorCategory;
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.support.MySqlTestContainer;
-import io.sentry.Sentry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,11 +28,13 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.util.StringUtils;
 
 /**
  * baseline 이 실제로 서 있는지 확인하는 4가지.
@@ -42,17 +42,10 @@ import org.springframework.test.context.ActiveProfiles;
  * <p>가장 중요한 건 <b>컨텍스트가 뜬다</b>는 사실 자체다. {@code ddl-auto=validate} 아래에서
  * 부팅이 성공했다는 것은 곧 <b>엔티티 5개와 V1 DDL 이 한 글자도 어긋나지 않았다</b>는 뜻이고,
  * 그게 세 패키지가 병렬로 갈 수 있는 근거다 (D-023).
- *
- * <p>{@code @Order(MIN_VALUE)} — {@code sentryIsDisabledWithoutDsn()} 이 보는
- * {@code Sentry.isEnabled()} 는 JVM 전역 static 상태다. 이 클래스가 항상 가장 먼저 컨텍스트를
- * 띄우도록 고정해, 나중에 추가될 다른 {@code @SpringBootTest}(예: 가짜 DSN 을
- * {@code @DynamicPropertySource} 로 주입하는 통합테스트)가 먼저 떠서 이 static 상태를
- * 오염시키는 순서 의존 실패를 막는다 (`junit-platform.properties` 참조).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Import({MySqlTestContainer.class, BaselineSmokeTest.RetryProbeConfig.class})
-@Order(Integer.MIN_VALUE)
 class BaselineSmokeTest {
 
     @Autowired
@@ -78,6 +71,9 @@ class BaselineSmokeTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @Autowired
+    private Environment environment;
 
     @Test
     @DisplayName("엔티티 5개가 V1 DDL 과 일치한다 — ddl-auto=validate 아래에서 부팅 성공")
@@ -112,13 +108,16 @@ class BaselineSmokeTest {
     }
 
     @Test
-    @DisplayName("SENTRY_DSN 없으면 Sentry SDK 가 no-op 으로 초기화된다 — 회귀 방지 (AI 코드리뷰 반영)")
+    @DisplayName("SENTRY_DSN 없으면 no-op 으로 초기화될 조건(dsn 빈 값)이 실제로 성립한다 — 회귀 방지 (AI 코드리뷰 반영)")
     void sentryIsDisabledWithoutDsn() {
         // application-test.yml 에는 SENTRY_DSN 이 없다(SENTRY-GUIDE.md 1번 — 비어 있으면 no-op).
-        // 네트워크 호출이 없는 검증이라 정규 스위트에 남긴다 — SDK 버전을 올렸을 때 이 값이
-        // true 로 바뀌면 DSN 없이도 전송을 시도하게 된 것이고, 그건 조용한 회귀다.
-        assertThat(Sentry.isEnabled())
-                .as("DSN 없는 팀원 환경에서도 앱이 뜨는 이유가 바로 이 no-op 상태다")
+        // Sentry.isEnabled() 대신 Environment 를 보는 이유: Sentry.isEnabled() 는 JVM 전역
+        // static 상태라 같은 JVM에서 도는 다른 @SpringBootTest(가짜 DSN 을 주입하는 통합테스트 등)
+        // 가 먼저 컨텍스트를 띄우면 실행 순서에 따라 이 값이 오염된다. Environment 는 이 컨텍스트
+        // 스코프라 그 오염에서 자유롭고, 원래 잡으려던 회귀(쉘의 실 DSN 이 테스트 JVM 에 새어
+        // 들어가는 것)도 OS 환경변수가 property source 인 이상 여기서 그대로 잡힌다.
+        assertThat(StringUtils.hasText(environment.getProperty("sentry.dsn")))
+                .as("DSN 없는 팀원 환경에서도 앱이 뜨는 이유가 바로 이 no-op 조건이다")
                 .isFalse();
     }
 

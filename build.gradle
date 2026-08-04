@@ -78,10 +78,14 @@ tasks.named('test') {
 
 // SENTRY_AUTH_TOKEN 이 없는 팀원 환경(로컬)에서도 빌드가 실패하면 안 된다 — 소스 업로드는
 // 배포·운영 산출물이지 컴파일 전제조건이 아니다. 토큰 없으면 업로드만 건너뛴다.
-// org/projectName 은 gradle.properties 참조 — 포크·조직 변경 시 코드 안 건드리고 바꾸기 위함.
+//
+// org/projectName 은 gradle.properties 로 분리를 시도했으나, e2e CI 의 Dockerfile 빌드 스테이지가
+// gradle.properties 를 COPY 하지 않아 프로퍼티가 없는 채로 평가돼 빌드가 깨졌다(재현 확인).
+// authToken 처럼 환경변수로 뺄 수도 있지만 비밀값이 아니라 굳이 그럴 이유가 없어, 원래대로
+// 하드코딩으로 되돌린다 — Dockerfile COPY 목록을 계속 맞춰줘야 하는 별도 파일을 늘리지 않는 쪽.
 sentry {
     includeSourceContext = true
-    org = sentryOrg
-    projectName = sentryProject
+    org = "dingcodingco"
+    projectName = "java-spring-boot"
     authToken = System.getenv("SENTRY_AUTH_TOKEN")
 }
