@@ -109,7 +109,7 @@ class BaselineSmokeTest {
 
     @Test
     @DisplayName("SENTRY_DSN 없으면 no-op 으로 초기화될 조건(dsn 빈 값)이 실제로 성립한다 — 회귀 방지 (AI 코드리뷰 반영)")
-    void sentryIsDisabledWithoutDsn() {
+    void sentryDsnPropertyIsBlankByDefault() {
         // application-test.yml 에는 SENTRY_DSN 이 없다(SENTRY-GUIDE.md 1번 — 비어 있으면 no-op).
         // Sentry.isEnabled() 대신 Environment 를 보는 이유: Sentry.isEnabled() 는 JVM 전역
         // static 상태라 같은 JVM에서 도는 다른 @SpringBootTest(가짜 DSN 을 주입하는 통합테스트 등)
