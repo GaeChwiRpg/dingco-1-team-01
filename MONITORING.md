@@ -12,7 +12,7 @@
 | Sentry MCP | 에러 수집 + AI 위임 분석 | ✅ 적용 완료 (실측 검증, `SENTRY-GUIDE.md` 참조) |
 | Datadog | APM + 로그 통합 | |
 | Grafana + Prometheus | 메트릭 + 알림 | |
-| Docker Compose | 시연용 스택 | |
+| Docker Compose | 시연용 스택 | ✅ 적용 완료 (`docker-compose.yml`, `Dockerfile` 참조) |
 | Terraform / Pulumi | IaC | |
 
 ## Sentry MCP 통합
@@ -61,26 +61,14 @@ claude mcp add --transport http sentry https://mcp.sentry.dev/mcp -s project
 
 ## Docker Compose 시연 스택
 
-```yaml
-# docker-compose.yml 예시
-services:
-  app:
-    build: .
-    ports: ["8080:8080"]
-    depends_on: [mysql, redis]
-    environment:
-      DB_URL: jdbc:mysql://mysql:3306/ticketdb
-      REDIS_HOST: redis
-  mysql:
-    image: mysql:8
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping"]
-  redis:
-    image: redis:7
-    healthcheck:
-      test: ["CMD", "redis-cli", "PING"]
+> 실제 구성은 여기 다시 옮겨 적지 않는다 — SoT 는 리포 루트의 `docker-compose.yml` / `Dockerfile` 이다
+> (build.gradle 버전 번호와 같은 이유, 위 SDK 설정 참조). 서비스 3개(`app`/`mysql`/`redis`),
+> healthcheck 기반 기동 순서, `FLYWAY_TARGET` 로 V1/V2 후보 인덱스 A/B 전환(측정 5ⓔ)까지
+> `docker-compose.yml` 상단 주석에 실행 절차와 함께 있다.
+
+```bash
+docker compose up -d                                       # V1 만 (후보 인덱스 없음)
+FLYWAY_TARGET=2 docker compose up -d --force-recreate app   # 데이터 유지된 채 인덱스만 추가
 ```
 
 ## 한계 + Phase 3 보강
