@@ -154,6 +154,7 @@ ingest(cmd)                      ← 트랜잭션 없음. 재시도 루프는 �
 - catch 해서 로그만 찍고 끝내지 않는다 — 처리할 게 없으면 애초에 catch 하지 않는다 (자동 캡처됨). catch 했는데 아무것도 안 하면 자동도 수동도 아니라서 Sentry 가 영구히 모른다 (`SENTRY-GUIDE.md` 2-3, 실측 확인됨)
 - 복구/재시도하다 최종 실패로 확정되는 지점에서는 `Sentry.captureException(e)` 를 명시적으로 부른다
 - 판단 기준 전체 표는 `SENTRY-GUIDE.md` 2-4 참조 — 여기서 중복 안 함
+- `api/` 착수 시 `@RestControllerAdvice` 같은 **공용 예외 처리 지점 1곳**을 먼저 만든다 — 이 규칙을 각자 흩어진 try-catch 마다 기억해서 지키게 하지 않고, 한 곳에서 강제되게 한다 (AI 코드리뷰 제안)
 
 ### 감사 샘플링 blind 규칙
 

@@ -66,6 +66,13 @@ tasks.named('test') {
     // 테스트(Sentry.isEnabled() == false 기대)가 깨진다 — AI 코드리뷰 지적을 실제로
     // 재현해서 확인한 버그(Expecting value to be false but was true). 테스트 프로세스
     // 안에서만 명시적으로 비워 정규 스위트가 개발자의 쉘 상태에 흔들리지 않게 한다.
+    //
+    // 알려진 트레이드오프(AI 코드리뷰 지적): 이 `test` 태스크 전체에 거는 방식이라, 나중에
+    // "실제로 Sentry 로 전송되는지"를 검증하는 영구 통합 테스트가 필요해지면 이 설정이
+    // 그것도 같이 막는다. application-test.yml 에 sentry.dsn 을 두는 대안은 이미 확인했듯
+    // Spring 의 OS 환경변수 우선순위 때문에 애초에 안 먹힌다(이 파일 커밋 로그 참조).
+    // 지금은 그런 영구 통합 테스트가 하나도 없어 문제되지 않지만, 필요해지면 별도
+    // source set/task(예: integrationTest)로 분리해 이 설정과 분리해야 한다.
     environment 'SENTRY_DSN', ''
 }
 
