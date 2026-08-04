@@ -32,8 +32,29 @@ if ./gradlew test --console=plain >"$LOG" 2>&1; then
   exit 0
 fi
 
-REASON=$(tail -n 60 "$LOG")
-jq -n --arg reason "push 전 검증 실패 (./gradlew test). 마지막 로그 60줄:
-$REASON" \
+# 로그 꼬리만 보여주면 실패한 테스트 클래스·메서드명이 잘려 원인 파악이 늦어진다
+# (AI 코드리뷰 지적) — 실패/실행 요약을 먼저 뽑고 그 뒤에 꼬리를 붙인다.
+SUMMARY=$(grep -E 'FAILED|Tests run|tests completed' "$LOG" | head -20)
+
+# Testcontainers/Docker 환경 문제(D-026)로 실패한 경우, 코드와 무관한 이유로 막혔다는
+# 걸 팀원이 바로 알 수 있게 힌트를 덧붙인다 — 안 그러면 "왜 내 코드가 안 되지"로
+# 잘못된 곳을 디버깅하게 된다 (AI 코드리뷰 지적).
+DOCKER_HINT=""
+if grep -qE "DockerClientProviderStrategy|Could not find a valid Docker environment" "$LOG"; then
+  DOCKER_HINT="
+
+⚠️ Docker 환경 감지 실패로 보입니다(코드 문제가 아닐 수 있음). Docker Desktop 버전이
+4.44.2(build 202017) 이하인지 확인하세요 — D-026, MinAPIVersion 호환성 문제."
+fi
+
+TAIL=$(tail -n 60 "$LOG")
+REASON="실패/실행 요약:
+${SUMMARY:-(요약 패턴 없음 — 전체 로그 확인 필요)}
+${DOCKER_HINT}
+
+마지막 로그 60줄:
+$TAIL"
+
+jq -n --arg reason "$REASON" \
   '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$reason}}'
 exit 0
