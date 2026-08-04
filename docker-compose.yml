@@ -64,6 +64,10 @@ services:
       SDK_API_KEY: ${SDK_API_KEY:-}
       # Sentry DSN (배포·운영, MONITORING.md). 비어 있으면 SDK 가 no-op — 키 없이도 기동된다.
       SENTRY_DSN: ${SENTRY_DSN:-}
+      # application.yml 의 sentry.environment: ${ENV:local} 가 참조하는 값. 이걸 안 넘기면
+      # docker compose 로 띄워도 항상 "local" 로 찍혀서 로컬 개발과 구분이 안 된다
+      # (AI 코드리뷰 지적, SENTRY-GUIDE.md 3-1 이 경고한 문제가 설정에서 그대로 재현됨).
+      ENV: ${ENV:-local}
     depends_on:
       mysql:
         # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.

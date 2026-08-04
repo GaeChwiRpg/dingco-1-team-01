@@ -15,6 +15,7 @@ import com.dingco.triage.domain.repository.ReviewQueueRepository;
 import com.dingco.triage.domain.type.ErrorCategory;
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.support.MySqlTestContainer;
+import io.sentry.Sentry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -100,6 +101,17 @@ class BaselineSmokeTest {
                 .extracting(ClassificationPolicy::getThreshold)
                 .as("AUTH 는 보안 인접이라 임계값이 가장 높다 (D-006)")
                 .isEqualTo(new BigDecimal("0.900"));
+    }
+
+    @Test
+    @DisplayName("SENTRY_DSN 없으면 Sentry SDK 가 no-op 으로 초기화된다 — 회귀 방지 (AI 코드리뷰 반영)")
+    void sentryIsDisabledWithoutDsn() {
+        // application-test.yml 에는 SENTRY_DSN 이 없다(SENTRY-GUIDE.md 1번 — 비어 있으면 no-op).
+        // 네트워크 호출이 없는 검증이라 정규 스위트에 남긴다 — SDK 버전을 올렸을 때 이 값이
+        // true 로 바뀌면 DSN 없이도 전송을 시도하게 된 것이고, 그건 조용한 회귀다.
+        assertThat(Sentry.isEnabled())
+                .as("DSN 없는 팀원 환경에서도 앱이 뜨는 이유가 바로 이 no-op 상태다")
+                .isFalse();
     }
 
     @Test
