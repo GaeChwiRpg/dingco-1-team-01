@@ -118,5 +118,5 @@
 | 리뷰 | ✅ ai-review.yml | ✅ PR #1~#5 전원 자동 리뷰 동작 | ✅ |
 | 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료 (`SENTRY-GUIDE.md`) — 단 전부 의도적 테스트 컨트롤러 기준, 실 트래픽 0 | 🔄 |
 
-> **남은 3건 + 운영 단계 실 트래픽 검증이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장 / 운영 실 트래픽(Sentry 도구 자체는 연동·검증 완료).
+> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장 / 운영 단계 실 트래픽 검증(Sentry 도구 자체는 연동·검증 완료).
 > 넷 다 산출물은 있고 **AI 도구 설정만 비어 있다.** 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서, 실제 잔여 작업이 가려진다.

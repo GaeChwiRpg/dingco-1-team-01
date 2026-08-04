@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,10 +42,17 @@ import org.springframework.test.context.ActiveProfiles;
  * <p>가장 중요한 건 <b>컨텍스트가 뜬다</b>는 사실 자체다. {@code ddl-auto=validate} 아래에서
  * 부팅이 성공했다는 것은 곧 <b>엔티티 5개와 V1 DDL 이 한 글자도 어긋나지 않았다</b>는 뜻이고,
  * 그게 세 패키지가 병렬로 갈 수 있는 근거다 (D-023).
+ *
+ * <p>{@code @Order(MIN_VALUE)} — {@code sentryIsDisabledWithoutDsn()} 이 보는
+ * {@code Sentry.isEnabled()} 는 JVM 전역 static 상태다. 이 클래스가 항상 가장 먼저 컨텍스트를
+ * 띄우도록 고정해, 나중에 추가될 다른 {@code @SpringBootTest}(예: 가짜 DSN 을
+ * {@code @DynamicPropertySource} 로 주입하는 통합테스트)가 먼저 떠서 이 static 상태를
+ * 오염시키는 순서 의존 실패를 막는다 (`junit-platform.properties` 참조).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Import({MySqlTestContainer.class, BaselineSmokeTest.RetryProbeConfig.class})
+@Order(Integer.MIN_VALUE)
 class BaselineSmokeTest {
 
     @Autowired

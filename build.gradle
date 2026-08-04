@@ -78,9 +78,10 @@ tasks.named('test') {
 
 // SENTRY_AUTH_TOKEN 이 없는 팀원 환경(로컬)에서도 빌드가 실패하면 안 된다 — 소스 업로드는
 // 배포·운영 산출물이지 컴파일 전제조건이 아니다. 토큰 없으면 업로드만 건너뛴다.
+// org/projectName 은 gradle.properties 참조 — 포크·조직 변경 시 코드 안 건드리고 바꾸기 위함.
 sentry {
     includeSourceContext = true
-    org = "dingcodingco"
-    projectName = "java-spring-boot"
+    org = sentryOrg
+    projectName = sentryProject
     authToken = System.getenv("SENTRY_AUTH_TOKEN")
 }
