@@ -492,4 +492,21 @@
   - Lombok 은 도입하지 않는다. `@Setter`/`@Data`/`@Builder` 가 위 세 계약을 모두 우회시키고, `@Getter` 만 쓸 거라면 이미 손으로 쓴 getter 와 차이가 없다. 이벤트·캐시값·DTO 는 Java 21 `record` 를 기본으로 한다
 - **재평가**: P1/P2/P3 가 전이 메서드를 붙이는 시점에 팩토리 시그니처가 부족하면 여기 표를 갱신한다. 단 **파라미터를 늘리는 방향만 허용하고, `reason`·`confidence` 를 다시 파라미터로 여는 변경은 D-022/계약 B 재논의를 동반해야 한다**
 
-<!-- 다음 결정 추가 시 D-026 부터 -->
+### D-026. 로컬 개발 환경 — Docker Desktop 을 4.44.2(build 202017) 이하로 고정
+
+- **일자**: 2026-08-04
+- **상태**: 채택
+- **배경**: `.claude/hooks/` push 검증 훅을 만들며 `./gradlew test` 를 처음 실 Docker 환경에서 돌려보니 `BaselineSmokeTest`·`CandidateIndexMigrationTest` 등 Testcontainers 기반 통합 테스트 7건이 전부 `"Could not find a valid Docker environment"` 로 실패했다 (`DomainFactoryTest` 순수 단위 테스트 10건은 영향 없음). 원인을 좁혀보니 Spring Boot 3.3.13 BOM 이 고정하는 **Testcontainers 1.19.8** 의 docker-java 가 Docker 환경 감지(probe) 단계에서 API 버전을 **1.24 로 하드코딩 요청**하는데, 이 머신의 Docker Desktop(4.6x~4.7x대, Engine 29.x)은 데몬 `MinAPIVersion` 이 **1.40** 으로 올라가 있어 이 요청 자체를 거부한다 (`curl` 로 `/v1.24/_ping` 을 직접 찔러 `"client version 1.24 is too old. Minimum supported API version is 1.40"` 응답을 실측 확인).
+  개인 머신 문제가 아니다 — 팀원 중 한 명(Docker Desktop 구버전, `MinAPIVersion=1.24`)은 이미 통과하고 있었고, 최신 버전을 쓰는 사람만 실패했다. 즉 **Docker Desktop 을 최신으로 유지하는 것 자체가 P1/P2/P3 전원의 로컬 통합 테스트를 막는 요인**이다.
+- **선택지**:
+  1. **Testcontainers 를 2.x 로 업그레이드** — 업스트림에 fix 존재(`testcontainers/testcontainers-java#11212`, PR #11216, `2.0.2` 부터 포함, 근거: GitHub 이슈·PR 본문 직접 확인). 그러나 2.x 는 `org.testcontainers:mysql`·`org.testcontainers:junit-jupiter` 좌표가 Maven Central 에서 사라졌다(`1.21.3` 이 마지막 발행 — 직접 `maven-metadata.xml` 조회로 확인). 단순 버전 번호 교체가 아니라 모듈 재구조화를 처음부터 조사해야 하고, 커뮤니티에서도 `2.0.2` 에서까지 문제가 남았다는 보고가 있어 불확실성이 크다. 실제 시도 결과 `compileTestJava` 단계에서 좌표 미해결로 실패(`evidence/` 대상)
+  2. **Docker Desktop 을 `MinAPIVersion=1.24` 인 버전으로 고정** — 실측으로 `4.44.2`(build `202017`, Engine `28.3.2`)에서 통과 확인. 즉시 해결되지만 자동 업데이트를 꺼야 유지되고, 팀 전원이 같은 상한선을 지켜야 한다
+  3. 로컬 통합 테스트는 포기하고 CI(`e2e.yml`)만 신뢰 — `e2e.yml` 은 Testcontainers 가 아니라 실제 `docker compose` 스택을 쓰므로 이 버그의 영향을 받지 않는다. 다만 로컬 개발 루프에서 통합 테스트 없이 작업해야 해 회귀를 늦게 발견한다
+- **결정**: 2번. 5일 일정 안에 메이저 버전 마이그레이션까지 검증할 여유가 없다는 점이 D-008 의 판단과 같다. Docker Desktop 버전 고정은 되돌리기 쉬운 선택이고(자동 업데이트 체크박스 하나), 1번(Testcontainers 2.x)은 재평가 조건이 성립하면 후속 항목으로 넘긴다. 3번은 로컬 개발 경험을 포기하는 것이라 최후 수단으로만 둔다.
+- **영향**:
+  - 팀원 전원 로컬 환경 — Docker Desktop **`4.44.2`(build `202017`) 이하**로 설치 + Settings → General 에서 자동 업데이트 체크 해제 필요
+  - `.claude/hooks/handlers/verify-before-push.sh`(push 전 `./gradlew test` 검증)가 이 환경 조건에 실질적으로 의존한다 — 조건이 깨지면 이 훅이 코드와 무관하게 push 를 막는다
+  - `README.md` 또는 `MONITORING.md` 에 로컬 환경 요구사항으로 명시 필요(본 PR 범위 밖 — 후속 PR)
+- **재평가**: Testcontainers 2.x 의 `mysql`/`junit-jupiter` 2.x 좌표가 확인되거나 커뮤니티에서 `2.0.2` 이후 패치의 안정성 보고가 쌓이면 1번으로 전환한다. 반대로 Docker Desktop 자동 업데이트로 이 문제가 팀 내 재발하는 사례가 관측되면 3번(CI 전용 검증)으로 축소한다.
+
+<!-- 다음 결정 추가 시 D-027 부터 -->
