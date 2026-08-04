@@ -118,6 +118,17 @@ at io.sentry.spring.jakarta.SentrySpringFilter.doFilterInternal(...)
 
 컨트롤러 코드 어디에도 `Sentry.init()`도 `captureException()`도 없다 — `sentry-spring-boot-starter-jakarta` 가 서블릿 필터 체인에 자동으로 끼어들어 처리 안 된 예외를 가로챈다. `UncaughtExceptionHandler`(2-2)와는 다른 메커니즘(서블릿 필터)이지만 결과는 같다: **아무 설정 없이 자동으로 잡힌다.**
 
+**추가 확인 (Sentry MCP 로 재검증)** — Sentry MCP(`get_sentry_resource`)로 같은 이슈를 조회하면 이벤트 태그에 정확한 캡처 경로가 나온다:
+
+```
+mechanism: Spring6ExceptionResolver
+handled: no
+```
+
+즉 로그에 보이는 `SentryUserFilter`/`SentryTracingFilter`/`SentrySpringFilter`는 요청 컨텍스트(트레이스, 사용자 정보)를 세팅하는 필터들이고, **실제 예외 포착은 Spring 의 `HandlerExceptionResolver` 확장점(`Spring6ExceptionResolver`)에서 일어난다** — 필터 체인과는 별개 지점이다. `handled: no` 로 "진짜 처리 안 된 예외였다"는 것도 태그로 명시적으로 확인된다.
+
+이 재검증 자체도 Sentry MCP 로 했다 — 대시보드를 직접 안 열어도 이슈 검색(`search_issues`)과 상세 조회(`get_sentry_resource`) 만으로 스택트레이스·소스 코드 스니펫·태그를 전부 텍스트로 받을 수 있었다.
+
 ## 3. 이 프로젝트에서 주의할 점 — 두 종류의 "에러 모니터링"
 
 이 프로젝트 자체가 "에러 분류 검증 파이프라인"이라 헷갈리기 쉬운데, Sentry 가 보는 것과 이 시스템의 도메인이 보는 것은 **서로 다른 층위**다.
