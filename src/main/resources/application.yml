@@ -57,7 +57,9 @@ sentry:
   environment: ${ENV:local}
   # 에러 이벤트 자체는 별도 설정이 없으면 기본 100% 캡처된다 — 이 값은 성능 트레이싱
   # 샘플링만 제어한다. 두 값을 같은 것으로 착각하지 않는다.
-  traces-sample-rate: 0.1
+  # 로컬은 전수 확인하려고 기본 1.0, 운영은 볼륨 비용 때문에 낮춰야 한다 — 기존
+  # ${VAR:default} 컨벤션을 따라 env var 로 오버라이드 가능하게 둔다 (AI 코드리뷰 지적).
+  traces-sample-rate: ${SENTRY_TRACES_SAMPLE_RATE:1.0}
   # PII(요청 헤더·쿠키·사용자 식별자 등)를 이벤트에 실어 보내지 않는다.
   send-default-pii: false
 

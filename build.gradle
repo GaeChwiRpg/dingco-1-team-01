@@ -61,6 +61,12 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // 개발자가 로컬에서 `.env` 를 source 한 채로 테스트를 돌리면 쉘의 실 SENTRY_DSN 이
+    // Gradle 이 포크하는 테스트 JVM 에 그대로 상속돼 BaselineSmokeTest 의 no-op 회귀
+    // 테스트(Sentry.isEnabled() == false 기대)가 깨진다 — AI 코드리뷰 지적을 실제로
+    // 재현해서 확인한 버그(Expecting value to be false but was true). 테스트 프로세스
+    // 안에서만 명시적으로 비워 정규 스위트가 개발자의 쉘 상태에 흔들리지 않게 한다.
+    environment 'SENTRY_DSN', ''
 }
 
 // SENTRY_AUTH_TOKEN 이 없는 팀원 환경(로컬)에서도 빌드가 실패하면 안 된다 — 소스 업로드는
