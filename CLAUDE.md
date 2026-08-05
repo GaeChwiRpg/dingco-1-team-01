@@ -15,16 +15,16 @@
 
 **이 시스템의 존재 이유**: AI가 스스로 신고한 신뢰도를 무조건 믿지 않는다. 신뢰도 검증(1차) + 감사 샘플링(2차) 두 겹.
 
-**이 도메인이라야 하는 이유 — 판별 기준 (D-027, 적용 조건은 D-030 이 정정)**
+**이 도메인이라야 하는 이유 — 판별 기준 (D-027, 적용 조건은 D-031 이 정정)**
 
 설계 자산의 대부분은 도메인 중립이라 도메인이 교체 가능해 보이지만, 아래를 못 넘는 도메인에서는 이 설계가 성립하지 않는다. **도메인 교체 제안은 기준 통과를 먼저 보인다.** 못 넘으면 새 `DECISIONS.md` 항목 없이 반려한다.
 
-1. ~~**묶음 동질성**~~ — **현행 도메인은 이 기준에서 탈락했고, 탈락을 인정하고 그룹핑을 포기했다 (D-030).** 이 기준은 *그룹핑을 하는 설계*의 전제이지 모든 도메인의 관문이 아니다. 그룹핑을 되살리자는 제안에만 다시 적용된다
+1. ~~**묶음 동질성**~~ — **현행 도메인은 이 기준에서 탈락했고, 탈락을 인정하고 그룹핑을 포기했다 (D-031).** 이 기준은 *그룹핑을 하는 설계*의 전제이지 모든 도메인의 관문이 아니다. 그룹핑을 되살리자는 제안에만 다시 적용된다
 2. **정답 단일성** — 팀이 확정한 정답이 **유일한가**. 안 맞으면 오분류율에 검토자 불일치가 섞여 측정 8 을 읽을 수 없다 (측정 1·8 의 전제)
 3. **AI 존재 이유** — 규칙·룩업 테이블로 풀리지 않는가. 안 맞으면 AI 가 부수 기능으로 강등된다 (D-001 의 전제)
 
-> **기준 1 을 대체하는 새 관문 (D-030)**: 그룹핑을 포기했으므로 이후 도메인 제안은 **그룹핑에 매달렸던 자산 — 특히 「캐시」와 AI 절감률 — 을 무엇으로 대체하는지**를 함께 보여야 한다. 현행 도메인의 답은 아래 「캐시 전략」의 **2단 절감 경로**다.
-> 검토·탈락한 후보 4종은 D-027, 전환 근거와 그 대가는 D-030 참조.
+> **기준 1 을 대체하는 새 관문 (D-031)**: 그룹핑을 포기했으므로 이후 도메인 제안은 **그룹핑에 매달렸던 자산 — 특히 「캐시」와 AI 절감률 — 을 무엇으로 대체하는지**를 함께 보여야 한다. 현행 도메인의 답은 아래 「캐시 전략」의 **2단 절감 경로**다.
+> 검토·탈락한 후보 4종은 D-027, 전환 근거와 그 대가는 D-031 참조.
 
 ### 도메인 모델
 
@@ -32,7 +32,7 @@
 Inquiry(id, customer_id, content, channel, normalized_key, status,
         current_category, current_confidence, received_at, created_at, updated_at)
   └ 테이블명은 inquiries. 분류의 단위. status: RECEIVED | CLASSIFIED | UNCLASSIFIED
-  └ normalized_key 는 AI 호출 절감용 조회 키다. 판정 단위가 아니다 (D-030)
+  └ normalized_key 는 AI 호출 절감용 조회 키다. 판정 단위가 아니다 (D-031)
   └ current_* 는 분류 결과의 역정규화 사본 (D-011). 목록 조회 조인 제거용
 
 InquiryClassificationResult(id, inquiry_id, category, confidence, model, raw_response,
@@ -40,7 +40,7 @@ InquiryClassificationResult(id, inquiry_id, category, confidence, model, raw_res
   └ verdict: AUTO_ACCEPTED | NEEDS_REVIEW | FAILED | REUSED
   └ category = AI 제안, final_category = 사람 확정. 둘 다 보존 (덮어쓰기 금지)
   └ category·confidence 가 둘 다 null = verdict FAILED (D-022)
-  └ confidence 만 null = REUSED 중 사람 확정을 재사용한 건 (D-032)
+  └ confidence 만 null = REUSED 중 사람 확정을 재사용한 건 (D-033)
        사람은 확신도를 매기지 않으므로 1 이나 원본 AI 값을 채우지 않는다
   └ REUSED 는 model 에 원본 결과 id 를 남긴다 — 재사용 경로를 추적할 수 없으면 측정 6·8ⓑ 를 못 읽는다
 
@@ -54,7 +54,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
   └ 상호배타 경계 정의는 PRD.md §7. 경계가 흔들리면 측정 8 이 오염된다 (기준 2)
 ```
 
-임계값은 `classification.threshold` **단일 설정값**이다. 카테고리별 차등(D-006)과 `classification_policy` 테이블은 폐기됐다 — D-030.
+임계값은 `classification.threshold` **단일 설정값**이다. 카테고리별 차등(D-006)과 `classification_policy` 테이블은 폐기됐다 — D-031.
 
 **불변 규칙 3개**
 
@@ -62,7 +62,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 2. `UNCLASSIFIED → CLASSIFIED` 전이는 **사람만** 일으킨다. AI 에게 이 전이 권한 없음.
 3. `Inquiry.current_*` 는 역정규화 사본이므로 **판정이 확정되는 트랜잭션(②③) 안에서만** 갱신한다. 다른 경로에서 손대면 원본과 어긋난다. — D-011
 
-> 이전 판의 불변 규칙 1(상태는 `ErrorGroup` 이 소유)은 그룹핑 폐기로 사라졌다. 이제 `Inquiry` 가 자기 상태를 소유하며, 이는 자명해서 규칙으로 둘 필요가 없다. **단 `normalized_key` 가 같다는 이유로 상태를 공유시키려는 시도는 그룹핑의 부활이므로 금지한다 (D-030).**
+> 이전 판의 불변 규칙 1(상태는 `ErrorGroup` 이 소유)은 그룹핑 폐기로 사라졌다. 이제 `Inquiry` 가 자기 상태를 소유하며, 이는 자명해서 규칙으로 둘 필요가 없다. **단 `normalized_key` 가 같다는 이유로 상태를 공유시키려는 시도는 그룹핑의 부활이므로 금지한다 (D-031).**
 
 ### 핵심 쿼리 + 인덱스
 
@@ -104,7 +104,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - Controller 절대 X
 - 단일 read 도 X (cost > benefit)
 - 묶음 read+write 만 — 위 표의 ①②③ **세 메서드**. 여기 밖에 새로 붙이려면 근거를 PR 본문에 쓴다
-- **트랜잭션 ①과 ②는 반드시 분리된 상태로 둔다 (D-030).** ① 은 고객에게 접수 확인을 돌려준 시점에 이미 커밋돼 있어야 한다. ②가 실패해도 ①은 **살아남아야 한다** — 롤백되면 고객이 받은 접수 확인이 거짓말이 된다. 대신 문의가 `RECEIVED` 로 방치되므로 stuck 지표로 드러낸다 (D-017)
+- **트랜잭션 ①과 ②는 반드시 분리된 상태로 둔다 (D-031).** ① 은 고객에게 접수 확인을 돌려준 시점에 이미 커밋돼 있어야 한다. ②가 실패해도 ①은 **살아남아야 한다** — 롤백되면 고객이 받은 접수 확인이 거짓말이 된다. 대신 문의가 `RECEIVED` 로 방치되므로 stuck 지표로 드러낸다 (D-017)
 - **측정 장치를 트랜잭션 밖에 두지 않는다.** 감사 표본 큐 삽입은 ② 안에 포함한다 — 누락되면 감사율이 설정값 미달이 되어 측정 8 의 분모가 조용히 줄어든다. "부차적이라 분리한다"는 판단은 외부 의존성에만 적용한다 (D-012)
 - **캐시 갱신/evict 는 커밋 후** (`@TransactionalEventListener(AFTER_COMMIT)`). 롤백된 판정이 캐시에 남으면 안 됨
 
@@ -113,15 +113,15 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - `@ManyToOne` / `@OneToMany` 모두 LAZY
 - **알려진 N+1 지점**: `GET /api/inquiry-review-queue` 에서 항목별 `Inquiry` + `InquiryClassificationResult` 접근 → `@EntityGraph` 필수. 적용 후 쿼리 수 evidence 남김
 
-### 락·동시성 전략 (D-007 → D-030 으로 축소)
+### 락·동시성 전략 (D-007 → D-031 으로 축소)
 
 | 지점 | 수단 | 이유 |
 | --- | --- | --- |
 | 큐 항목 중복 확정 | **상태 검사 + 낙관적 락 `@Version`** → 409 (`code` 2종) | 두 상담원이 같은 항목을 집는 빈도가 낮아 비관적 락은 과잉. **둘 다 필요하다** — 상태 검사만으로는 동시에 `PENDING` 을 읽은 경합(check-then-act)을 못 막고, `@Version` 만으로는 시간 차 요청을 경합으로 오보한다 (D-021) |
 
-> **이 표가 1행뿐인 것은 설계가 단순해서가 아니라 D-030 에서 자산을 잃었기 때문이다.** 원자적 UPDATE(`occurrence_count`)와 UNIQUE 충돌 재시도(D-016)는 대상 컬럼·제약이 사라져 함께 소멸했다. 이 손실은 감추지 않는다.
+> **이 표가 1행뿐인 것은 설계가 단순해서가 아니라 D-031 에서 자산을 잃었기 때문이다.** 원자적 UPDATE(`occurrence_count`)와 UNIQUE 충돌 재시도(D-016)는 대상 컬럼·제약이 사라져 함께 소멸했다. 이 손실은 감추지 않는다.
 >
-> **2행째로 예정된 것: 검토 항목 선점(claim) — D-031.** 낙관적 락이 충돌을 *사후에 감지*한다면 선점은 *사전에 예방*한다. 둘이 함께 있어야 D-007 의 "경합 성격이 다르면 수단도 다르다"를 다시 주장할 수 있다. 5일 범위 밖이고, `service/`·`api/` 가 예정보다 빨리 끝나면 가장 먼저 붙인다.
+> **2행째로 예정된 것: 검토 항목 선점(claim) — D-032.** 낙관적 락이 충돌을 *사후에 감지*한다면 선점은 *사전에 예방*한다. 둘이 함께 있어야 D-007 의 "경합 성격이 다르면 수단도 다르다"를 다시 주장할 수 있다. 5일 범위 밖이고, `service/`·`api/` 가 예정보다 빨리 끝나면 가장 먼저 붙인다.
 >
 > **같은 `normalized_key` 문의가 동시에 유입되면 AI 를 중복 호출할 수 있다.** 이건 락으로 막지 않고 **수용한다** — 막으려면 키 단위 직렬화가 필요한데, 그것은 접수 경로를 느리게 만들고 무엇보다 그룹핑으로 되돌아가는 길이다. 중복 호출은 절감률을 조금 떨어뜨릴 뿐 정확성을 해치지 않는다. 측정 6 에서 이 손실분을 함께 기록한다.
 >
@@ -130,7 +130,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 ### 캐시 전략
 
 - 변경 빈도 << 조회 빈도 인 지점만
-- **2단 절감 경로 (D-030)** — 그룹핑을 대체해 AI 호출을 줄이는 장치. 판정 단위는 문의 1건 그대로이고 **재사용하는 것은 AI 호출뿐이다**
+- **2단 절감 경로 (D-031)** — 그룹핑을 대체해 AI 호출을 줄이는 장치. 판정 단위는 문의 1건 그대로이고 **재사용하는 것은 AI 호출뿐이다**
 
   ```text
   @Async 워커
@@ -139,7 +139,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
     └ miss                                      : AI 호출
   ```
 
-  **2단 DB 조회의 우선순위 (D-032)** — 사람 노동까지 아끼는 자리다
+  **2단 DB 조회의 우선순위 (D-033)** — 사람 노동까지 아끼는 자리다
 
   | 순위 | 대상 | 이유 |
   | --- | --- | --- |
@@ -152,7 +152,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
   - **캐시가 줄이는 것은 DB 조회이지 AI 호출이 아니다** (D-014). 캐시 miss 여도 DB 에 같은 키의 이전 결과가 있으면 AI 를 부르지 않는다
   - 따라서 `hit rate` 와 `AI 절감률` 은 **별개 메트릭으로 각각 노출**한다. hit rate 는 항상 절감률 이하다
   - **2단(DB)을 빼고 캐시만 두면 안 된다** — Redis 재시작 시 절감이 0 으로 리셋되고, 두 지표가 같은 값이 되어 D-014 가 무의미해진다
-- **정규화 규칙** — 소문자화 · 연속 공백/문장부호 정리 · **주문번호·날짜·금액·연락처 마스킹**. 강도는 측정으로 확정한다 (D-030 재평가 조항)
+- **정규화 규칙** — 소문자화 · 연속 공백/문장부호 정리 · **주문번호·날짜·금액·연락처 마스킹**. 강도는 측정으로 확정한다 (D-031 재평가 조항)
   - **과도 병합**(서로 다른 문의가 한 키로) 과 **과소 병합**(같은 문의가 다른 키로) 을 **양쪽 다** 테스트 케이스로 만든다
   - **과도 병합이 더 위험하다** — 잘못된 분류가 재사용되면서 조용히 퍼진다. 정규화를 조일 때는 항상 이쪽을 먼저 확인한다
 - `stats:summary` — TTL 10s + 큐 삽입/확정 시 `@CacheEvict(allEntries=true)`. Actuator gauge 가 매 스크랩마다 전수 count 치는 것 방지
@@ -161,7 +161,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 
 - 프롬프트로 `{"category": ..., "confidence": 0.0~1.0}` JSON 강제
 - **파싱 실패는 무조건 격리** (fail-safe 는 항상 격리 쪽). 단 이는 **판정 방향 지시이지 저장 값이 아니다** — `confidence` 컬럼에 `0` 을 쓰지 않는다 (D-022). 0 을 쓰면 측정 8ⓐ 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염된다
-- **파싱이 됐어도 값을 검증한다 (D-033).** 아래 4개를 **임계값 비교 전에** 확인하고, 하나라도 위반하면 `FAILED` 로 본다
+- **파싱이 됐어도 값을 검증한다 (D-034).** 아래 4개를 **임계값 비교 전에** 확인하고, 하나라도 위반하면 `FAILED` 로 본다
 
   | 검사 | 위반 예 |
   | --- | --- |
@@ -177,7 +177,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
   실패 사유(`PARSE_ERROR` / `OUT_OF_RANGE` / `UNKNOWN_CATEGORY` / `MISSING_FIELD` / `API_ERROR`)는 **구조화 로그**로 남긴다. 컬럼이나 enum 을 늘리지 않는다
 - 파싱 실패도 `@Retryable` 재시도 대상. 3회 소진 시 `@Recover` 에서 `verdict=FAILED` (`category`·`confidence` 모두 null) + `CLASSIFY_FAILED` 로 큐 삽입. 조용히 삼키지 말 것
 - **재사용된 분류 결과에는 `model` 에 출처(원본 결과 id)를 남긴다** — 어느 것이 실제 AI 호출이고 어느 것이 재사용인지 사후에 구분할 수 없으면 측정 6 과 8ⓑ 를 검산할 수 없다
-- **자동으로 확정되는 것은 주체가 사람이어도 감사한다 (D-032).** 이 시스템의 주제는 "AI 를 믿지 않는다"가 아니라 **"자동으로 확정된 것을 믿지 않는다"** 이다. 사람이 확정한 답이라도 그것이 다른 문의로 **자동 전파**되는 순간 같은 검증이 필요하다 — 오히려 "사람이 정했다"는 사실이 신뢰의 근거가 되어 아무도 의심하지 않기 때문에 더 위험하다
+- **자동으로 확정되는 것은 주체가 사람이어도 감사한다 (D-033).** 이 시스템의 주제는 "AI 를 믿지 않는다"가 아니라 **"자동으로 확정된 것을 믿지 않는다"** 이다. 사람이 확정한 답이라도 그것이 다른 문의로 **자동 전파**되는 순간 같은 검증이 필요하다 — 오히려 "사람이 정했다"는 사실이 신뢰의 근거가 되어 아무도 의심하지 않기 때문에 더 위험하다
 - 문의 본문은 고객이 쓴 자연어라 **개인정보가 섞여 들어온다.** AI 로 보내기 전 정규화 단계의 마스킹을 거친다
 - API key 는 환경변수만. 코드/설정 파일 하드코딩 금지
 
@@ -191,7 +191,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 
 ## 모듈 간 계약 (병렬 작업 기준선)
 
-작업 패키지 **P1 접수·절감 경로(이용택) / P2 분류·검증(김준현) / P3 검토·관측(김은빈)** — D-015, 재배정은 D-030.
+작업 패키지 **P1 접수·절감 경로(이용택) / P2 분류·검증(김준현) / P3 검토·관측(김은빈)** — D-015, 재배정은 D-031.
 셋이 병렬로 가려면 **경계 3개만** 먼저 고정하면 된다. 이 계약을 바꾸는 변경은 세 담당자 합의 + `DECISIONS.md` 항목 필요.
 
 **계약 A — `InquiryReceivedEvent` (P1 → P2)**
@@ -199,7 +199,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 ```text
 InquiryReceivedEvent(inquiryId, normalizedKey, content)
   └ 문의 저장 트랜잭션 커밋 후 발행 (AFTER_COMMIT)
-  └ 접수 전건에 발행한다. 그룹핑이 없으므로 "신규만 발행" 조건은 없다 (D-030)
+  └ 접수 전건에 발행한다. 그룹핑이 없으므로 "신규만 발행" 조건은 없다 (D-031)
   └ 절감 판단(캐시/DB hit 여부)은 발행 시점이 아니라 수신한 워커가 한다
 ```
 
@@ -212,11 +212,11 @@ inquiry_id, classification_result_id, reason, status=PENDING, created_at, versio
        LOW_CONFIDENCE  ← verdict=NEEDS_REVIEW   (category != null, confidence < threshold)
        CLASSIFY_FAILED ← verdict=FAILED         (category, confidence 모두 null)
        AUDIT_SAMPLE    ← verdict=AUTO_ACCEPTED  (confidence >= threshold)
-                       ← verdict=REUSED         (감사로 뽑혔을 때만 — D-032)
+                       ← verdict=REUSED         (감사로 뽑혔을 때만 — D-033)
   └ P3 는 reason 을 조회 응답에 노출하지 않는다 (blind, D-010)
 ```
 
-> **`REUSED` 는 격리 사유가 아니다.** 재사용 건은 자동 확정되며 큐에 들어가지 않는다 — **감사로 뽑힐 때만** 들어가고 그때 사유는 기존과 같은 `AUDIT_SAMPLE` 이다. 계약 B 의 구조는 바뀌지 않고 `verdict → reason` 매핑에 한 줄이 늘 뿐이라, 판별식은 여전히 `verdict` 하나다 (D-032).
+> **`REUSED` 는 격리 사유가 아니다.** 재사용 건은 자동 확정되며 큐에 들어가지 않는다 — **감사로 뽑힐 때만** 들어가고 그때 사유는 기존과 같은 `AUDIT_SAMPLE` 이다. 계약 B 의 구조는 바뀌지 않고 `verdict → reason` 매핑에 한 줄이 늘 뿐이라, 판별식은 여전히 `verdict` 하나다 (D-033).
 
 **계약 C — `classification:byNormalizedKey` 캐시 값 구조 (P1 쓰기·읽기 ↔ P2 쓰기)**
 

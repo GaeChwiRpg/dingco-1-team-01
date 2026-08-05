@@ -85,9 +85,9 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 경합 성격이 달라 수단도 다르다. **통일하지 않는다.**
 
 - 큐 확정 → **상태 검사와 `@Version` 둘 다**. 409 의 `code` 를 `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` 로 구분한다 (D-021)
-- 접수 경로에는 **락을 걸지 않는다.** 같은 `normalized_key` 동시 유입으로 AI 가 중복 호출되는 것은 수용하기로 한 손실이다 (D-030)
+- 접수 경로에는 **락을 걸지 않는다.** 같은 `normalized_key` 동시 유입으로 AI 가 중복 호출되는 것은 수용하기로 한 손실이다 (D-031)
 
-> D-030 이전에는 이 목록이 3개였다. 원자적 UPDATE 와 UNIQUE 충돌 재시도는 대상 컬럼·제약이 사라져 함께 소멸했다.
+> D-031 이전에는 이 목록이 3개였다. 원자적 UPDATE 와 UNIQUE 충돌 재시도는 대상 컬럼·제약이 사라져 함께 소멸했다.
 
 ### AI 규격 (D-022 / D-024)
 
@@ -109,7 +109,7 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 ### 스키마 (D-023)
 
 - `ddl-auto: validate` 다. 엔티티에 필드를 더하면 **`V2__*.sql` 마이그레이션을 함께** 쓴다. 안 그러면 부팅이 실패한다 (의도된 동작이다)
-- 후보 인덱스 분리(구 `V2__candidate_index.sql`)는 **D-030 으로 폐기**됐다 — 근거였던 D-018 의 대상 컬럼이 사라졌기 때문. `spring.flyway.target` 도 함께 제거됐다
+- 후보 인덱스 분리(구 `V2__candidate_index.sql`)는 **D-031 으로 폐기**됐다 — 근거였던 D-018 의 대상 컬럼이 사라졌기 때문. `spring.flyway.target` 도 함께 제거됐다
 
 ---
 
