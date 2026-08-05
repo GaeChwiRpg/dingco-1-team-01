@@ -16,7 +16,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
  * <p><b>주의 — JPQL bulk update 는 auditing 을 우회한다.</b> 영속성 컨텍스트를 거치지 않는
  * 경로에서는 {@code @LastModifiedDate} 가 동작하지 않으므로 해당 쿼리에서 {@code updated_at} 을
  * <b>직접 SET 해야 한다.</b> (도메인 전환 전에는 {@code occurrence_count} 원자적 UPDATE 가
- * 그 사례였다 — D-030 으로 사라졌지만 주의사항 자체는 유효하다.)
+ * 그 사례였다 — D-031 으로 사라졌지만 주의사항 자체는 유효하다.)
  */
 @Configuration(proxyBeanMethods = false)
 @EnableJpaAuditing

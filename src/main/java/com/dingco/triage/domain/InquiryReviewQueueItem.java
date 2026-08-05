@@ -76,7 +76,7 @@ public class InquiryReviewQueueItem {
      * 경합(check-then-act)을 못 막고, 이것만으로는 시간 차 요청을 경합으로 오보한다.
      * 두 창을 각각 {@code CONCURRENT_UPDATE} / {@code ALREADY_RESOLVED} 로 구분해 409 로 낸다.
      *
-     * <p><b>도메인 전환 이후 이 프로젝트에 남은 유일한 동시성 장치다</b> (D-007 → D-030).
+     * <p><b>도메인 전환 이후 이 프로젝트에 남은 유일한 동시성 장치다</b> (D-007 → D-031).
      * 원자적 UPDATE 와 UNIQUE 충돌 재시도는 대상 컬럼·제약이 사라져 함께 소멸했다.
      */
     @Version

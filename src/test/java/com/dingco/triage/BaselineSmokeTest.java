@@ -38,7 +38,7 @@ import org.springframework.util.StringUtils;
  * 부팅이 성공했다는 것은 곧 <b>엔티티 3개와 마이그레이션 DDL 이 한 글자도 어긋나지 않았다</b>는
  * 뜻이고, 그게 세 패키지가 병렬로 갈 수 있는 근거다 (D-023).
  *
- * <p>도메인 전환(D-030) 직후에는 이 검증이 특히 중요하다 — 스키마와 엔티티를 <b>동시에</b>
+ * <p>도메인 전환(D-031) 직후에는 이 검증이 특히 중요하다 — 스키마와 엔티티를 <b>동시에</b>
  * 갈아엎었기 때문에, 둘 중 하나만 틀려도 여기서 잡힌다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -75,7 +75,7 @@ class BaselineSmokeTest {
                 String.class);
 
         assertThat(tables)
-                .as("도메인 전환 후 3테이블이 모두 있어야 한다 (D-030)")
+                .as("도메인 전환 후 3테이블이 모두 있어야 한다 (D-031)")
                 .contains("inquiries", "inquiry_classification_result", "inquiry_review_queue");
     }
 
@@ -88,13 +88,13 @@ class BaselineSmokeTest {
 
         assertThat(tables)
                 .as("V1 만 적용되고 V2 가 스킵되면 구 스키마로 부팅해 validate 가 깨진다. "
-                        + "이전 판의 spring.flyway.target=1 을 제거한 이유가 이것이다 (D-030)")
+                        + "이전 판의 spring.flyway.target=1 을 제거한 이유가 이것이다 (D-031)")
                 .doesNotContain("error_group", "errors", "classification_result",
                         "review_queue", "classification_policy");
     }
 
     @Test
-    @DisplayName("normalized_key 에 UNIQUE 가 없다 — 있으면 그룹핑의 부활이다 (D-030)")
+    @DisplayName("normalized_key 에 UNIQUE 가 없다 — 있으면 그룹핑의 부활이다 (D-031)")
     void normalizedKeyIsNotUnique() {
         Integer uniqueIndexes = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.statistics "

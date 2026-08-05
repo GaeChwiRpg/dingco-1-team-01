@@ -1,4 +1,4 @@
--- V2 — 도메인 전환: 에러 분류 → CS 문의 분류 (D-030)
+-- V2 — 도메인 전환: 에러 분류 → CS 문의 분류 (D-031)
 --
 -- ⚠️ V1 을 고쳐서 처리하지 않은 이유 (D-023 이 못박은 forward-only 원칙):
 --    Flyway 는 적용된 마이그레이션의 checksum 을 검증한다. V1 을 재작성하면
@@ -24,7 +24,7 @@ DROP TABLE IF EXISTS error_group;
 DROP TABLE IF EXISTS classification_policy;
 
 -- ─────────────────────────────────────────────────────────────
--- 2. inquiries — 분류의 단위이자 상태의 소유자 (D-030)
+-- 2. inquiries — 분류의 단위이자 상태의 소유자 (D-031)
 --
 --    이전 도메인에서는 error_group 이 이 자리였고 "같은 에러 1000번 = 판정 1번"이었다.
 --    문의는 개인 건이라 묶으면 각자의 주문·각자의 사정이 사라지므로(D-027 기준 1 탈락)
@@ -34,10 +34,10 @@ CREATE TABLE inquiries
 (
     id                 BIGINT        NOT NULL AUTO_INCREMENT,
     customer_id        BIGINT        NOT NULL,
-    -- 고객이 쓴 자연어. 개인정보가 섞여 들어오므로 AI 전송·응답 시 마스킹을 거친다 (D-030)
+    -- 고객이 쓴 자연어. 개인정보가 섞여 들어오므로 AI 전송·응답 시 마스킹을 거친다 (D-031)
     content            VARCHAR(2000) NOT NULL,
     channel            VARCHAR(20)   NOT NULL,
-    -- AI 호출 절감용 조회 키. 판정 단위가 아니므로 UNIQUE 를 걸지 않는다 (D-030).
+    -- AI 호출 절감용 조회 키. 판정 단위가 아니므로 UNIQUE 를 걸지 않는다 (D-031).
     -- 같은 키의 문의가 여러 건 존재하는 것이 정상이고, 각자 따로 판정된다.
     -- 여기에 UNIQUE 를 걸면 그건 그룹핑의 부활이다.
     normalized_key     VARCHAR(64)   NOT NULL,
@@ -49,7 +49,7 @@ CREATE TABLE inquiries
     created_at         DATETIME(6)   NOT NULL,
     updated_at         DATETIME(6)   NOT NULL,
     PRIMARY KEY (id),
-    -- 2단 절감 경로의 2단 — "같은 키의 가장 최근 분류 결과" 조회 (D-030)
+    -- 2단 절감 경로의 2단 — "같은 키의 가장 최근 분류 결과" 조회 (D-031)
     KEY idx_inquiries_key_created (normalized_key, created_at DESC),
     -- GET /api/inquiries — status 등치 + 기간 범위 + 정렬까지 커버
     KEY idx_inquiries_status_received (status, received_at),
@@ -73,7 +73,7 @@ CREATE TABLE inquiry_classification_result
     -- "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염되기 때문.
     category       VARCHAR(20)   NULL,
     confidence     DECIMAL(4, 3) NULL,
-    -- 실제 AI 호출이면 모델명, 2단 절감 경로로 재사용한 결과면 그 사실을 남긴다 (D-030).
+    -- 실제 AI 호출이면 모델명, 2단 절감 경로로 재사용한 결과면 그 사실을 남긴다 (D-031).
     -- 구분이 없으면 측정 6(AI 절감률)을 사후에 검산할 수 없다.
     model          VARCHAR(100)  NULL,
     raw_response   TEXT          NULL,
@@ -107,7 +107,7 @@ CREATE TABLE inquiry_review_queue
     resolved_at              DATETIME(6) NULL,
     created_at               DATETIME(6) NOT NULL,
     -- 낙관적 락. 상태 검사만으로는 못 막는 check-then-act 경합을 막는다 → 409 CONCURRENT_UPDATE (D-021).
-    -- 도메인 전환 이후 이 프로젝트에 남은 유일한 동시성 장치다 (D-007 → D-030).
+    -- 도메인 전환 이후 이 프로젝트에 남은 유일한 동시성 장치다 (D-007 → D-031).
     version                  BIGINT      NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     -- GET /api/inquiry-review-queue — status 필터 + created_at ASC (오래된 순). filesort 없이 커버
@@ -121,4 +121,4 @@ CREATE TABLE inquiry_review_queue
 
 -- seed 없음.
 -- V1 은 classification_policy 에 카테고리 10종의 임계값을 seed 했으나,
--- D-006 폐기로 임계값이 application.yml 의 classification.threshold 단일값이 됐다 (D-030).
+-- D-006 폐기로 임계값이 application.yml 의 classification.threshold 단일값이 됐다 (D-031).

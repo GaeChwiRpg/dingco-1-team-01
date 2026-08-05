@@ -71,7 +71,7 @@ class DomainFactoryTest {
     }
 
     @Test
-    @DisplayName("normalized_key 가 같아도 문의는 각각 별개다 — 그룹핑이 아니다 (D-030)")
+    @DisplayName("normalized_key 가 같아도 문의는 각각 별개다 — 그룹핑이 아니다 (D-031)")
     void sameNormalizedKeyStillProducesIndependentInquiries() {
         Inquiry first = Inquiry.receive(5001L, "환불해주세요", Channel.WEB, "same-key", NOW);
         Inquiry second = Inquiry.receive(7002L, "환불해주세요", Channel.APP, "same-key", NOW);
@@ -166,7 +166,7 @@ class DomainFactoryTest {
                 .isEqualTo(expected);
         assertThat(item.getStatus()).isEqualTo(QueueStatus.PENDING);
         assertThat(item.getVersion())
-                .as("낙관적 락 초기값 (계약 B). 도메인 전환 이후 남은 유일한 동시성 장치다 (D-030)")
+                .as("낙관적 락 초기값 (계약 B). 도메인 전환 이후 남은 유일한 동시성 장치다 (D-031)")
                 .isZero();
         assertThat(item.getClassificationResult())
                 .as("FAILED 도 행은 남긴다 — 세 reason 모두 반드시 존재 (계약 B)")
