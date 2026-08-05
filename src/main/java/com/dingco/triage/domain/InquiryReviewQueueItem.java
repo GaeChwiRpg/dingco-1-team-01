@@ -109,6 +109,7 @@ public class InquiryReviewQueueItem {
             case NEEDS_REVIEW -> QueueReason.LOW_CONFIDENCE;
             case FAILED -> QueueReason.CLASSIFY_FAILED;
             case AUTO_ACCEPTED -> QueueReason.AUDIT_SAMPLE;
+            case REUSED -> QueueReason.AUDIT_SAMPLE; // D-033: 감사로 뽑힐 때만 큐에 들어온다
         };
         item.status = QueueStatus.PENDING;
         return item;

@@ -21,5 +21,7 @@ public enum Verdict {
      * 0 을 쓰면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과
      * "응답이 깨진 건"이 섞여 이 프로젝트의 결론이 오염된다.
      */
-    FAILED
+    FAILED,
+
+    REUSED
 }
