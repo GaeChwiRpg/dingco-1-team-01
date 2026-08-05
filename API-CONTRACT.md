@@ -1,4 +1,4 @@
-# API-CONTRACT v0.7
+# API-CONTRACT v0.8
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -21,13 +21,31 @@
 
 ### 공통 오류
 
-| 코드 | 조건 |
-| --- | --- |
-| 400 | 필수 필드 누락 / enum 값 불일치 / threshold 범위 위반 |
-| 401 | 인증 헤더 누락 또는 API key 불일치 |
-| 403 | 역할 권한 부족 (예: `ROLE_INGEST` 가 검토 큐 접근) |
-| 404 | 대상 리소스 없음 |
-| 409 | 확정 충돌 — **원인 2종을 `code` 로 구분**한다 (D-021). `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 확정 경합) |
+| 코드 | 조건 | `code` |
+| --- | --- | --- |
+| 400 | 필수 필드 누락 / 길이 초과 / enum 값 불일치 / threshold 범위 위반 | `VALIDATION_FAILED` |
+| 401 | 인증 헤더 누락 또는 API key 불일치 | `UNAUTHORIZED` |
+| 403 | 역할 권한 부족 (예: `ROLE_INGEST` 가 검토 큐 접근) | `FORBIDDEN` |
+| 404 | 대상 리소스 없음. **정책 갱신(§7)은 예외** — 미등록 카테고리는 404 가 아니라 upsert 다 (D-029) | `NOT_FOUND` |
+| 409 | 확정 충돌 — **원인 2종을 `code` 로 구분**한다 (D-021) | `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` |
+
+**오류 응답 바디는 전 endpoint 공통 형식이다.** 3인 병렬 작업(P1/P2/P3)이 각자 다른 모양을 내보내면 E2E 가 endpoint 마다 다른 파서를 갖게 된다.
+
+```json
+{
+  "code": "VALIDATION_FAILED",
+  "message": "message 는 필수입니다.",
+  "fieldErrors": [
+    { "field": "message", "reason": "must not be blank" }
+  ]
+}
+```
+
+- `code` — 클라이언트 분기용 안정 식별자. 문자열 상수이며 변경 시 버전 bump 대상
+- `message` — 사람이 읽는 설명. **분기 근거로 쓰지 않는다** (문구는 예고 없이 바뀔 수 있다)
+- `fieldErrors` — 400 에서만. 그 외에는 필드 자체를 생략한다
+- 409 는 `fieldErrors` 대신 `reviewQueueItemId` 를 함께 담는다 (§5 참조)
+- **스택트레이스·내부 예외 메시지를 그대로 담지 않는다.** 수신 API 는 `ROLE_INGEST` 에게 열려 있어 서버 내부 구조가 새어 나가는 자리가 된다
 
 ### 카테고리 enum (10종)
 
@@ -57,6 +75,17 @@ X-Api-Key: sdk-live-a1b2c3
   "occurredAt": "2026-07-30T10:12:03Z"
 }
 ```
+
+**요청 필드** — 길이 상한은 `V1__init_schema.sql` 의 컬럼 정의와 일치시킨다. 어긋나면 400 이어야 할 요청이 500(`DataException`)으로 나가고, 그러면 **클라이언트 잘못과 서버 잘못이 로그에서 섞인다.**
+
+| 필드 | 필수 | 타입 | 제약 | 비고 |
+| --- | --- | --- | --- | --- |
+| `message` | ✅ | string | 1~2000자 (`errors.raw_message`) | blank 면 400. 그룹의 `sample_message` 는 앞 1000자로 자른다 |
+| `stackTrace` | ⭕ | string | `TEXT` | 없어도 수신은 성립한다. 다만 fingerprint 정규화가 `message` 만으로 이뤄져 **과소 병합 쪽으로 기운다** |
+| `source` | ✅ | string | 1~100자 (`errors.source`) | 발생 서비스명 |
+| `occurredAt` | ⭕ | ISO-8601 | 미래 시각 거부 | 생략 시 **서버 수신 시각**. 클라이언트 시계를 신뢰하지 않는다 |
+
+> `fingerprint` 는 요청에 받지 않는다. 클라이언트가 정하면 같은 에러가 SDK 버전마다 다른 그룹이 되고, **그룹핑이 곧 AI 절감**(D-014)이므로 절감률이 클라이언트 구현에 좌우된다.
 
 **응답**: `202 Accepted`
 
@@ -92,7 +121,7 @@ X-Api-Key: sdk-live-a1b2c3
 | `page` | 0 | |
 | `size` | 20 | 최대 100 |
 
-> **`sort` 를 둔 이유 (D-012)**: `from`/`to` 범위 필터와 `occurrence_count DESC` 정렬을 함께 쓰면 한 B-tree 로 커버되지 않아 filesort 가 발생한다. 기간 필터를 쓰는 조회는 `sort=lastSeenAt` 을 선택하면 `(status, last_seen_at)` 인덱스로 **범위 + 정렬을 함께 커버**한다. 어느 쪽이 실제로 유리한지는 측정 5번 EXPLAIN 결과로 확정한다.
+> **`sort` 를 둔 이유 (D-013)**: `from`/`to` 범위 필터와 `occurrence_count DESC` 정렬을 함께 쓰면 한 B-tree 로 커버되지 않아 filesort 가 발생한다. 기간 필터를 쓰는 조회는 `sort=lastSeenAt` 을 선택하면 `(status, last_seen_at)` 인덱스로 **범위 + 정렬을 함께 커버**한다. 어느 쪽이 실제로 유리한지는 측정 5번 EXPLAIN 결과로 확정한다.
 >
 > | 조회 패턴 | 권장 `sort` | 인덱스 |
 > | --- | --- | --- |
@@ -171,7 +200,7 @@ X-Api-Key: sdk-live-a1b2c3
 | --- | --- | --- |
 | `status` | `PENDING` | `PENDING \| RESOLVED` |
 | `from` / `to` | (전체) | `created_at` 범위 |
-| `page` / `size` | 0 / 20 | |
+| `page` / `size` | 0 / 20 | `size` 최대 100 (§2 와 동일) |
 
 > ⚠️ **blind 보증 — `reason` · `confidence` · `threshold` 는 요청 파라미터로도 응답 필드로도 제공하지 않는다.** (D-005, D-010)
 >
@@ -275,13 +304,18 @@ X-User-Role: REVIEWER
 
 ### 6. GET /api/policies
 
-> 카테고리별 임계값 조회 (`ROLE_ADMIN`).
+> 카테고리별 임계값 + **판정 설정 전반** 조회 (`ROLE_ADMIN`).
 
 **응답**: `200 OK`
 
 ```json
 {
+  "mode": "PER_CATEGORY",
+  "globalThreshold": 0.7,
   "defaultThreshold": 0.9,
+  "audit": {
+    "sampleRate": 0.05
+  },
   "policies": [
     { "category": "AUTH",           "threshold": 0.90, "updatedBy": 3, "updatedAt": "2026-07-30T09:00:00Z" },
     { "category": "DB_CONNECTION",  "threshold": 0.85, "updatedBy": 3, "updatedAt": "2026-07-30T09:00:00Z" },
@@ -298,6 +332,18 @@ X-User-Role: REVIEWER
 ```
 
 **임계값 배정 근거**: 오분류 비용이 큰 쪽을 높게. `AUTH` 는 보안 인접이라 최고, `DB_CONNECTION` / `OUT_OF_MEMORY` 는 장애 직결. `NULL_REFERENCE` / `VALIDATION` 은 흔하고 오분류 비용이 낮음. 미등록 카테고리는 `defaultThreshold 0.9` fallback (보수적 = 격리 쪽으로 실패).
+
+**비대칭의 방향 (D-027)**: `DB_CONNECTION` → `VALIDATION` 오분류는 장애 대응을 늦추지만(고비용), 반대 방향은 검토자가 한 번 더 볼 뿐이다(저비용). 임계값을 카테고리별로 나누는 실제 근거는 "비용이 다르다"가 아니라 **"어느 방향으로 다른가"** 다.
+
+**`mode` · `globalThreshold` · `audit.sampleRate` 는 Phase 2 에서 읽기 전용이다 (D-028).** 출처는 `application.yml` (`classification.policy.*`, `classification.audit.sample-rate`) 이고 변경은 재기동을 동반한다.
+
+| 필드 | 의미 | 왜 읽기 전용인가 |
+| --- | --- | --- |
+| `mode` | `PER_CATEGORY`(D-006 채택안) \| `GLOBAL`(그 이전 단일 임계값 초안) | **측정 9 의 처리군 식별자**다. 같은 50건을 두 모드로 돌려 비교하는데, 실행 중에 바뀌면 어느 결과가 어느 모드였는지 사후에 구분할 수 없다 |
+| `globalThreshold` | `mode=GLOBAL` 일 때 전 카테고리 공통 임계값 (0.7) | 위와 같음 — 대조군의 정의 자체 |
+| `audit.sampleRate` | 자동 승인 건 중 감사 표본 추출 비율 (0.05) | **측정 8 의 모집단을 정하는 값**이다. 실행 중 변경을 허용하면 `GET /api/stats` 의 `actualSampleRate` 괴리가 "표본 누락"인지 "설정 변경"인지 갈리지 않아, 감사 장치를 감사하려던 D-012 의 목적이 무너진다 |
+
+> 런타임 변경 API 는 Phase 3 항목 J. 그때는 **변경 이력(누가·언제·이전 값)을 함께 남기는 것**이 조건이다 (D-028).
 
 ---
 
@@ -331,8 +377,12 @@ X-User-Role: ADMIN
 ```
 
 - 소급 적용 없음. 이미 판정된 그룹은 재분류하지 않는다 (자동 재분류는 Phase 3)
+- **upsert 다 — 정책 행이 없어도 404 가 아니다 (D-029).** `classification_policy` 에 행이 없는 상태는 오류가 아니라 `defaultThreshold 0.9` fallback 이 적용 중인 **정상 상태**이고, 404 로 막으면 그 카테고리의 임계값을 영원히 설정할 수 없다 (행을 만들려면 갱신해야 하고 갱신하려면 행이 있어야 하는 순환)
+- 행이 없던 카테고리를 갱신하면 `previousThreshold` 에 **그때 실제로 적용되던 값** = `defaultThreshold` 를 담는다. 행 유무와 무관하게 "무엇을 무엇으로 바꿨는지"가 같은 방식으로 읽힌다
 
-**오류**: 400 (`threshold` 가 0.0~1.0 밖), 403 (`ROLE_REVIEWER` 접근), 404 (미정의 카테고리)
+**오류**: 400 (`threshold` 가 0.0~1.0 밖 / `ErrorCategory` enum 에 없는 값), 403 (`ROLE_REVIEWER` 접근)
+
+> **404 를 이 endpoint 에서 제거한 이유**: 남겨두면 *카테고리명 오타*(→ 400 이어야 함)와 *정책 미등록*(→ 오류가 아님)이 같은 코드로 보고돼 클라이언트가 둘을 구분할 수 없다. enum 에 **없는** 값은 400, enum 에 **있고 행만 없는** 것은 생성이다.
 
 ---
 
@@ -417,4 +467,5 @@ X-User-Role: ADMIN
 | v0.5 | 2026-07-30 | AI 리뷰 4차 반영 — `GET /api/stats` 에 `classification.stuckNew` + Actuator gauge `triage.groups.stuck_new` 추가 (판정 롤백으로 방치된 그룹 탐지, D-017). §4 blind 한계를 결정적 역산/확률적 추론으로 구분 (D-019) | #1 |
 | v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — `PATCH /api/review-queue/{id}` 의 409 를 `ALREADY_RESOLVED`(선행 확정) / `CONCURRENT_UPDATE`(동시 경합) 2종 `code` 로 분리. 상태 검사와 `@Version` 이 각각 다른 창을 막는다는 근거 명시 (D-021) | #1 |
 | v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. §4 `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, §5 `matched` 를 nullable 로 정정 (AI 제안이 없으면 `false` 가 아니라 `null`) (D-022) | develop 직접 (구현 #3) |
+| v0.8 | 2026-08-04 | `service/`·`api/` 착수 전 계약 공백 메우기 — ⓐ 공통 오류 **응답 바디 형식**과 `code` 상수 신설(3인 병렬 작업이 서로 다른 오류 모양을 내보내는 것 차단) ⓑ §1 **요청 필드 표**(길이 상한을 `V1` 컬럼 정의와 일치, `occurredAt` 생략 시 서버 시각) ⓒ §6 에 `mode`·`globalThreshold`·`audit.sampleRate` 를 **읽기 전용**으로 노출 (D-028) ⓓ §7 을 **upsert** 로 정정하고 404 제거 (D-029) ⓔ §2 `sort` 근거의 결정 번호 오인용 정정 (D-012 → **D-013**) | 미머지 — P2/P3 코드 PR 동반 |
 <!-- 변경 시 한 줄씩 추가 -->
