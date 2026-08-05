@@ -67,6 +67,19 @@ case "$HOOK_EVENT" in
           exit $?
         fi
         ;;
+
+      Write|Edit)
+        # 헌법 위반 편집을 편집이 일어나기 전에 막는다 — CLAUDE.md 2행의
+        # "위반 시 hook 이 차단합니다" 를 실제 장치로 만든 것.
+        #
+        # 정적으로 확실히 가릴 수 있는 것만 여기서 막고(비밀 정보·키 하드코딩·
+        # Controller 트랜잭션·적용된 마이그레이션 수정), 판단이 필요한 규칙
+        # (트랜잭션 경계 ①②③, 계약 A/B/C, 감사 표본 역산 가능성)은
+        # constitution-auditor 서브에이전트의 몫으로 남긴다. 오탐이 잦은 훅은
+        # 곧 꺼지고, 꺼진 훅은 없는 것만 못하다.
+        python3 "$HANDLERS/constitution-guard.py" <<<"$INPUT"
+        exit $?
+        ;;
     esac
     ;;
 esac
