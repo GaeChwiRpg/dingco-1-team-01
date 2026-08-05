@@ -8,7 +8,7 @@ package com.dingco.triage.domain.type;
  * 만들고, 그게 D-027 기준 2(정답 단일성)를 통과하는 조건이다 — 경계가 흔들리면 오분류율에
  * 검토자 불일치가 섞여 측정 8 을 읽을 수 없다.
  *
- * <p>경계 정의 전문은 {@code PRD.md} §4-0. 여기 주석과 어긋나면 PRD 가 기준이다.
+ * <p>경계 정의 전문은 {@code PRD.md} §7. 여기 주석과 어긋나면 PRD 가 기준이다.
  *
  * <p>「미분류」는 여기 없다 — 카테고리가 아니라 {@link InquiryStatus#UNCLASSIFIED} 로 표현한다.
  */
