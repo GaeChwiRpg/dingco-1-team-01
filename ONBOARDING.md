@@ -12,7 +12,7 @@
 | `PRD.md` | 무엇을 만드는지 — 페르소나, User Story(US-1~US-13), 핵심 흐름, 5일 범위 |
 | `CLAUDE.md` | **어떻게 짜는지. 코딩 규칙의 유일한 기준(SoT)** — 도메인 모델, 3계층 분리, 트랜잭션 위치, 캐시 전략, AI 호출 규칙, 모듈 간 계약 A/B/C |
 | `DECISIONS.md` | 왜 이렇게 정했는지 — D-001 부터 누적. **본문은 고치지 않고 새 항목으로 덮는다** |
-| `API-CONTRACT.md` | endpoint 계약 (**v1.1, 현행 도메인 기준으로 갱신 완료**). 새 API 를 만들면 같은 PR 에서 이 문서도 고친다 |
+| `API-CONTRACT.md` | endpoint 계약 (**v1.3**, 현행 도메인 기준). 새 API 를 만들면 같은 PR 에서 이 문서도 고친다.<br>⚠️ **PRD 와 어긋난 5건이 남아 있다** — `INTEGRATION-LOG.md` 「API-CONTRACT 재대조」 참조. 계약은 코드 PR 에서만 고칠 수 있어 `api/` 착수 때 함께 맞춘다 |
 | `GLOSSARY.md` | 용어 — "판정", "격리", "재사용", "감사 표본" 같은 말이 헷갈릴 때 |
 | `SENTRY-GUIDE.md` | 예외를 잡을지 말지, Sentry 에 어떻게 남길지 (판단 표는 2-4) |
 | `MONITORING.md` | 배포·운영 단계에서 무엇을 보는지 |

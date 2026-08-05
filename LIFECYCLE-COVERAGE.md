@@ -177,7 +177,7 @@
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
 | 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-042) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
-| 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.1** | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
+| 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.3** (PRD 와 어긋난 5건은 `api/` PR 에서 정정 — `INTEGRATION-LOG.md`) | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 8건 + 단위 8건 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
 | 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건) | ✅ PR #1~#11 전원 자동 리뷰 동작 | ✅ |
 | 운영 | ✅ docker-compose.yml, Dockerfile, .env.example, MONITORING.md, SENTRY-GUIDE.md | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료(`SENTRY-GUIDE.md`, PR #9) — 실 트래픽 0 | 🔄 |
