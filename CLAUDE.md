@@ -104,7 +104,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | 핵심 트랜잭션 | ① 문의 저장 (즉시 응답, AI 대기 없음)<br>② 분류 결과 저장 + 문의 전이 + 조건부 큐 삽입 (**감사 표본 삽입 포함** — D-012)<br>③ 큐 확정 + `final_category` 기록 + 문의 전이 | ① `service/InquiryIngestService.receive`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` |
 | 검색·필터 | 큐 복합 필터 + 페이징 | `domain/repository/InquiryReviewQueueRepository.search` |
 | 캐시 | ① `normalized_key → 분류 결과` (AI 호출 절감 경로의 1단)<br>② 적체·감사 요약 통계 (TTL 10s) | ① `service/ClassificationCache`<br>② `service/StatsService.summary` |
-| 비동기·이벤트 | `InquiryReceivedEvent` → `@Async` 워커 + `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` |
+| 비동기·이벤트 | `InquiryReceivedEvent` → `@Async` 분류 담당 + `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` |
 | AI 보조 | 분류 + **임계값 검증** + **감사 샘플링** | `service/AiClassificationService`, `service/AuditSamplingPolicy` |
 
 ## 코딩 규칙
@@ -136,9 +136,11 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | --- | --- | --- |
 | 큐 항목 중복 확정 | **상태 검사 + 낙관적 락 `@Version`** → 409 (`code` 2종) | 두 상담원이 같은 항목을 집는 빈도가 낮아 비관적 락은 과잉. **둘 다 필요하다** — 상태 검사만으로는 동시에 `PENDING` 을 읽은 경합(check-then-act)을 못 막고, `@Version` 만으로는 시간 차 요청을 경합으로 오보한다 (D-021) |
 
-> **이 표가 1행뿐인 것은 설계가 단순해서가 아니라 D-031 에서 자산을 잃었기 때문이다.** 원자적 UPDATE(`occurrence_count`)와 UNIQUE 충돌 재시도(D-016)는 대상 컬럼·제약이 사라져 함께 소멸했다. 이 손실은 감추지 않는다.
+| 트랜잭션 ② 의 중복 실행 | **조건부 UPDATE** — `SET status=? WHERE id=? AND status='RECEIVED'`, 갱신 0행이면 이미 처리된 것으로 보고 반환 | 이벤트가 두 번 도착하면 큐 항목이 2건 되어 **상담원이 같은 문의를 두 번 보고 측정 8ⓐ 의 분모가 부푼다.** 상태 검사(check-then-act)로는 동시 도착을 못 막고, UNIQUE 제약은 D-016 탓에 재시도를 트랜잭션 밖으로 빼는 구조가 따라온다 (D-049) |
+
+> **2행째는 D-049 로 채워졌다 — 그리고 그 수단이 하필 D-031 에서 잃었던 원자적 UPDATE 다.** 대상 컬럼(`occurrence_count`)이 사라져 수단까지 소멸한 줄 알았는데, **같은 수단이 다른 자리에서 필요해졌다.** 함께 소멸했던 UNIQUE 충돌 재시도(D-016)는 여전히 없고, D-016 의 교훈은 D-049 가 UNIQUE 를 **택하지 않은 근거**로 살아 있다. 이 손실과 회수는 둘 다 감추지 않는다.
 >
-> **2행째로 예정된 것: 검토 항목 선점(claim) — D-032.** 낙관적 락이 충돌을 *사후에 감지*한다면 선점은 *사전에 예방*한다. 둘이 함께 있어야 D-007 의 "경합 성격이 다르면 수단도 다르다"를 다시 주장할 수 있다. 5일 범위 밖이고, `service/`·`api/` 가 예정보다 빨리 끝나면 가장 먼저 붙인다.
+> **3행째로 예정된 것: 검토 항목 선점(claim) — D-032.** 낙관적 락이 충돌을 *사후에 감지*한다면 선점은 *사전에 예방*한다. 둘이 함께 있어야 D-007 의 "경합 성격이 다르면 수단도 다르다"를 다시 주장할 수 있다. 5일 범위 밖이고, `service/`·`api/` 가 예정보다 빨리 끝나면 가장 먼저 붙인다.
 >
 > **같은 `normalized_key` 문의가 동시에 유입되면 AI 를 중복 호출할 수 있다.** 이건 락으로 막지 않고 **수용한다** — 막으려면 키 단위 직렬화가 필요한데, 그것은 접수 경로를 느리게 만들고 무엇보다 그룹핑으로 되돌아가는 길이다. 중복 호출은 절감률을 조금 떨어뜨릴 뿐 정확성을 해치지 않는다. 측정 6 에서 이 손실분을 함께 기록한다.
 >
@@ -150,7 +152,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - **2단 절감 경로 (D-031)** — 그룹핑을 대체해 AI 호출을 줄이는 장치. 판정 단위는 문의 1건 그대로이고 **재사용하는 것은 AI 호출뿐이다**
 
   ```text
-  @Async 워커
+  @Async 분류 담당
     ├ 1단 캐시 조회 (normalized_key)   → hit  : AI 호출 없이 결과 재사용
     ├ 2단 DB 조회 (쿼리 2번 — 아래)    → hit  : AI 호출 없이 재사용 + 캐시 put
     └ miss                                   : AI 호출
@@ -176,7 +178,9 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - **덮어쓰기 방향은 한 방향이다 (D-036)** — **사람 답은 AI 답을 덮고, AI 답은 사람 답을 덮지 않는다**
   - 사람이 확정하면(③) 그 답으로 캐시를 **덮어쓴다.** 안 덮으면 1단 hit 이 나는 동안 2단이 아예 실행되지 않아 **위 1순위 규칙이 실행될 기회조차 없다** — 감사가 잡아낸 정정을 시스템이 도로 무시하게 된다
   - ②의 put 은 기존 값이 사람 답(`source=HUMAN`)이면 덮지 않는다
-  - **완벽한 원자성은 목표가 아니다.** 워커가 AI 를 부르는 사이 사람이 확정하면 창이 남지만, 그 결과는 옛 AI 답이 잠시 더 재사용되는 것이고 재사용 건은 감사 대상이다 (D-033). 막으려고 키 단위 직렬화를 넣으면 그룹핑으로 되돌아간다
+  - **이 검사는 원자적으로 한다 (D-048).** GET → 판단 → SET 으로 쪼개면 그 사이에 ③이 넣은 사람 답을 ②가 덮는다 — D-036 이 막으려던 상황이 그대로 재현된다. Lua 스크립트 1개로 처리한다. **③의 put 은 조건 없이 덮으므로 그냥 SET 이다**
+  - **`maxmemory` + `allkeys-lru` 로 상한을 둔다 (D-048).** 1단 캐시는 evict 가 없어 키가 무한히 쌓인다. **TTL 로 상한을 대신하지 않는다** — 캐시가 비는 시점이 시계에 달리면 측정 6·11 이 실행마다 다른 값을 낸다. 측정 11 에 `evicted_keys` 와 메모리 사용량을 함께 기록한다
+  - **완벽한 원자성은 목표가 아니다.** 분류 담당이 AI 를 부르는 사이 사람이 확정하면 창이 남지만, 그 결과는 옛 AI 답이 잠시 더 재사용되는 것이고 재사용 건은 감사 대상이다 (D-033). 막으려고 키 단위 직렬화를 넣으면 그룹핑으로 되돌아간다
 - **정규화 규칙** — 소문자화 · 연속 공백/문장부호 정리 · **주문번호·날짜·금액·연락처 마스킹**. 강도는 측정으로 확정한다 (D-031 재평가 조항)
   - **과도 병합**(서로 다른 문의가 한 키로) 과 **과소 병합**(같은 문의가 다른 키로) 을 **양쪽 다** 테스트 케이스로 만든다
   - **과도 병합이 더 위험하다** — 잘못된 분류가 재사용되면서 조용히 퍼진다. 정규화를 조일 때는 항상 이쪽을 먼저 확인한다
@@ -238,7 +242,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 InquiryReceivedEvent(inquiryId, normalizedKey, content)
   └ 문의 저장 트랜잭션 커밋 후 발행 (AFTER_COMMIT)
   └ 접수 전건에 발행한다. 그룹핑이 없으므로 "신규만 발행" 조건은 없다 (D-031)
-  └ 절감 판단(캐시/DB hit 여부)은 발행 시점이 아니라 수신한 워커가 한다
+  └ 절감 판단(캐시/DB hit 여부)은 발행 시점이 아니라 수신한 분류 담당이 한다
 ```
 
 **계약 B — `inquiry_review_queue` 삽입 시 필수 컬럼 (P2 → P3)**
