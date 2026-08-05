@@ -35,6 +35,10 @@ Inquiry(id, customer_id, content, channel, normalized_key, status,
   └ 테이블명은 inquiries. 분류의 단위. status: RECEIVED | CLASSIFIED | UNCLASSIFIED
   └ normalized_key 는 AI 호출 절감용 조회 키다. 판정 단위가 아니다 (D-031)
   └ current_* 는 분류 결과의 역정규화 사본 (D-011). 목록 조회 조인 제거용
+       사본이지 요약이 아니다 — 원본이 null 이면 null 을 그대로 복사한다 (D-039)
+       current_confidence = null : 미판정 · FAILED · 사람 확정을 재사용한 REUSED
+       current_category   = null : 미판정뿐. REUSED 에도 카테고리는 있다
+  └ content 는 원문으로 저장한다. 마스킹본은 저장하지 않고 내보낼 때 계산한다 (D-040)
 
 InquiryClassificationResult(id, inquiry_id, category, confidence, model, raw_response,
                            verdict, final_category, attempt_count, created_at)
@@ -80,6 +84,9 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 > 측정 5 에서 위 예상이 맞는지 `EXPLAIN` 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
 >
 > ⚠️ **2단 절감 경로의 조회는 조인이다 (D-037).** `normalized_key` 는 `inquiries` 에, `final_category` · `verdict` 는 `inquiry_classification_result` 에 있다. 이전 판이 이 조회를 단일 테이블처럼 적어둔 탓에 인덱스 하나가 조회 전체를 커버하는 것처럼 보였다 — **커버되는 것은 구동 테이블 쪽뿐**이다.
+>
+> ⚠️ **정렬 축은 `inquiries.created_at` 이고, 이는 판정 시각의 근사다 (D-041).** 이 쿼리가 집는 것은 "가장 최근 판정"이 아니라 **"가장 최근 문의의 판정"** 이라, 늦게 확정된 옛 문의의 사람 답을 지나칠 수 있다. 그래도 바꾸지 않는다 — 같은 키의 사람 답이 서로 다르다면 그건 정렬 문제가 아니라 **검토자 불일치(측정 12)** 이고, 정렬로 덮으면 불일치가 있다는 사실이 안 보이게 된다.
+> `GET /api/inquiries` 의 정렬 축이 `received_at` 인 것과 어긋나지 않는다 — **둘은 다른 쿼리이고 다른 인덱스를 쓴다.**
 >
 > ⚠️ **1순위와 2순위는 쿼리를 따로 친다 (D-037).** 우선순위를 `ORDER BY (final_category IS NOT NULL) DESC` 같은 정렬식으로 표현하면 filesort 가 확정이고, 그렇다고 `LIMIT 1` 로 최신 한 건만 뽑으면 **사람 확정 행을 지나쳐 D-033 이 무력화된다.** 1순위가 맞으면 거기서 끝나고, 두 번째 쿼리는 1순위가 빈 경우에만 나간다.
 >
@@ -174,6 +181,12 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
   - **과도 병합**(서로 다른 문의가 한 키로) 과 **과소 병합**(같은 문의가 다른 키로) 을 **양쪽 다** 테스트 케이스로 만든다
   - **과도 병합이 더 위험하다** — 잘못된 분류가 재사용되면서 조용히 퍼진다. 정규화를 조일 때는 항상 이쪽을 먼저 확인한다
 - `stats:summary` — TTL 10s + 큐 삽입/확정 시 `@CacheEvict(allEntries=true)`. Actuator gauge 가 매 스크랩마다 전수 count 치는 것 방지
+  - **재사용 자동 확정에는 evict 를 걸지 않는다 (D-042).** 접수 경로마다 일어나 빈도가 높아서, 걸면 캐시가 상시 비어 있게 되고 "변경 빈도 << 조회 빈도" 전제가 무너진다. TTL 10s 가 이미 지연 상한이다
+  - **큐 삽입/확정에 evict 가 붙은 이유는 빈도가 아니라 관측자다** — 그쪽은 사람이 방금 한 행동의 결과를 화면에서 확인하는 경로라 10초 지연이 "확정했는데 숫자가 안 변한다"로 보인다. 재사용 확정에는 그 자리에서 기다리는 사람이 없다
+- **개인정보 마스킹은 저장하지 않고 내보낼 때 계산한다 (D-040).** 원문은 그대로 저장한다 — 상담원이 답변하려면 필요하다
+  - `masked_content` 컬럼을 두지 않는 이유: **마스킹 강도는 측정으로 조일 예정**(D-031 재평가)인데, 저장해두면 규칙을 조여도 과거 행은 옛 마스킹 그대로 남는다. 백필을 빠뜨리면 이미 저장된 개인정보가 계속 응답으로 나간다
+  - **AI 전송 전 마스킹과 같은 구현을 공유한다.** 두 벌이면 한쪽만 조여져서 화면에는 가려지는데 프롬프트에는 남는 상태가 된다
+  - 비용은 측정 b(목록 p95)에 포함된다. 목표를 못 넘고 원인이 마스킹으로 지목되면 그때 컬럼 저장을 실측 근거로 다시 올린다
 
 ### AI 호출 규칙
 
@@ -250,6 +263,9 @@ key   : normalized_key (String)
 value : { category, confidence, source, sourceResultId }
   └ source         : HUMAN | AI            — 캐시 단에서도 1순위/2순위를 구분한다
   └ sourceResultId : 원본 결과 id           — REUSED 행의 model 컬럼에 그대로 쓴다 (추적 경로)
+       ⚠ 방금 만든 REUSED 행의 id 를 넣지 않는다. 넣으면 체인 금지가 캐시로 우회된다 (D-042)
+       보장 지점은 조회 쪽이다 — 2순위가 verdict='AUTO_ACCEPTED' 등치라 REUSED 는 안 나오고,
+       1순위가 주는 것은 사람 답이라 체인이 아니다. put 은 조회 결과를 옮길 뿐 판단하지 않는다
   └ confidence     : source=AI 면 원본 값 / source=HUMAN 이면 null (D-033)
   └ 판정이 확정된 결과만 담는다. 미판정 상태(NEEDS_REVIEW·FAILED)는 캐시하지 않는다
   └ inquiryId 를 담지 않는다 — 담으면 "이 문의의 판정"으로 오해돼 그룹핑처럼 쓰이게 된다

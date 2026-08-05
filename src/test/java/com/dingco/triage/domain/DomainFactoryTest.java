@@ -127,6 +127,36 @@ class DomainFactoryTest {
     }
 
     @Test
+    @DisplayName("사람 확정을 재사용하면 confidence 가 null 이다 — confidence 로 FAILED 를 판별할 수 없다 (D-033, D-039)")
+    void reusedFromHumanLeavesConfidenceNullButKeepsCategory() {
+        InquiryClassificationResult reused = InquiryClassificationResult.reusedFromHuman(
+                inquiry(), InquiryCategory.RETURN_REFUND, 8802L);
+
+        assertThat(reused.getConfidence())
+                .as("사람은 확신도를 매기지 않는다 — 1 이나 원본 AI 값을 채우면 거짓말이 된다")
+                .isNull();
+        assertThat(reused.getCategory())
+                .as("confidence 만 null 이다. 카테고리까지 null 이면 FAILED 와 구별되지 않는다")
+                .isEqualTo(InquiryCategory.RETURN_REFUND);
+        assertThat(reused.getVerdict())
+                .as("판별식은 verdict 다. confidence == null 은 이제 FAILED 만 뜻하지 않는다")
+                .isEqualTo(Verdict.REUSED);
+        assertThat(reused.getModel())
+                .as("재사용 경로를 추적할 수 없으면 측정 6·8ⓑ 를 검산할 수 없다 — 원본 결과 id 를 남긴다")
+                .contains("8802");
+    }
+
+    @Test
+    @DisplayName("AI 답을 재사용하면 confidence 는 원본 값 그대로다 — 사람 확정 재사용과 구별된다 (D-033)")
+    void reusedFromAiKeepsOriginalConfidence() {
+        InquiryClassificationResult reused = InquiryClassificationResult.reusedFromAi(
+                inquiry(), InquiryCategory.DELIVERY, new BigDecimal("0.910"), 8803L);
+
+        assertThat(reused.getConfidence()).isEqualByComparingTo("0.910");
+        assertThat(reused.getVerdict()).isEqualTo(Verdict.REUSED);
+    }
+
+    @Test
     @DisplayName("attemptCount 0 은 거부한다 — @Retryable 회수율 집계의 근거이기 때문 (D-022 재평가)")
     void rejectsZeroAttemptCount() {
         assertThatThrownBy(() -> InquiryClassificationResult.failed(inquiry(), "m", "raw", 0))

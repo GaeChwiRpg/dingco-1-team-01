@@ -11,7 +11,7 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-038) — **D-031 으로 도메인 전환, PRD 전면 재작성** |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-042) — **D-031 으로 도메인 전환, PRD 전면 재작성** |
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16 |
@@ -83,7 +83,7 @@
 | 측정 | 내용 | 책임자 | 시점 |
 | --- | --- | --- | --- |
 | a | `POST /api/inquiries` p95 < 100ms (AI 지연 비전파 확인) | 이용택 (P1) | Day 4 |
-| b | `GET /api/inquiry-review-queue` p95 < 200ms + **N+1 제거 전후 쿼리 수** | 김은빈 (P3) | Day 4 |
+| b | `GET /api/inquiry-review-queue` p95 < 200ms + **N+1 제거 전후 쿼리 수** + **목록 마스킹 재계산 비용** (D-040) | 김은빈 (P3) | Day 4 |
 
 > **측정 6 이 D-031 이후 가장 중요한 측정이다.** 정규화 키의 hit rate 가 0 에 수렴하면 「캐시」 필수 기능의 정당화가 무너진다 — D-031 재평가 조항의 발동 조건이 여기서 나온다. P1 이 맡는 이유는 정규화 규칙의 소유자가 P1 이기 때문이다.
 > 측정 3 을 P3 가 맡는 이유: `stuckReceived` gauge 를 노출하는 코드가 P3 소유다. 만든 사람이 지표가 0 인 것이 "정상"인지 "안 세고 있는 것"인지 구분할 수 있다.
@@ -94,7 +94,7 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`(12절 · US 13개 · 측정 11개), `DECISIONS.md`(D-001~D-038)
+- 산출물: `PRD.md`(12절 · US 13개 · 측정 11개), `DECISIONS.md`(D-001~D-042)
 - 도구:
   - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
   - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
@@ -161,7 +161,7 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-038) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-042) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
 | 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.1** | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 8건 + 단위 8건 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
 | 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건) | ✅ PR #1~#11 전원 자동 리뷰 동작 | ✅ |

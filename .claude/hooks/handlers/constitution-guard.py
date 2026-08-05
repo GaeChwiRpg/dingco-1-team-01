@@ -66,22 +66,26 @@ def is_committed(path: str) -> "bool | None":
 
     작성 중인 새 마이그레이션(아직 커밋 전)은 여러 번 고치는 것이 정상 작업이므로 통과시킨다 —
     이 훅의 원칙이 "오탐이 거의 없을 것"이기 때문이다.
+
+    **`git ls-files` 를 쓰지 않는다 (AI 리뷰 지적).** 그건 인덱스 추적 여부라
+    `git add` 만 해둔 새 마이그레이션까지 "적용됨"으로 잡는다 — 커밋 직전에 한 번 더
+    고치는 것은 정상 작업이고, 여기서 막히면 훅이 꺼진다. 커밋 이력을 직접 본다.
     """
-    directory = os.path.dirname(path) or "."
+    absolute = os.path.abspath(path)
+    directory = os.path.dirname(absolute) or os.sep
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", "--", path],
+            ["git", "log", "-1", "--format=%H", "--", absolute],
             cwd=directory,
             capture_output=True,
+            text=True,
             timeout=5,
         )
     except Exception:
         return None
-    if result.returncode == 0:
-        return True
-    if result.returncode == 1:  # 추적되지 않는 파일 — 아직 커밋 전이다
-        return False
-    return None  # 128 등 — 레포 밖이거나 git 자체가 실패. 판정하지 않는다
+    if result.returncode != 0:
+        return None  # 레포 밖 / 커밋이 하나도 없음 / git 자체가 실패. 판정하지 않는다
+    return bool(result.stdout.strip())
 
 
 def deny(reason: str) -> None:

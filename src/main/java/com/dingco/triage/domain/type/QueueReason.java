@@ -18,6 +18,13 @@ public enum QueueReason {
     /** {@link Verdict#FAILED} — category·confidence 모두 null. 행은 남긴다. */
     CLASSIFY_FAILED,
 
-    /** {@link Verdict#AUTO_ACCEPTED} 중 무작위 추출. AI 가 자신 있게 틀린 경우를 잡는 두 번째 겹 (D-005). */
+    /**
+     * {@link Verdict#AUTO_ACCEPTED} 와 {@link Verdict#REUSED} 중 무작위 추출.
+     * 자동으로 확정된 것을 믿지 않기 위한 두 번째 겹 (D-005, D-033).
+     *
+     * <p><b>확정한 주체가 사람이어도 감사한다</b> — 사람이 확정한 답이 다른 문의로 자동 전파되는
+     * 순간 같은 검증이 필요하다. 오히려 "사람이 정했다"는 사실이 신뢰의 근거가 되어
+     * 아무도 의심하지 않기 때문에 더 위험하다.
+     */
     AUDIT_SAMPLE
 }
