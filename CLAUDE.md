@@ -11,7 +11,7 @@
 - 고객 문의를 AI가 자동 분류하고, **신뢰도가 임계값 미만이면 격리**하며, **자동 확정된 결과도 일부를 무작위 감사**하는 검증 파이프라인
 - 페르소나: 고객 (`ROLE_CUSTOMER`) / 상담원 (`ROLE_AGENT`) / 운영 매니저 (`ROLE_MANAGER`)
 - 핵심 흐름: 문의 접수 (즉시 응답) → 비동기 AI 분류 (**정규화 키로 호출 절감**) → **임계값 검증** → 자동 확정 or 검토 큐 격리 → 상담원 확정 → 캐시 갱신
-- 감사 경로: 자동 확정 건 5% 무작위 → 검토 큐 (`AUDIT_SAMPLE`) → 사람 확정 → `category ≠ final_category` 면 오분류 1건 집계
+- 감사 경로: **자동 확정 건 5% + 재사용 건 5%** 무작위 → 검토 큐 (`AUDIT_SAMPLE`) → 사람 확정 → `category ≠ final_category` 면 오분류 1건 집계
 
 **이 시스템의 존재 이유**: AI가 스스로 신고한 신뢰도를 무조건 믿지 않는다. 신뢰도 검증(1차) + 감사 샘플링(2차) 두 겹.
 
@@ -37,9 +37,12 @@ Inquiry(id, customer_id, content, channel, normalized_key, status,
 
 InquiryClassificationResult(id, inquiry_id, category, confidence, model, raw_response,
                            verdict, final_category, attempt_count, created_at)
-  └ verdict: AUTO_ACCEPTED | NEEDS_REVIEW | FAILED
+  └ verdict: AUTO_ACCEPTED | NEEDS_REVIEW | FAILED | REUSED
   └ category = AI 제안, final_category = 사람 확정. 둘 다 보존 (덮어쓰기 금지)
-  └ category / confidence 는 nullable. verdict=FAILED 일 때만 둘 다 null (D-022)
+  └ category·confidence 가 둘 다 null = verdict FAILED (D-022)
+  └ confidence 만 null = REUSED 중 사람 확정을 재사용한 건 (D-032)
+       사람은 확신도를 매기지 않으므로 1 이나 원본 AI 값을 채우지 않는다
+  └ REUSED 는 model 에 원본 결과 id 를 남긴다 — 재사용 경로를 추적할 수 없으면 측정 6·8ⓑ 를 못 읽는다
 
 InquiryReviewQueueItem(id, inquiry_id, classification_result_id, reason, status,
                        agent_id, resolved_at, created_at, version)
@@ -136,6 +139,16 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
     └ miss                                      : AI 호출
   ```
 
+  **2단 DB 조회의 우선순위 (D-032)** — 사람 노동까지 아끼는 자리다
+
+  | 순위 | 대상 | 이유 |
+  | --- | --- | --- |
+  | 1 | 사람이 확정한 것 (`final_category IS NOT NULL`) | 사람 답이 AI 답보다 신뢰도가 높다 |
+  | 2 | AI 가 자동 확정한 것 (`verdict = AUTO_ACCEPTED`) | |
+  | — | **`verdict = REUSED` 는 참조하지 않는다** | **체인 금지** — 재사용을 다시 재사용하면 원본이 틀렸을 때 어디까지 퍼졌는지 추적할 수 없다 |
+
+  1순위가 없으면 같은 내용의 저확신 문의가 **사람이 아무리 확정해도 계속 큐에 쌓인다.** AI 호출만 아끼고 사람 노동은 하나도 못 아끼는 상태가 된다.
+
   - **캐시가 줄이는 것은 DB 조회이지 AI 호출이 아니다** (D-014). 캐시 miss 여도 DB 에 같은 키의 이전 결과가 있으면 AI 를 부르지 않는다
   - 따라서 `hit rate` 와 `AI 절감률` 은 **별개 메트릭으로 각각 노출**한다. hit rate 는 항상 절감률 이하다
   - **2단(DB)을 빼고 캐시만 두면 안 된다** — Redis 재시작 시 절감이 0 으로 리셋되고, 두 지표가 같은 값이 되어 D-014 가 무의미해진다
@@ -149,7 +162,8 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - 프롬프트로 `{"category": ..., "confidence": 0.0~1.0}` JSON 강제
 - **파싱 실패는 무조건 격리** (fail-safe 는 항상 격리 쪽). 단 이는 **판정 방향 지시이지 저장 값이 아니다** — `confidence` 컬럼에 `0` 을 쓰지 않는다 (D-022). 0 을 쓰면 측정 8 의 최하위 신뢰도 구간에 "AI 가 0 이라 신고한 건"과 "응답이 깨진 건"이 섞여 오염된다
 - 파싱 실패도 `@Retryable` 재시도 대상. 3회 소진 시 `@Recover` 에서 `verdict=FAILED` (`category`·`confidence` 모두 null) + `CLASSIFY_FAILED` 로 큐 삽입. 조용히 삼키지 말 것
-- **재사용된 분류 결과에는 `model` 에 출처를 남긴다** — 어느 것이 실제 AI 호출이고 어느 것이 재사용인지 사후에 구분할 수 없으면 측정 6 을 검산할 수 없다
+- **재사용된 분류 결과에는 `model` 에 출처(원본 결과 id)를 남긴다** — 어느 것이 실제 AI 호출이고 어느 것이 재사용인지 사후에 구분할 수 없으면 측정 6 과 8ⓑ 를 검산할 수 없다
+- **자동으로 확정되는 것은 주체가 사람이어도 감사한다 (D-032).** 이 시스템의 주제는 "AI 를 믿지 않는다"가 아니라 **"자동으로 확정된 것을 믿지 않는다"** 이다. 사람이 확정한 답이라도 그것이 다른 문의로 **자동 전파**되는 순간 같은 검증이 필요하다 — 오히려 "사람이 정했다"는 사실이 신뢰의 근거가 되어 아무도 의심하지 않기 때문에 더 위험하다
 - 문의 본문은 고객이 쓴 자연어라 **개인정보가 섞여 들어온다.** AI 로 보내기 전 정규화 단계의 마스킹을 거친다
 - API key 는 환경변수만. 코드/설정 파일 하드코딩 금지
 
@@ -184,8 +198,11 @@ inquiry_id, classification_result_id, reason, status=PENDING, created_at, versio
        LOW_CONFIDENCE  ← verdict=NEEDS_REVIEW   (category != null, confidence < threshold)
        CLASSIFY_FAILED ← verdict=FAILED         (category, confidence 모두 null)
        AUDIT_SAMPLE    ← verdict=AUTO_ACCEPTED  (confidence >= threshold)
+                       ← verdict=REUSED         (감사로 뽑혔을 때만 — D-032)
   └ P3 는 reason 을 조회 응답에 노출하지 않는다 (blind, D-010)
 ```
+
+> **`REUSED` 는 격리 사유가 아니다.** 재사용 건은 자동 확정되며 큐에 들어가지 않는다 — **감사로 뽑힐 때만** 들어가고 그때 사유는 기존과 같은 `AUDIT_SAMPLE` 이다. 계약 B 의 구조는 바뀌지 않고 `verdict → reason` 매핑에 한 줄이 늘 뿐이라, 판별식은 여전히 `verdict` 하나다 (D-032).
 
 **계약 C — `classification:byNormalizedKey` 캐시 값 구조 (P1 쓰기·읽기 ↔ P2 쓰기)**
 

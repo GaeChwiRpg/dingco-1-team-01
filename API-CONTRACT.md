@@ -1,8 +1,9 @@
-# API-CONTRACT v1.0
+# API-CONTRACT v1.1
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
 > **v1.0 은 도메인 전환(D-030)에 따른 전면 개정이다** — 에러 분류 → CS 문의 분류.
+> **v1.1 은 사람 확정 답의 재사용(D-032)** — `verdict` 에 `REUSED` 추가, 감사 통계를 자동확정/재사용으로 분리.
 
 ## 형식 원칙
 
@@ -183,7 +184,8 @@ X-User-Role: CUSTOMER
 ```
 
 - `classifications` 는 `ROLE_AGENT` 이상에게만 포함된다
-- `model` 이 **재사용 출처를 담는 자리**다 (D-030). 2단 절감 경로로 이전 결과를 재사용한 건은 실제 AI 호출과 구분되게 기록해야 측정 6 을 검산할 수 있다
+- `model` 이 **재사용 출처를 담는 자리**다 (D-030). 2단 절감 경로로 이전 결과를 재사용한 건은 **원본 결과 id** 를 남겨 실제 AI 호출과 구분한다 — 구분이 없으면 측정 6 과 8ⓑ 를 검산할 수 없다
+- `verdict = REUSED` 는 AI 를 부르지 않고 같은 정규화 키의 원본 결과를 재사용한 건이다 (D-032). **사람이 확정한 답을 재사용했으면 `confidence` 가 `null`** 이다 — 사람은 확신도를 매기지 않으므로 `1` 이나 원본 AI 값을 채우지 않는다
 - `verdict` 는 **큐에 들어간 사유의 판별식**이기도 하다 (계약 B). 단 이 값은 문의 상세에서만 보이고 **검토 큐 응답에는 나가지 않는다** (§4 blind)
 
 **오류**: 403 (남의 문의), 404
@@ -233,7 +235,8 @@ X-User-Role: CUSTOMER
 - **이 null 은 blind 위반이 아니다 (D-022)**: 가려야 하는 대상은 **감사 표본**이고, 감사 표본은 정의상 `AUTO_ACCEPTED` 라 `suggestedCategory` 가 **항상 존재**한다. 즉 null 인 항목은 "감사 표본이 **아님**"만 알려줄 뿐, 나머지 중 어느 것이 감사 표본인지는 여전히 알려주지 않는다. D-019 분류로 **결정적 역산 아님**
 - **알려진 한계 1 — 앵커링 (D-010)**: AI 제안을 보여주므로 상담원에게 앵커링 편향이 남는다. 사람이 먼저 분류하고 그다음 AI 제안을 공개하는 2단계 방식은 Phase 3
 - **알려진 한계 2 — 확률적 추론 (D-019)**: `content` 는 **제거할 수 없다.** 상담원이 문의 원문을 못 읽으면 분류 작업 자체가 불가능하기 때문이다. 다만 숙련된 상담원은 *"이건 딱 봐도 명확한 환불 문의인데 왜 내 큐에 있지"* 로 감사 표본을 **확률적으로** 추론할 수 있다
-- 두 한계의 성격이 다르다 — **결정적 역산은 0건이어야 하고**(그건 결함이다), **확률적 추론은 남는다**(그건 감수한다). 따라서 `audit.misclassificationRate` 는 **하한값**으로만 해석한다
+- 두 한계의 성격이 다르다 — **결정적 역산은 0건이어야 하고**(그건 결함이다), **확률적 추론은 남는다**(그건 감수한다). 따라서 `misclassificationRate` 는 **하한값**으로만 해석한다
+- **`REUSED` 건이 감사로 뽑혀 들어와도 응답은 다른 항목과 구별되지 않는다** (D-032). `verdict` 는 검토 큐 응답에 나가지 않으므로, 상담원은 이것이 AI 가 방금 분류한 건인지 지난 답을 재사용한 건인지 알 수 없다 — blind 는 그대로 유지된다
 
 > **이전 도메인보다 확률적 추론이 쉬워졌다.** 에러 메시지는 비전문가에게 균일하게 어렵지만, CS 문의는 상담원이 읽는 순간 난이도를 직관적으로 안다. 측정 10 에서 이 점을 한계로 함께 기록한다.
 
@@ -367,22 +370,34 @@ X-User-Role: AGENT
     "misses": 508
   },
   "audit": {
-    "eligibleTotal": 1180,
-    "sampledTotal": 59,
-    "actualSampleRate": 0.050,
     "configuredSampleRate": 0.05,
-    "reviewed": 40,
-    "mismatched": 6,
-    "misclassificationRate": 0.150,
-    "byConfidenceBucket": [
-      { "range": "0.8-0.9", "reviewed": 24, "mismatched": 5, "actualAccuracy": 0.792 },
-      { "range": "0.9-1.0", "reviewed": 16, "mismatched": 1, "actualAccuracy": 0.938 }
-    ]
+    "autoAccepted": {
+      "eligibleTotal": 1180,
+      "sampledTotal": 59,
+      "actualSampleRate": 0.050,
+      "reviewed": 40,
+      "mismatched": 6,
+      "misclassificationRate": 0.150,
+      "byConfidenceBucket": [
+        { "range": "0.8-0.9", "reviewed": 24, "mismatched": 5, "actualAccuracy": 0.792 },
+        { "range": "0.9-1.0", "reviewed": 16, "mismatched": 1, "actualAccuracy": 0.938 }
+      ]
+    },
+    "reused": {
+      "eligibleTotal": 412,
+      "sampledTotal": 21,
+      "actualSampleRate": 0.051,
+      "reviewed": 15,
+      "mismatched": 1,
+      "misclassificationRate": 0.067
+    }
   }
 }
 ```
 
-> `audit.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". **여기 수치는 전부 형식 예시이며, 확정값은 본인 실측으로만 기록한다** (`CLAUDE.md` AI 검증 규칙).
+> **`audit` 을 `autoAccepted` / `reused` 두 블록으로 나눈 이유 (D-032)**: 합치면 이 프로젝트의 결론인 측정 8ⓐ 가 오염된다. `autoAccepted` 는 "AI 답 vs 사람 답" 비교이지만 `reused` 에는 **비교할 AI 답이 없다** — 재사용된 건이기 때문이다. `reused.misclassificationRate` 가 `autoAccepted` 쪽보다 유의미하게 높으면 **재사용이 오류를 증폭하고 있다는 신호**이고, 그때는 사람 확정 재사용을 끄는 것이 재평가 조건이다.
+>
+> `audit.autoAccepted.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". **여기 수치는 전부 형식 예시이며, 확정값은 본인 실측으로만 기록한다** (`CLAUDE.md` AI 검증 규칙).
 >
 > `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014, 근거는 D-030 이 교체): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 2단 경로 전체다.** 캐시 miss 여도 DB 에 같은 정규화 키의 이전 결과가 있으면 AI 를 부르지 않으므로 `hitRate < savingsRate` 가 정상이다. 한 객체 안에 두면 같은 현상의 두 표현으로 오독된다.
 >
@@ -419,5 +434,6 @@ X-User-Role: AGENT
 | v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — 409 를 `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` 2종 `code` 로 분리 (D-021) | #1 |
 | v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, `matched` 를 nullable 로 정정 (D-022) | develop 직접 (구현 #3) |
 | v0.8 | 2026-08-04 | `service/`·`api/` 착수 전 계약 공백 메우기 — ⓐ 공통 오류 **응답 바디 형식**과 `code` 상수 신설 ⓑ §1 **요청 필드 표** ⓒ §6 에 `mode`·`globalThreshold`·`audit.sampleRate` 를 **읽기 전용**으로 노출 (D-028) ⓓ §7 을 **upsert** 로 정정하고 404 제거 (D-029) ⓔ §2 `sort` 근거의 결정 번호 정정 (D-012 → D-013) | 미머지 |
+| v1.1 | 2026-08-05 | **사람 확정 답의 재사용 (D-032)** — ⓐ `verdict` 에 `REUSED` 추가. 사람 확정을 재사용한 건은 `confidence` 가 `null` (D-022 부분 개정) ⓑ `GET /api/stats` 의 `audit` 을 `autoAccepted` / `reused` 두 블록으로 분리 — 합치면 측정 8ⓐ 가 오염된다 ⓒ `model` 에 **원본 결과 id** 를 남기도록 명시 ⓓ 계약 B 는 불변 — `REUSED` 는 격리 사유가 아니고 감사로 뽑힐 때만 `AUDIT_SAMPLE` 로 큐에 들어간다 | 본 PR |
 | **v1.0** | 2026-08-05 | **도메인 전환에 따른 전면 개정 (D-030)** — 에러 분류 → CS 문의 분류. ⓐ endpoint 8개 → **7개 + Actuator**: `POST/GET /api/inquiries`, `GET /api/inquiries/{id}`, `GET/PATCH /api/inquiry-review-queue`, `GET /api/policies`(읽기 전용 축소), `GET /api/stats` ⓑ **`PATCH /api/policies/{category}` 삭제** (D-006·D-029 폐기) ⓒ 역할 `ROLE_INGEST`/`REVIEWER`/`ADMIN` → **`CUSTOMER`/`AGENT`/`MANAGER`** ⓓ 카테고리 enum 10종 **전면 교체** + 경계 규칙("원인이 아니라 조치")을 `PRD.md` §7 으로 위임 ⓔ `sort` 파라미터 삭제 (D-013 폐기 — 정렬 축이 하나뿐) ⓕ `stuckNew` → **`stuckReceived`** ⓖ 개인정보 마스킹 규약 신설 (문의 본문은 고객 자연어) ⓗ 남의 문의 조회는 **404 가 아니라 403** (id 훑기 차단) | 본 PR |
 <!-- 변경 시 한 줄씩 추가 -->
