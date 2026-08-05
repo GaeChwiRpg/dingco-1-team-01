@@ -143,11 +143,11 @@ API 를 추가하면 API-CONTRACT.md 도 같은 PR 에서 갱신해.
 
 - **브랜치**: `develop` 에서 딴다. 이름은 아래를 따른다
 
-  | 상황 | 형식                            | 예                                          |
-  | --- |-------------------------------|--------------------------------------------|
-  | 이슈가 있는 기능 개발 | `feat/[이슈번호]/[kebab-case-설명]` | `feat/[TRI-14]/classification-transaction` |
-  | 이슈 번호 없는 간단한 수정 | `fix/[설명]` 또는 `chore/[설명]`    | `fix/queue-sort-order`                     |
-  | 문서만 고칠 때 | `docs/[설명]`                   | `docs/onboarding`                          |
+  | 상황 | 형식                            | 예                                        |
+  | --- |-------------------------------|------------------------------------------|
+  | 이슈가 있는 기능 개발 | `feat/[이슈번호]/[kebab-case-설명]` | `feat/TRI-14/classification-transaction` |
+  | 이슈 번호 없는 간단한 수정 | `fix/[설명]` 또는 `chore/[설명]`    | `fix/queue-sort-order`                   |
+  | 문서만 고칠 때 | `docs/[설명]`                   | `docs/onboarding`                        |
 
   **`[이슈번호]` 는 Jira 키(`TRI-14`)를 쓴다.** 이슈가 Jira 와 GitHub 두 곳에 있는데, 기준이 Jira 이기 때문이다. GitHub 번호(`#12`)는 브랜치명이 아니라 커밋의 `Closes #12` 로 연결한다.
   ⚠️ 이 규칙을 정하기 전에 만든 브랜치는 이슈 번호가 없다 (예: `feat/inquiry-domain-baseline`). 이름을 바꾸면 열려 있는 PR 과의 연결이 끊기므로 **소급 적용하지 않고, 앞으로 만드는 것부터** 위 표를 따른다 (D-035).
