@@ -7,11 +7,11 @@
 
 > 선택한 도구 + 선택 이유 1줄. 운영 단계는 **하나라도 끝까지** 시연하는 게 여러 개 절반씩보다 낫다.
 
-| 도구 | 역할 | 선택? |
-| --- | --- | --- |
-| Sentry MCP | 에러 수집 + AI 위임 분석 | ✅ 적용 완료 (실측 검증, `SENTRY-GUIDE.md` 참조) |
-| Datadog | APM + 로그 통합 | |
-| Grafana + Prometheus | 메트릭 + 알림 | |
+| 도구 | 역할 | 선택? | 실측 근거 |
+| --- | --- | --- | --- |
+| Sentry MCP | **앱 자체의 장애** 수집 + AI 위임 분석 (CS 문의와 별개 축 — D-031) | ✅ 적용 완료 | `SENTRY-GUIDE.md` + PR #9 실측 스크린샷 |
+| Datadog | APM + 로그 통합 | ⏳ 미적용 | — |
+| Grafana + Prometheus | 메트릭 + 알림 | ⏳ 미적용 | — |
 | Docker Compose | 시연용 스택 | ✅ 적용 완료 (`docker-compose.yml`, `Dockerfile` 참조) |
 | Terraform / Pulumi | IaC | |
 

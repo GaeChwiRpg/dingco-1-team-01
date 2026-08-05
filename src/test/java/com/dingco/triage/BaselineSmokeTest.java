@@ -2,20 +2,15 @@ package com.dingco.triage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.dingco.triage.domain.ClassificationPolicy;
-import com.dingco.triage.domain.ClassificationResult;
-import com.dingco.triage.domain.ErrorEvent;
-import com.dingco.triage.domain.ErrorGroup;
-import com.dingco.triage.domain.ReviewQueueItem;
-import com.dingco.triage.domain.repository.ClassificationPolicyRepository;
-import com.dingco.triage.domain.repository.ClassificationResultRepository;
-import com.dingco.triage.domain.repository.ErrorEventRepository;
-import com.dingco.triage.domain.repository.ErrorGroupRepository;
-import com.dingco.triage.domain.repository.ReviewQueueRepository;
-import com.dingco.triage.domain.type.ErrorCategory;
+import com.dingco.triage.domain.Inquiry;
+import com.dingco.triage.domain.InquiryClassificationResult;
+import com.dingco.triage.domain.InquiryReviewQueueItem;
+import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
+import com.dingco.triage.domain.repository.InquiryRepository;
+import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
+import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.support.MySqlTestContainer;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -37,11 +32,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.util.StringUtils;
 
 /**
- * baseline 이 실제로 서 있는지 확인하는 4가지.
+ * baseline 이 실제로 서 있는지 확인한다.
  *
  * <p>가장 중요한 건 <b>컨텍스트가 뜬다</b>는 사실 자체다. {@code ddl-auto=validate} 아래에서
- * 부팅이 성공했다는 것은 곧 <b>엔티티 5개와 V1 DDL 이 한 글자도 어긋나지 않았다</b>는 뜻이고,
- * 그게 세 패키지가 병렬로 갈 수 있는 근거다 (D-023).
+ * 부팅이 성공했다는 것은 곧 <b>엔티티 3개와 마이그레이션 DDL 이 한 글자도 어긋나지 않았다</b>는
+ * 뜻이고, 그게 세 패키지가 병렬로 갈 수 있는 근거다 (D-023).
+ *
+ * <p>도메인 전환(D-031) 직후에는 이 검증이 특히 중요하다 — 스키마와 엔티티를 <b>동시에</b>
+ * 갈아엎었기 때문에, 둘 중 하나만 틀려도 여기서 잡힌다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -49,19 +47,13 @@ import org.springframework.util.StringUtils;
 class BaselineSmokeTest {
 
     @Autowired
-    private ClassificationPolicyRepository policyRepository;
+    private InquiryRepository inquiryRepository;
 
     @Autowired
-    private ErrorGroupRepository errorGroupRepository;
+    private InquiryClassificationResultRepository classificationResultRepository;
 
     @Autowired
-    private ErrorEventRepository errorEventRepository;
-
-    @Autowired
-    private ClassificationResultRepository classificationResultRepository;
-
-    @Autowired
-    private ReviewQueueRepository reviewQueueRepository;
+    private InquiryReviewQueueRepository reviewQueueRepository;
 
     @Autowired
     private RetryProbe retryProbe;
@@ -76,35 +68,44 @@ class BaselineSmokeTest {
     private Environment environment;
 
     @Test
-    @DisplayName("엔티티 5개가 V1 DDL 과 일치한다 — ddl-auto=validate 아래에서 부팅 성공")
+    @DisplayName("엔티티 3개가 DDL 과 일치한다 — ddl-auto=validate 아래에서 부팅 성공")
     void contextLoadsUnderSchemaValidation() {
         List<String> tables = jdbcTemplate.queryForList(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
                 String.class);
 
         assertThat(tables)
-                .as("V1 이 만든 5테이블이 모두 있어야 한다")
-                .contains("error_group", "errors", "classification_result",
+                .as("도메인 전환 후 3테이블이 모두 있어야 한다 (D-031)")
+                .contains("inquiries", "inquiry_classification_result", "inquiry_review_queue");
+    }
+
+    @Test
+    @DisplayName("V2 가 구 도메인 테이블을 실제로 걷어냈다 — 전환이 절반만 적용되지 않았는지 확인")
+    void oldDomainTablesAreGone() {
+        List<String> tables = jdbcTemplate.queryForList(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()",
+                String.class);
+
+        assertThat(tables)
+                .as("V1 만 적용되고 V2 가 스킵되면 구 스키마로 부팅해 validate 가 깨진다. "
+                        + "이전 판의 spring.flyway.target=1 을 제거한 이유가 이것이다 (D-031)")
+                .doesNotContain("error_group", "errors", "classification_result",
                         "review_queue", "classification_policy");
     }
 
     @Test
-    @DisplayName("classification_policy seed 10행이 카테고리 10종과 정확히 대응한다")
-    void policySeedCoversEveryCategory() {
-        List<ClassificationPolicy> policies = policyRepository.findAll();
+    @DisplayName("normalized_key 에 UNIQUE 가 없다 — 있으면 그룹핑의 부활이다 (D-031)")
+    void normalizedKeyIsNotUnique() {
+        Integer uniqueIndexes = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics "
+                        + "WHERE table_schema = DATABASE() AND table_name = 'inquiries' "
+                        + "AND column_name = 'normalized_key' AND non_unique = 0",
+                Integer.class);
 
-        assertThat(policies)
-                .as("카테고리 10종 전부에 임계값이 있어야 한다. "
-                        + "빠진 카테고리는 default-threshold 0.9 로 격리 쪽으로 실패하므로 "
-                        + "조용히 넘어가고 측정 9 의 대조가 어긋난다")
-                .extracting(ClassificationPolicy::getCategory)
-                .containsExactlyInAnyOrder(ErrorCategory.values());
-
-        assertThat(policyRepository.findById(ErrorCategory.AUTH))
-                .get()
-                .extracting(ClassificationPolicy::getThreshold)
-                .as("AUTH 는 보안 인접이라 임계값이 가장 높다 (D-006)")
-                .isEqualTo(new BigDecimal("0.900"));
+        assertThat(uniqueIndexes)
+                .as("같은 키의 문의가 여러 건 존재하는 것이 정상이다. UNIQUE 를 걸면 "
+                        + "판정 단위가 다시 키로 올라가고 개별 문의가 사라진다")
+                .isZero();
     }
 
     @Test
@@ -131,45 +132,35 @@ class BaselineSmokeTest {
     }
 
     @Test
-    @DisplayName("flyway.target=1 이 V2 후보 인덱스를 실제로 막는다")
-    void candidateIndexesAreNotAppliedByDefault() {
-        assertThat(countIndex("idx_error_group_status_category_count"))
-                .as("후보 인덱스가 기본 기동에서 붙어 있으면 측정 5ⓔ 의 A/B 대조군이 사라진다 (D-023)")
-                .isZero();
-        assertThat(countIndex("idx_error_group_status_category_last_seen")).isZero();
-    }
-
-    @Test
     @DisplayName("@Retryable 이 실제로 재시도한다 — @EnableRetry 가 붙어 있다는 것과 도는 것은 다르다")
     void retryableActuallyRetries() {
         retryProbe.reset();
 
         assertThat(retryProbe.succeedOnThirdAttempt()).isEqualTo("ok");
         assertThat(retryProbe.attempts())
-                .as("3이 아니라 1이면 프록시가 만들어지지 않은 것이다. 그 경우 D-016 의 UNIQUE 충돌 "
-                        + "재시도와 D-022 의 파싱 실패 재시도가 예외도 로그도 없이 사라진다")
+                .as("3이 아니라 1이면 프록시가 만들어지지 않은 것이다. 그 경우 D-022 의 파싱 실패 "
+                        + "재시도가 예외도 로그도 없이 사라진다")
                 .isEqualTo(3);
     }
 
     @Test
-    @DisplayName("팩토리가 만든 4엔티티가 실제로 저장된다 — NOT NULL 을 누가 채우는지가 코드에 있다")
+    @DisplayName("팩토리가 만든 3엔티티가 실제로 저장된다 — NOT NULL 을 누가 채우는지가 코드에 있다")
     void factoriesProducePersistableEntities() {
-        Instant seenAt = Instant.parse("2026-08-03T00:00:00Z");
+        Instant receivedAt = Instant.parse("2026-08-05T00:00:00Z");
 
-        ErrorGroup group = errorGroupRepository.save(ErrorGroup.create(
-                "smoke-" + UUID.randomUUID(), "NullPointerException at Foo.bar", seenAt));
-        ErrorEvent event = errorEventRepository.save(ErrorEvent.of(
-                group, "NullPointerException", "at Foo.bar(Foo.java:1)", "sdk-java", seenAt));
-        ClassificationResult result = classificationResultRepository.save(
-                ClassificationResult.failed(group, "claude-sonnet-5", "{broken", 3));
-        ReviewQueueItem item = reviewQueueRepository.save(ReviewQueueItem.from(result));
+        Inquiry inquiry = inquiryRepository.save(Inquiry.receive(
+                5001L, "주문한 상품이 아직도 안 왔어요. 환불해주세요.", Channel.WEB,
+                "smoke-" + UUID.randomUUID(), receivedAt));
+        InquiryClassificationResult result = classificationResultRepository.save(
+                InquiryClassificationResult.failed(inquiry, "claude-sonnet-5", "{broken", 3));
+        InquiryReviewQueueItem item = reviewQueueRepository.save(
+                InquiryReviewQueueItem.from(result));
 
-        assertThat(group.getCreatedAt())
+        assertThat(inquiry.getCreatedAt())
                 .as("created_at / updated_at 은 NOT NULL 인데 팩토리가 채우지 않는다 — "
                         + "auditing 의 몫이라 이 둘이 함께 있어야 삽입이 성립한다 (D-025)")
                 .isNotNull();
-        assertThat(group.getUpdatedAt()).isNotNull();
-        assertThat(event.getCreatedAt()).isNotNull();
+        assertThat(inquiry.getUpdatedAt()).isNotNull();
         assertThat(result.getCreatedAt()).isNotNull();
         assertThat(item.getCreatedAt()).isNotNull();
 
@@ -179,15 +170,6 @@ class BaselineSmokeTest {
         assertThat(result.getConfidence())
                 .as("D-022 — 저장 후에도 null 이어야 한다. 0 이면 측정 8 이 오염된다")
                 .isNull();
-    }
-
-    private int countIndex(String indexName) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.statistics "
-                        + "WHERE table_schema = DATABASE() AND table_name = 'error_group' "
-                        + "AND index_name = ?",
-                Integer.class, indexName);
-        return count == null ? 0 : count;
     }
 
     /**

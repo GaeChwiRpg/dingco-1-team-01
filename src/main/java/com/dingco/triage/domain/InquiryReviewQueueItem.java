@@ -32,24 +32,24 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
  *
  * <p><b>setter 를 만들지 않는다.</b> {@code status} 에 setter 가 열리면 상태 검사와
  * {@code @Version} 을 함께 통과해야 확정된다는 D-021 의 규칙이 우회 가능해진다.
- * 확정은 {@code resolve(reviewerId, finalCategory)} 처럼 한 메서드로만 노출한다.
+ * 확정은 {@code resolve(agentId, finalCategory)} 처럼 한 메서드로만 노출한다.
  */
 @Entity
-@Table(name = "review_queue")
+@Table(name = "inquiry_review_queue")
 @EntityListeners(AuditingEntityListener.class)
-public class ReviewQueueItem {
+public class InquiryReviewQueueItem {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "error_group_id", nullable = false)
-    private ErrorGroup errorGroup;
+    @JoinColumn(name = "inquiry_id", nullable = false)
+    private Inquiry inquiry;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "classification_result_id", nullable = false)
-    private ClassificationResult classificationResult;
+    private InquiryClassificationResult classificationResult;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "reason", nullable = false, length = 20)
@@ -59,8 +59,8 @@ public class ReviewQueueItem {
     @Column(name = "status", nullable = false, length = 20)
     private QueueStatus status;
 
-    @Column(name = "reviewer_id")
-    private Long reviewerId;
+    @Column(name = "agent_id")
+    private Long agentId;
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
@@ -70,17 +70,20 @@ public class ReviewQueueItem {
     private Instant createdAt;
 
     /**
-     * 낙관적 락 (D-007, D-021).
+     * 낙관적 락 (D-021).
      *
-     * <p>상태 검사와 <b>둘 다</b> 필요하다. 상태 검사만으로는 두 검토자가 동시에 PENDING 을 읽은
+     * <p>상태 검사와 <b>둘 다</b> 필요하다. 상태 검사만으로는 두 상담원이 동시에 PENDING 을 읽은
      * 경합(check-then-act)을 못 막고, 이것만으로는 시간 차 요청을 경합으로 오보한다.
      * 두 창을 각각 {@code CONCURRENT_UPDATE} / {@code ALREADY_RESOLVED} 로 구분해 409 로 낸다.
+     *
+     * <p><b>도메인 전환 이후 이 프로젝트에 남은 유일한 동시성 장치다</b> (D-007 → D-031).
+     * 원자적 UPDATE 와 UNIQUE 충돌 재시도는 대상 컬럼·제약이 사라져 함께 소멸했다.
      */
     @Version
     @Column(name = "version", nullable = false)
     private long version;
 
-    protected ReviewQueueItem() {
+    protected InquiryReviewQueueItem() {
     }
 
     /**
@@ -91,21 +94,22 @@ public class ReviewQueueItem {
      * 아래 switch 는 exhaustive 하므로 {@link Verdict} 에 값이 늘면 <b>여기가 컴파일 에러로 터진다.</b>
      * 계약 B 를 문서가 아니라 컴파일러가 지킨다.
      *
-     * <p>{@code errorGroup} 도 파라미터가 아니라 {@code result} 에서 꺼낸다 — 둘이 어긋난 행이
+     * <p>{@code inquiry} 도 파라미터가 아니라 {@code result} 에서 꺼낸다 — 둘이 어긋난 행이
      * 생길 수 없게 하기 위해서다.
      *
      * <p>{@code version} 은 {@code @Version} 의 초기값 0 그대로, {@code createdAt} 은 JPA
      * auditing 이 채운다. 계약 B 의 필수 컬럼 6개가 이 메서드 하나로 전부 채워진다.
      */
-    public static ReviewQueueItem from(ClassificationResult result) {
+    public static InquiryReviewQueueItem from(InquiryClassificationResult result) {
         Objects.requireNonNull(result, "classificationResult");
-        ReviewQueueItem item = new ReviewQueueItem();
-        item.errorGroup = result.getErrorGroup();
+        InquiryReviewQueueItem item = new InquiryReviewQueueItem();
+        item.inquiry = result.getInquiry();
         item.classificationResult = result;
         item.reason = switch (result.getVerdict()) {
             case NEEDS_REVIEW -> QueueReason.LOW_CONFIDENCE;
             case FAILED -> QueueReason.CLASSIFY_FAILED;
             case AUTO_ACCEPTED -> QueueReason.AUDIT_SAMPLE;
+            case REUSED -> QueueReason.AUDIT_SAMPLE; // D-033: 감사로 뽑힐 때만 큐에 들어온다
         };
         item.status = QueueStatus.PENDING;
         return item;
@@ -115,11 +119,11 @@ public class ReviewQueueItem {
         return id;
     }
 
-    public ErrorGroup getErrorGroup() {
-        return errorGroup;
+    public Inquiry getInquiry() {
+        return inquiry;
     }
 
-    public ClassificationResult getClassificationResult() {
+    public InquiryClassificationResult getClassificationResult() {
         return classificationResult;
     }
 
@@ -131,8 +135,8 @@ public class ReviewQueueItem {
         return status;
     }
 
-    public Long getReviewerId() {
-        return reviewerId;
+    public Long getAgentId() {
+        return agentId;
     }
 
     public Instant getResolvedAt() {

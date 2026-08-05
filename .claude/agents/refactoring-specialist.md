@@ -39,9 +39,9 @@ grep -n "관련키워드" DECISIONS.md CLAUDE.md
 
 | 지점 | 수단 | 통일하면 |
 | --- | --- | --- |
-| `occurrence_count` 증가 | JPQL 원자적 UPDATE | 비관적 락으로 바꾸면 **수신 경로 전체가 직렬화**된다 |
-| 신규 그룹 동시 생성 | UNIQUE + TX 밖 재시도 | 락으로 바꾸면 D-016 이 관찰하려던 race 자체가 사라진다 |
 | 큐 중복 확정 | 상태 검사 + `@Version` | 하나만 남기면 두 종류의 409 를 구분할 수 없다 (D-021) |
+
+> D-031 이전에는 3행이었다(원자적 UPDATE / UNIQUE + TX 밖 재시도). 대상이 사라져 소멸했으니 **없는 것을 되살리려 하지 말 것** — 특히 접수 경로에 락을 넣는 리팩터링은 위반이다.
 
 "동시성 처리 방식이 제각각이라 통일하자"는 것이 이 프로젝트에서 가장 그럴듯한 오답이다.
 
@@ -57,7 +57,7 @@ grep -n "관련키워드" DECISIONS.md CLAUDE.md
 
 ### 5. `current_*` 역정규화를 "중복이니 제거"하지 않는다 (D-011)
 
-`ErrorGroup.current_category` / `current_confidence` 는 `classification_result` 의 사본이다. 정규화 관점에선 중복이지만 **목록 조회의 조인을 제거하려고 일부러 둔 것**이다. 대신 갱신 위치가 판정 확정 트랜잭션 안으로 제한된다 (불변 규칙 4).
+`Inquiry.current_category` / `current_confidence` 는 `inquiry_classification_result` 의 사본이다. 정규화 관점에선 중복이지만 **목록 조회의 조인을 제거하려고 일부러 둔 것**이다. 대신 갱신 위치가 판정 확정 트랜잭션 안으로 제한된다 (불변 규칙 3).
 
 ### 6. 정적 팩토리를 생성자·setter 로 열지 않는다 (D-025)
 
@@ -69,15 +69,15 @@ grep -n "관련키워드" DECISIONS.md CLAUDE.md
 
 ### 8. 빠져 있는 필드를 "빠뜨린 것 같다"고 채우지 않는다 (D-010)
 
-`GET /api/review-queue` 에 `reason`·`confidence`·`threshold`·`category` 필터가 없다. **의도적으로 제거한 것**이다. 두 값만 있으면 뺄셈 한 번으로 감사 표본이 100% 식별된다.
+`GET /api/inquiry-review-queue` 에 `reason`·`confidence`·`threshold`·`category` 필터가 없다. **의도적으로 제거한 것**이다. 두 값만 있으면 뺄셈 한 번으로 감사 표본이 100% 식별된다.
 
-### 9. `V2__candidate_index.sql` 을 V1 에 병합하지 않는다 (D-023)
+### 9. 스키마는 Flyway 로만 바꾼다 (D-023)
 
-측정 5ⓔ 로 쓰기 비용이 확인되기 전까지 후보로 남는다. 병합하면 A/B 측정 자체가 불가능해진다.
+`ddl-auto: validate` 이므로 엔티티와 DDL 이 어긋나면 부팅이 실패한다. **그게 의도된 동작이다** — 엔티티 변경이 운영 스키마에 조용히 반영되는 것은 이 프로젝트 주제와 정면으로 어긋난다.
 
 ### 10. 계약 A·B·C 시그니처
 
-`ErrorGroupCreatedEvent` 필드, `review_queue` 필수 컬럼, 캐시 값 구조. 셋 다 P1/P2/P3 병렬 작업의 기준선이라 **세 담당자 합의 + DECISIONS 항목** 없이는 못 바꾼다.
+`InquiryReceivedEvent` 필드, `inquiry_review_queue` 필수 컬럼, 캐시 값 구조. 셋 다 P1/P2/P3 병렬 작업의 기준선이라 **세 담당자 합의 + DECISIONS 항목** 없이는 못 바꾼다.
 
 ---
 
@@ -86,10 +86,10 @@ grep -n "관련키워드" DECISIONS.md CLAUDE.md
 - **3계층 분리 강화** — `api/` 가 도메인 객체를 그대로 반환하면 DTO 변환을 넣는다. 이건 헌법이 요구하는 방향이다
 - **DTO 변환을 서비스 계층 안으로** — `open-in-view=false` 라 트랜잭션 밖에서 LAZY 를 건드리면 `LazyInitializationException` 이 난다
 - 중복 코드 추출, 긴 메서드 분해 (**트랜잭션 경계는 유지하면서**)
-- 네이밍 정리 — 단 도메인 용어(`fingerprint`, `verdict`, `final_category`, `AUDIT_SAMPLE`)는 그대로 둔다. 헌법·계약·API 문서가 같은 단어를 쓴다
+- 네이밍 정리 — 단 도메인 용어(`normalized_key`, `verdict`, `final_category`, `AUDIT_SAMPLE`)는 그대로 둔다. 헌법·계약·API 문서가 같은 단어를 쓴다
 - 매직 넘버를 상수·property 로. 특히 임계값·비율·타임아웃은 property 여야 조정과 측정이 가능하다
 - 테스트 헬퍼 추출, 중복 픽스처 정리
-- 죽은 코드 제거 — 단 **"안 쓰는 것 같다"와 "실패 경로라 평소엔 안 도는 것"을 구분한다.** `@Recover`, `@EnableRetry`, `stuckNew` gauge 는 후자다
+- 죽은 코드 제거 — 단 **"안 쓰는 것 같다"와 "실패 경로라 평소엔 안 도는 것"을 구분한다.** `@Recover`, `@EnableRetry`, `stuckReceived` gauge 는 후자다
 
 ## 작업 방식
 
