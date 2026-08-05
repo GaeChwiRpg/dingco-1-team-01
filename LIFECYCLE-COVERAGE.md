@@ -7,10 +7,10 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-025) |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. `service/`·`api/` 미착수, `.claude/` Commands·Hooks 미작성 |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-028) |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. **Hooks·서브에이전트 완료 (PR #7~#8)**. `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 테스트 4개 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
-| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1~#5 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
+| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1~#8 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
 | 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`). 단 검증은 전부 의도적 테스트 컨트롤러 기준 — 실제 `api/`·`service/` 트래픽 검증은 Phase 3 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-002).
@@ -43,28 +43,42 @@
 - 트랜잭션 ②(P2)가 삽입한 `review_queue` 행을 ③(P3)이 소비한다 → `reason` 별 보장 사항은 계약 B 고정
 - `ErrorGroupCreatedEvent`(계약 A)는 P1 발행 → P2 수신
 
-## 측정 11개 실행 책임자
+## 측정 12개 실행 책임자
 
 측정은 코드와 달리 **누구든 돌릴 수 있어서 아무도 안 돌리기 쉽다.** 따라서 자기 패키지가 만든 장치를 자기가 잰다 — 수치가 이상할 때 원인을 아는 사람이 같은 사람이어야 한다.
 
+> ⚠️ **번호는 `PRD.md` §8 과 1:1 로 일치시킨다.** 이전 판은 번호가 어긋나 있었고(이 표의 1 = PRD 6, 4·6 은 PRD §8 에 없는 항목), 그 결과 **PRD 측정 1·4 에 책임자가 없었다** — 이 표가 막으려던 바로 그 구멍이다. `PRD.md` §5 비기능 측정은 아래 별도 표로 분리한다.
+
+**§8 도메인 측정 지표**
+
 | 측정 | 내용 | 책임자 | 시점 |
 | --- | --- | --- | --- |
-| 1 | AI 호출 절감률 (그룹핑 효과) | 이용택 (P1) | Day 4 |
+| 1 | AI 분류 일치율 — 10종 × 5건 = 50건 정답 대조, 신뢰도 구간별 | 김준현 (P2) | Day 4 |
 | 2 | 검토 큐 적체율 — 사유별 삽입 건수 | 김준현 (P2) | Day 4 |
 | 3 | 판정 트랜잭션 롤백 + `stuckNew` 증가 확인 | 김은빈 (P3) | **Day 3 필수 체크포인트** |
-| 4 | 수신 API 응답시간 (AI 지연 비전파 확인) | 이용택 (P1) | Day 4 |
+| 4 | 재시도 동작 — AI 오류 주입 → 재시도 횟수·간격 + 최종 큐 삽입 | 김준현 (P2) | Day 3 |
 | 5ⓐ~ⓓ | 조회 `EXPLAIN` 4 케이스 | 김은빈 (P3) | Day 4 |
 | 5ⓔ | **인덱스 유무별 `POST /api/errors` 쓰기 p95** (V2 전/후) | 이용택 (P1) | Day 4 |
-| 6 | `GET /api/review-queue` N+1 제거 전후 쿼리 수 | 김은빈 (P3) | Day 4 |
+| 6 | **AI 호출 절감률** (그룹핑 효과) — 1000건 투입 대비 실제 호출 수 | 이용택 (P1) | Day 4 |
 | 7ⓐ | 20스레드 동시 `POST` → 그룹 1개만 생성 | 이용택 (P1) | Day 2 오후 |
 | 7ⓑ | 동시 `PATCH` → 409 2종 비율 (`CONCURRENT_UPDATE` 0 이면 무효) | 김은빈 (P3) | Day 2 오후 |
 | 8 | 신뢰도 구간별 실측 오분류율 — **이 프로젝트의 결론** | 김준현 (P2) | Day 4 |
 | 9 | 카테고리별 임계값 vs 단일 임계값 대조 (`policy.mode`) | 김준현 (P2) | Day 4 |
 | 10 | blind 무결성 — 결정적 역산 0건 / 확률적 추론 목록화 | 김준현 (P2) | Day 5 재점검 |
 | 11 | 캐시 hit rate (절감률과 별개 지표임을 수치로 확인) | 김은빈 (P3) | Day 4 |
+| 12 | **검토자 간 일치도** — 측정 8 에서 검토자 불일치분 분리 (D-027) | 김준현 (P2) 집계<br>독립 분류: 이용택·김은빈 | Day 5 |
 
-> 측정 5ⓔ 만 P1 이 맡는 이유: A/B 대상이 **수신 경로의 쓰기 지연**이라 부하 스크립트를 P1 이 이미 갖고 있다 (측정 1·4·7ⓐ 와 같은 도구).
+**§5 비기능 측정** — 목표치는 `PRD.md` §5, 수치는 본인 `hey` 실측만
+
+| 측정 | 내용 | 책임자 | 시점 |
+| --- | --- | --- | --- |
+| §5-a | `POST /api/errors` p95 < 100ms (AI 지연 비전파 확인) | 이용택 (P1) | Day 4 |
+| §5-b | `GET /api/review-queue` p95 < 200ms + **N+1 제거 전후 쿼리 수** | 김은빈 (P3) | Day 4 |
+
+> 측정 5ⓔ 만 P1 이 맡는 이유: A/B 대상이 **수신 경로의 쓰기 지연**이라 부하 스크립트를 P1 이 이미 갖고 있다 (측정 6·7ⓐ·§5-a 와 같은 도구).
 > 측정 3 을 P3 가 맡는 이유: `stuckNew` gauge 를 노출하는 코드가 P3 소유다. 만든 사람이 지표가 0 인 것이 "정상"인지 "안 세고 있는 것"인지 구분할 수 있다.
+> 측정 12 의 **독립 분류자가 P2 가 아닌 이유**: 측정 8 의 표본을 뽑고 집계하는 사람이 직접 분류하면 대조군이 오염된다. 두 분류자는 서로의 결과를 보지 않는다.
+> 측정 1·4·12 가 김준현에게 몰린 것은 **AI 호출·재시도·정답 레이블이 전부 P2 소유**이기 때문이다. 다만 Day 4 에 5건이 겹치므로 측정 4 를 Day 3(측정 3 과 같은 날)로 당겨 분산한다.
 
 ## 단계별 적용 흐름
 
@@ -76,12 +90,13 @@
 
 ### 2. 코딩
 
-- 산출물: `src/`, `CLAUDE.md`, `API-CONTRACT.md`, `.claude/` (commands / hooks)
+- 산출물: `src/`, `CLAUDE.md`, `API-CONTRACT.md`, `.claude/` (agents / hooks / scripts)
 - 도구:
   - claude.md 헌법 — 모든 prompt 자동 포함
-  - Commands — `.claude/commands/draft-pr.md` 등
-  - Hooks — `.claude/hooks/pre-tool-use.sh` (비밀 정보 / 미션 외 수정 차단)
-- 한계: (예: Phase 3 진입 시 JWT 본격 통합)
+  - Hooks — `.claude/hooks/dispatcher.sh` (PreToolUse) → `handlers/constitution-guard.py` (편집 시점 헌법 위반 차단) + `handlers/verify-before-push.sh` (push 전 `./gradlew test`)
+  - 서브에이전트 5종 — `.claude/agents/` (constitution-auditor / implementation / test / refactoring / docs)
+  - Commands — **미작성**. `.claude/commands/` 디렉토리 자체가 없다
+- 한계: `verify-before-push.sh` 는 로컬 Docker 환경에 의존한다 (D-026 — Docker Desktop 4.44.2 이하). 조건이 깨지면 코드와 무관하게 push 가 막힌다
 
 ### 3. 테스트
 
@@ -91,9 +106,9 @@
 
 ### 4. 리뷰
 
-- 산출물: `.github/workflows/ai-review.yml`
+- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **13건** 기록)
 - 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달
-- 한계: (예: Day 4 PR 부터 자동 활성화. 초반 PR 은 사람 리뷰만)
+- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조)
 
 ### 5. 배포·운영
 
@@ -112,11 +127,12 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-025) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
-| 코딩 | ✅ src/ (엔티티·enum·repository·Flyway), CLAUDE.md, API-CONTRACT.md | 🔄 claude.md ✅ / Commands·Hooks 미작성 | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-028) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 코딩 | ✅ src/ (엔티티·enum·repository·Flyway), CLAUDE.md, API-CONTRACT.md | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 ✅ / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 테스트 4개 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
-| 리뷰 | ✅ ai-review.yml | ✅ PR #1~#5 전원 자동 리뷰 동작 | ✅ |
+| 리뷰 | ✅ ai-review.yml | ✅ PR #1~#8 전원 자동 리뷰 동작 | ✅ |
 | 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료 (`SENTRY-GUIDE.md`) — 단 전부 의도적 테스트 컨트롤러 기준, 실 트래픽 0 | 🔄 |
 
-> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/` Commands·Hooks / e2e 시나리오 확장 / 운영 단계 실 트래픽 검증(Sentry 도구 자체는 연동·검증 완료).
+> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/commands/` / e2e 시나리오 확장 / 운영 단계 실 트래픽 검증(Sentry 도구 자체는 연동·검증 완료, PR #9).
 > 넷 다 산출물은 있고 **AI 도구 설정만 비어 있다.** 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서, 실제 잔여 작업이 가려진다.
+> PR #7~#8 로 Hooks·서브에이전트가 채워져 잔여가 5건 → 4건으로 줄었다. `.claude/commands/` 는 디렉토리 자체가 없으므로 **여기가 코딩 단계의 유일한 남은 도구 항목**이다. PR #9 로 Sentry MCP 연동까지 끝나, 「운영」의 남은 항목은 '연동' 이 아니라 '실 트래픽 검증'으로 좁혀졌다.
