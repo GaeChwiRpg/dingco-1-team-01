@@ -1,17 +1,19 @@
-# LIFECYCLE-COVERAGE — 라이프사이클 5 단계 적용 흔적 (template)
+# LIFECYCLE-COVERAGE — 라이프사이클 5 단계 적용 흔적
 
 > 5 단계 누가 무엇을 적용했는지 매트릭스 + 단계별 산출물 추적.
-> 채워진 sample: [`examples/week9-team-lifecycle-coverage.md`](./examples/week9-team-lifecycle-coverage.md).
+> 일자별 진행은 `INTEGRATION-LOG.md`, 결정 근거는 `DECISIONS.md`.
+> 참고용 sample: [`examples/week9-team-lifecycle-coverage.md`](./examples/week9-team-lifecycle-coverage.md).
+> **기준 시점: 2026-08-04** (PR #1~#7 머지 / PR #8 리뷰 중).
 
 ## 매트릭스
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-028) |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. **Hooks·서브에이전트 완료 (PR #7~#8)**. `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-030) |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종은 **PR #8 리뷰 중**. `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 테스트 4개 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
-| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml` | ✅ PR #1~#8 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
-| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`). 단 검증은 전부 의도적 테스트 컨트롤러 기준 — 실제 `api/`·`service/` 트래픽 검증은 Phase 3 |
+| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` | ✅ PR #1~#8 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
+| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md` 는 아직 템플릿 상태. 실제 `api/`·`service/` 트래픽 검증은 Phase 3 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-002).
 > 코딩 단계는 전원 공동이며, 코드 범위 분할(P1/P2/P3)은 아래 참조.
@@ -84,9 +86,13 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`, `DECISIONS.md`
-- 도구: (예: Jira MCP — PRD 분해 시 사용한 prompt + AI 보조 흔적)
-- 한계: (예: Phase 2 단계라 Jira 시연은 dry-run, 실 Jira 통합은 Phase 3)
+- 산출물: `PRD.md`(9절 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-030)
+- 도구:
+  - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
+  - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
+- 한계:
+  - **Jira MCP 미시연.** `.mcp.json` 에 Atlassian MCP 서버는 등록했으나(커밋 `3c2c782`) PRD → 이슈 분해를 실제로 돌리지 않았다. 잔여 4건 중 1건
+  - PRD 의 측정 목표치는 **전부 미실측**이다. 값이 채워지는 시점은 `service/`·`api/` 착수 이후이며, 그 전까지 목표치는 목표일 뿐 evidence 가 아니다
 
 ### 2. 코딩
 
@@ -94,45 +100,65 @@
 - 도구:
   - claude.md 헌법 — 모든 prompt 자동 포함
   - Hooks — `.claude/hooks/dispatcher.sh` (PreToolUse) → `handlers/constitution-guard.py` (편집 시점 헌법 위반 차단) + `handlers/verify-before-push.sh` (push 전 `./gradlew test`)
-  - 서브에이전트 5종 — `.claude/agents/` (constitution-auditor / implementation / test / refactoring / docs)
+  - 서브에이전트 5종 — `.claude/agents/` (constitution-auditor / implementation / test / refactoring / docs). **PR #8 리뷰 중**
   - Commands — **미작성**. `.claude/commands/` 디렉토리 자체가 없다
+- **훅과 서브에이전트의 역할이 다르다**: 훅은 조건이 맞으면 무조건 돌고 정적으로 확실한 것만 본다(비밀 파일·크리덴셜 하드코딩·`api/` 의 `@Transactional`·`V1` 수정). 판단이 필요한 규칙(트랜잭션 경계 ①②③, 계약 A/B/C, 감사 표본 역산 가능성)은 정적 검사로 못 가리므로 `constitution-auditor` 의 몫이다. **오탐이 잦은 규칙을 훅에 넣지 않는 것이 원칙** — 정상 작업을 막는 훅은 곧 꺼지고, 꺼진 훅은 통과가 보증처럼 보여서 없는 것만 못하다
 - 한계: `verify-before-push.sh` 는 로컬 Docker 환경에 의존한다 (D-026 — Docker Desktop 4.44.2 이하). 조건이 깨지면 코드와 무관하게 push 가 막힌다
 
 ### 3. 테스트
 
-- 산출물: `tests/e2e/*.spec.ts`, `.github/workflows/e2e.yml`
-- 도구: Playwright MCP — 시나리오 N개 (성공 + 실패 케이스)
-- 한계: (예: 시나리오 4개 확장은 Phase 3)
+- 산출물:
+  - `tests/e2e/api.spec.ts` — 실행 1건(`/actuator/health`) + `test.skip` 스켈레톤 1건
+  - `.github/workflows/e2e.yml` — PR + `develop` push 에서 `docker compose up --wait` 로 실제 스택 기동 후 Playwright 실행
+  - `src/test/java/` — `BaselineSmokeTest`, `CandidateIndexMigrationTest`(Testcontainers), `DomainFactoryTest`(순수 단위 10건)
+- 도구: Playwright MCP (`request` fixture 기반 API 레벨). 브라우저를 띄우지 않으므로 CI 에서 chromium 설치를 제거했다 — 검토자 화면이 생겨 `page` fixture 를 쓰게 되면 되살린다
+- **e2e.yml 이 실제로 검증하는 것**: "앱이 기동한다" 한 줄에 세 가지가 함께 들어 있다 — Flyway V1 이 깨끗이 적용됨 / `ddl-auto=validate` 아래에서 엔티티 5개가 V1 DDL 과 일치함(어긋나면 부팅 실패) / MySQL·Redis 연결이 실제로 성립함. **이 workflow 가 red 면 P1·P2·P3 전부의 착수 전제가 깨진 것**이다
+- 한계:
+  - **시나리오가 health 1건뿐이다.** 핵심 흐름(투입 → 격리 → 확정)과 차별 흐름(자동 승인 → 감사 표본 → 정정)은 `service/`·`api/` 착수 후에야 쓸 수 있다. 잔여 4건 중 1건
+  - 로컬 Testcontainers 는 Docker Desktop 버전에 의존한다 (D-026). CI 는 `docker compose` 를 직접 쓰므로 이 제약의 영향을 받지 않는다 — **로컬만 깨지고 CI 는 green 인 상태가 가능**하다는 뜻이라, 로컬 실패를 CI 로 덮지 않는다
 
 ### 4. 리뷰
 
-- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **13건** 기록)
+- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **15건** 기록)
 - 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달
 - 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조)
 
 ### 5. 배포·운영
 
-- 산출물: `MONITORING.md`, `docker-compose.yml`, `Dockerfile`
-- 도구: Sentry MCP, Docker Compose
-- 한계: (예: Phase 2 단계라 실 트래픽 부재 → Phase 3 의도적 NPE 시나리오로 보강)
+- 산출물:
+  - `docker-compose.yml` + `Dockerfile` — mysql / redis / app 3서비스. **셋 다 healthcheck 필수**다. app 의 healthcheck 를 빼면 `--wait` 가 "컨테이너가 떴다"까지만 보고 통과해, 부팅 미완 상태에서 Playwright 가 붙어 간헐 실패가 된다
+  - `.env.example` — `ANTHROPIC_API_KEY` 포함 전 환경변수 목록. 실제 `.env` 는 `.gitignore` + `constitution-guard.py` 로 이중 차단
+  - `MONITORING.md` — ⚠️ **아직 템플릿 상태다.** 파일은 있으나 도구 선택 표가 미기입이고 예시가 ticket 도메인 그대로다
+- 도구: Docker Compose (동작), Sentry SDK + Source Context + MCP 연동 (실측 검증 완료 — `SENTRY-GUIDE.md`, PR #9)
+- 관측 설계는 되어 있다 — `GET /api/stats` 4개 블록 + Actuator gauge 5종(`triage.groups.stuck_new` 포함). **노출할 코드가 없을 뿐 무엇을 볼지는 정해져 있다** (`API-CONTRACT.md` §8~§9)
+- 한계:
+  - **실 트래픽 0.** 부하 측정(§5-a, §5-b)과 `stuckNew` 실측은 `service/`·`api/` 착수 후
+  - Sentry MCP 연동 자체는 PR #9 로 완료됐다(`SENTRY-GUIDE.md` 실측 검증). 다만 이 시스템은 자체 에러 수집 파이프라인이라 Sentry 와 역할이 겹친다 — "무엇을 Sentry 로 보내고 무엇을 자체 큐로 보낼지"는 아직 정하지 않아 실 트래픽에서의 캡처 시나리오는 남아 있다
+  - `MONITORING.md` 채우기가 이 단계의 실제 잔여 작업이다 (도구 선택 + 운영 시나리오 1사이클)
 
-## Phase 진행 상태
+## 진행 상태
 
-- ✅ **Phase 1** — 기획 골격 (README, PRD, DECISIONS 초안)
-- 🔄 **Phase 2** — 코드 baseline + 5 단계 도구 설정
-- ⏳ **Phase 3** — 3명 병렬 PR 시연 (P1/P2/P3 feature 브랜치별 PR + INTEGRATION-LOG)
-- ⏳ **Phase 4** — Week 10 마무리 (발표 자료, 회고, 면접 답변)
+> ⚠️ **"Phase" 가 두 뜻으로 쓰이고 있어 구분한다.** `PRD.md` §7 의 Phase 2 / Phase 3 은 **기능 로드맵**(무엇을 이번에 만들고 무엇을 미루나)이고, 아래는 **주차 진행 단계**다. 같은 단어를 두 축에 쓰면 "Phase 3 이월"이 일정 지연인지 범위 결정인지 섞인다.
 
-## Phase 2 통과 검증 체크리스트
+| 주차 단계 | 내용 | 상태 |
+| --- | --- | --- |
+| 1 | 기획 골격 — README, PRD, DECISIONS 초안 | ✅ |
+| 2 | 코드 baseline + 5 단계 도구 설정 | 🔄 진행 중 (2026-08-04 기준) |
+| 3 | 3명 병렬 PR 시연 — P1/P2/P3 feature 브랜치별 PR + `service/`·`api/` + 측정 12개 | ⏳ |
+| 4 | Week 10 마무리 — 발표 자료, 회고, 면접 답변 | ⏳ |
+
+**로드맵 Phase 3 이월 항목**은 `PRD.md` §7 표 (D~J) 참조. 주차 단계 3 과는 다른 축이다.
+
+## 미션 통과 검증 체크리스트
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-028) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
-| 코딩 | ✅ src/ (엔티티·enum·repository·Flyway), CLAUDE.md, API-CONTRACT.md | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 ✅ / **Commands 미작성** | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-030) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 코딩 | ✅ src/ (엔티티·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md v0.8 | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 테스트 4개 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
-| 리뷰 | ✅ ai-review.yml | ✅ PR #1~#8 전원 자동 리뷰 동작 | ✅ |
-| 운영 | ✅ MONITORING.md, docker-compose.yml, Dockerfile, .env.example | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료 (`SENTRY-GUIDE.md`) — 단 전부 의도적 테스트 컨트롤러 기준, 실 트래픽 0 | 🔄 |
+| 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (15건) | ✅ PR #1~#8 전원 자동 리뷰 동작 | ✅ |
+| 운영 | 🔄 docker-compose.yml, Dockerfile, .env.example ✅ / **MONITORING.md 는 템플릿 상태** | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료(`SENTRY-GUIDE.md`, PR #9) — 실 트래픽 0 | 🔄 |
 
-> **남은 4건이 Phase 2 의 실제 잔여 작업이다** — Jira MCP dry-run / `.claude/commands/` / e2e 시나리오 확장 / 운영 단계 실 트래픽 검증(Sentry 도구 자체는 연동·검증 완료, PR #9).
-> 넷 다 산출물은 있고 **AI 도구 설정만 비어 있다.** 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서, 실제 잔여 작업이 가려진다.
-> PR #7~#8 로 Hooks·서브에이전트가 채워져 잔여가 5건 → 4건으로 줄었다. `.claude/commands/` 는 디렉토리 자체가 없으므로 **여기가 코딩 단계의 유일한 남은 도구 항목**이다. PR #9 로 Sentry MCP 연동까지 끝나, 「운영」의 남은 항목은 '연동' 이 아니라 '실 트래픽 검증'으로 좁혀졌다.
+> **잔여 4건이 실제로 남은 작업이다** — ⓐ Jira MCP dry-run ⓑ `.claude/commands/` ⓒ e2e 시나리오 확장 ⓓ `MONITORING.md` 채우기. Sentry MCP 연동은 PR #9 로 완료돼 잔여 5건 → 4건으로 줄었다.
+> 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서 실제 잔여가 가려진다. 그래서 **산출물 존재와 도구 설정을 두 열로 나눠** 둔다.
+> ⓑⓒⓓ 는 지금 바로 할 수 있고, ⓐ 는 외부 서비스 연동이라 시연 시나리오를 먼저 정해야 한다. **ⓒ 는 `service/`·`api/` 착수에 종속**되므로 사실상 P1/P2/P3 진행에 묶여 있다.
