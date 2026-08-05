@@ -8,7 +8,7 @@ package com.dingco.triage.domain.type;
  * confidence 와 threshold 를 함께 주면 뺄셈 한 번으로 감사 표본이 100% 식별된다.
  * 그래서 reason 만 가리는 것으로는 부족하고, 두 값도 함께 가린다.
  *
- * <p>노출은 {@code GET /api/stats} (ADMIN) 에서만.
+ * <p>노출은 {@code GET /api/stats} ({@code ROLE_MANAGER}) 에서만.
  */
 public enum QueueReason {
 
