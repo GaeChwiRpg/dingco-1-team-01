@@ -229,7 +229,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - 이유: `AUDIT_SAMPLE` 은 **정의상 `confidence >= threshold`** 다. 두 값을 주면 뺄셈 한 번으로 감사 표본이 100% 식별되므로 `reason` 만 가려도 소용없다
 - `suggestedCategory` 는 남긴다 (가리면 `CLASSIFY_FAILED` 가 구별되고 검토 생산성도 떨어짐). 대신 **앵커링 편향이 남으므로 측정된 오분류율은 하한값**으로 해석한다
 - 노출은 `GET /api/stats` (`ROLE_MANAGER`) 에서만
-- 새 응답 필드를 추가할 때는 **"이 값으로 감사 표본을 역산할 수 있나"** 를 먼저 확인한다
+- 새 응답 필드를 추가할 때는 **"이 값만 보고 감사 표본을 알아낼 수 있나"** 를 먼저 확인한다
 
 ## 모듈 간 계약 (병렬 작업 기준선)
 
