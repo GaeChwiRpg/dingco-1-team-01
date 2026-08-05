@@ -75,7 +75,7 @@ grep -n "키워드" CLAUDE.md DECISIONS.md
 - **개인정보 마스킹** — 문의 본문은 고객이 쓴 자연어라 개인정보가 섞인다. AI 로 나가기 전에 가려지는지 확인한다 (D-030)
 - **임계값 경계** — `confidence` 와 `threshold` 는 `BigDecimal`. 부동소수 오차가 경계에서 판정을 뒤집지 않는지 정확히 같은 값으로 테스트한다
 - **`verdict` → `reason` 매핑** (계약 B) — 세 조합 전부
-- **카테고리 경계** — `PRD.md` §4-0 의 "원인이 아니라 조치" 규칙. 특히 `DELIVERY` ↔ `RETURN_REFUND`, `ORDER_CHANGE` ↔ `RETURN_REFUND` 경계
+- **카테고리 경계** — `PRD.md` §7 의 "원인이 아니라 조치" 규칙. 특히 `DELIVERY` ↔ `RETURN_REFUND`, `ORDER_CHANGE` ↔ `RETURN_REFUND` 경계
 
 ## E2E (Playwright, API 레벨)
 

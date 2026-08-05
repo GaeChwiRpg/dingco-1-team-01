@@ -48,7 +48,7 @@ InquiryReviewQueueItem(id, inquiry_id, classification_result_id, reason, status,
 
 InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
                         ORDER_CHANGE, PROMOTION, SERVICE_USAGE, COMPLAINT, ETC
-  └ 상호배타 경계 정의는 PRD.md §4-0. 경계가 흔들리면 측정 8 이 오염된다 (기준 2)
+  └ 상호배타 경계 정의는 PRD.md §7. 경계가 흔들리면 측정 8 이 오염된다 (기준 2)
 ```
 
 임계값은 `classification.threshold` **단일 설정값**이다. 카테고리별 차등(D-006)과 `classification_policy` 테이블은 폐기됐다 — D-030.

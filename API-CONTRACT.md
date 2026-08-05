@@ -53,7 +53,7 @@
 
 `DELIVERY` · `RETURN_REFUND` · `PAYMENT` · `PRODUCT` · `ACCOUNT` · `ORDER_CHANGE` · `PROMOTION` · `SERVICE_USAGE` · `COMPLAINT` · `ETC`
 
-> 상호배타 **경계 정의는 `PRD.md` §4-0** 에 있다. 핵심 규칙: **분류 기준은 문의의 *원인*이 아니라 고객이 요구하는 *조치*다.**
+> 상호배타 **경계 정의는 `PRD.md` §7** 에 있다. 핵심 규칙: **분류 기준은 문의의 *원인*이 아니라 고객이 요구하는 *조치*다.**
 > 「미분류」는 카테고리가 아니라 `Inquiry.status = UNCLASSIFIED` 로 표현한다.
 
 ---
@@ -419,5 +419,5 @@ X-User-Role: AGENT
 | v0.6 | 2026-07-30 | AI 리뷰 5차 반영 — 409 를 `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` 2종 `code` 로 분리 (D-021) | #1 |
 | v0.7 | 2026-07-31 | 코드 착수 전 정합 점검 — 파싱 실패 건의 `confidence` 를 `0` 이 아닌 `null` 로 확정. `suggestedCategory: null` 이 blind 위반이 아닌 근거 추가, `matched` 를 nullable 로 정정 (D-022) | develop 직접 (구현 #3) |
 | v0.8 | 2026-08-04 | `service/`·`api/` 착수 전 계약 공백 메우기 — ⓐ 공통 오류 **응답 바디 형식**과 `code` 상수 신설 ⓑ §1 **요청 필드 표** ⓒ §6 에 `mode`·`globalThreshold`·`audit.sampleRate` 를 **읽기 전용**으로 노출 (D-028) ⓓ §7 을 **upsert** 로 정정하고 404 제거 (D-029) ⓔ §2 `sort` 근거의 결정 번호 정정 (D-012 → D-013) | 미머지 |
-| **v1.0** | 2026-08-05 | **도메인 전환에 따른 전면 개정 (D-030)** — 에러 분류 → CS 문의 분류. ⓐ endpoint 8개 → **7개 + Actuator**: `POST/GET /api/inquiries`, `GET /api/inquiries/{id}`, `GET/PATCH /api/inquiry-review-queue`, `GET /api/policies`(읽기 전용 축소), `GET /api/stats` ⓑ **`PATCH /api/policies/{category}` 삭제** (D-006·D-029 폐기) ⓒ 역할 `ROLE_INGEST`/`REVIEWER`/`ADMIN` → **`CUSTOMER`/`AGENT`/`MANAGER`** ⓓ 카테고리 enum 10종 **전면 교체** + 경계 규칙("원인이 아니라 조치")을 `PRD.md` §4-0 으로 위임 ⓔ `sort` 파라미터 삭제 (D-013 폐기 — 정렬 축이 하나뿐) ⓕ `stuckNew` → **`stuckReceived`** ⓖ 개인정보 마스킹 규약 신설 (문의 본문은 고객 자연어) ⓗ 남의 문의 조회는 **404 가 아니라 403** (id 훑기 차단) | 본 PR |
+| **v1.0** | 2026-08-05 | **도메인 전환에 따른 전면 개정 (D-030)** — 에러 분류 → CS 문의 분류. ⓐ endpoint 8개 → **7개 + Actuator**: `POST/GET /api/inquiries`, `GET /api/inquiries/{id}`, `GET/PATCH /api/inquiry-review-queue`, `GET /api/policies`(읽기 전용 축소), `GET /api/stats` ⓑ **`PATCH /api/policies/{category}` 삭제** (D-006·D-029 폐기) ⓒ 역할 `ROLE_INGEST`/`REVIEWER`/`ADMIN` → **`CUSTOMER`/`AGENT`/`MANAGER`** ⓓ 카테고리 enum 10종 **전면 교체** + 경계 규칙("원인이 아니라 조치")을 `PRD.md` §7 으로 위임 ⓔ `sort` 파라미터 삭제 (D-013 폐기 — 정렬 축이 하나뿐) ⓕ `stuckNew` → **`stuckReceived`** ⓖ 개인정보 마스킹 규약 신설 (문의 본문은 고객 자연어) ⓗ 남의 문의 조회는 **404 가 아니라 403** (id 훑기 차단) | 본 PR |
 <!-- 변경 시 한 줄씩 추가 -->
