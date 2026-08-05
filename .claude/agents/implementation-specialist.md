@@ -30,8 +30,8 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 
 | | 범위 | 주요 산출물 |
 | --- | --- | --- |
-| P1 | 수신·그룹핑 | `ErrorIngestService`, `FingerprintGenerator`, 계약 A 발행, 캐시 읽기 |
-| P2 | 분류·검증 | `AiClassifyWorker`, `ClassificationService`, `PolicyService`, `AuditSamplingPolicy`, 캐시 쓰기 |
+| P1 | 접수·절감 경로 | `InquiryIngestService`, `NormalizedKeyGenerator`(마스킹 포함), 계약 A 발행, **2단 절감 경로 + 캐시** |
+| P2 | 분류·검증 | `AiClassifyWorker`, `ClassificationService`, `AuditSamplingPolicy`, 판정 확정 후 캐시 put |
 | P3 | 검토·관측 | `ReviewService`, 큐 검색, `StatsService`, Actuator gauge |
 
 **공유 파일**(`domain/` 엔티티, `domain/repository/`, `config/`)은 셋 다 손대므로 **더하기만 하고 남의 것을 고치지 않는다.** 리포지토리에 쿼리를 추가하는 것은 정상, 남이 쓰는 시그니처를 바꾸는 것은 충돌이다.
@@ -84,9 +84,10 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 
 경합 성격이 달라 수단도 다르다. **통일하지 않는다.**
 
-- `occurrence_count` 증가 → **JPQL 원자적 UPDATE**. 비관적 락을 걸면 최고 QPS 경로가 직렬화된다
-  - 원자적 UPDATE 는 JPA auditing 을 우회하므로 `updated_at`·`last_seen_at` 을 같은 쿼리에서 SET 한다
 - 큐 확정 → **상태 검사와 `@Version` 둘 다**. 409 의 `code` 를 `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` 로 구분한다 (D-021)
+- 접수 경로에는 **락을 걸지 않는다.** 같은 `normalized_key` 동시 유입으로 AI 가 중복 호출되는 것은 수용하기로 한 손실이다 (D-030)
+
+> D-030 이전에는 이 목록이 3개였다. 원자적 UPDATE 와 UNIQUE 충돌 재시도는 대상 컬럼·제약이 사라져 함께 소멸했다.
 
 ### AI 규격 (D-022 / D-024)
 
@@ -107,8 +108,8 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 
 ### 스키마 (D-023)
 
-- `ddl-auto: validate` 다. 엔티티에 필드를 더하면 **`V3__*.sql` 마이그레이션을 함께** 쓴다. 안 그러면 부팅이 실패한다 (의도된 동작이다)
-- `V2__candidate_index.sql` 을 V1 에 병합하거나 `FLYWAY_TARGET` 기본값을 2 로 올리지 않는다 — 측정 5ⓔ 전까지 후보로 남는다
+- `ddl-auto: validate` 다. 엔티티에 필드를 더하면 **`V2__*.sql` 마이그레이션을 함께** 쓴다. 안 그러면 부팅이 실패한다 (의도된 동작이다)
+- 후보 인덱스 분리(구 `V2__candidate_index.sql`)는 **D-030 으로 폐기**됐다 — 근거였던 D-018 의 대상 컬럼이 사라졌기 때문. `spring.flyway.target` 도 함께 제거됐다
 
 ---
 

@@ -41,14 +41,15 @@ git diff develop...HEAD
 
 ## 점검 항목
 
-### A. 불변 규칙 4개 — 가장 무겁다
+### A. 불변 규칙 3개 — 가장 무겁다
 
 | # | 규칙 | 위반 신호 |
 | --- | --- | --- |
-| 1 | 상태는 `ErrorGroup` 이 소유한다 | `ErrorEvent`(테이블 `errors`)에 status·verdict 류 필드/컬럼이 추가됨. 같은 에러 1000번 = 판정 1번이라는 전제가 깨진다 |
-| 2 | `final_category` 기록 시 `category` 를 덮어쓰지 않는다 | `ReviewService.confirm` 경로에서 `category` 에 setter/할당. 덮어쓰면 오분류 증거가 사라져 **측정 8 이 불가능해진다** |
-| 3 | `UNCLASSIFIED → CLASSIFIED` 전이는 사람만 | AI 경로(`AiClassifyWorker`·`ClassificationService`·`@Recover`)에서 이 전이가 일어남. AI 에게 이 권한 없음 |
-| 4 | `ErrorGroup.current_*` 는 판정 확정 트랜잭션(②③) 안에서만 갱신 | 수신 경로·스케줄러·이벤트 리스너 등 다른 경로에서 `current_category`/`current_confidence` 를 건드림. 역정규화 사본이 원본과 어긋난다 (D-011) |
+| 1 | `final_category` 기록 시 `category` 를 덮어쓰지 않는다 | `ReviewService.confirm` 경로에서 `category` 에 setter/할당. 덮어쓰면 오분류 증거가 사라져 **측정 8 이 불가능해진다** |
+| 2 | `UNCLASSIFIED → CLASSIFIED` 전이는 사람만 | AI 경로(`AiClassifyWorker`·`ClassificationService`·`@Recover`)에서 이 전이가 일어남. AI 에게 이 권한 없음 |
+| 3 | `Inquiry.current_*` 는 판정 확정 트랜잭션(②③) 안에서만 갱신 | 접수 경로·스케줄러·이벤트 리스너 등 다른 경로에서 `current_category`/`current_confidence` 를 건드림. 역정규화 사본이 원본과 어긋난다 (D-011) |
+
+> **폐기된 규칙 1(상태는 `ErrorGroup` 이 소유)의 자리에 새 위반 신호가 생겼다 (D-030)**: `normalized_key` 가 같다는 이유로 **여러 문의의 상태를 공유·일괄 전이**시키는 코드. 그건 그룹핑의 부활이고, 개별 문의가 조용히 사라지는 경로다. 재사용해도 되는 것은 **AI 호출 결과뿐**이다.
 
 ### B. `@Transactional` 위치
 
@@ -78,9 +79,7 @@ git diff develop...HEAD
 
 경합 성격이 달라서 수단도 다르다. **하나로 통일하려는 변경이 보이면 위반**이다.
 
-- `occurrence_count` 증가에 **비관적 락이 걸리면 위반** — 수신 경로 전체가 직렬화된다. JPQL 원자적 UPDATE 여야 한다
-  - 원자적 UPDATE 는 JPA auditing 을 우회하므로 `updated_at`·`last_seen_at` 을 같은 쿼리에서 SET 하는지 확인
-- 신규 그룹 동시 생성은 `fingerprint` UNIQUE + **트랜잭션 밖 재시도** (D-016). 아래 E 참조
+- 접수 경로에 **비관적 락이나 키 단위 직렬화가 들어가면 위반** — 같은 `normalized_key` 의 동시 유입으로 AI 가 중복 호출되는 것은 **수용하기로 한 손실**이다 (D-030). 막으려 들면 접수 경로가 느려지고 그룹핑으로 되돌아간다
 - 큐 확정은 **상태 검사와 `@Version` 둘 다** 있어야 한다 (D-021). 하나만 있으면 위반
   - 상태 검사만 → 동시에 `PENDING` 을 읽은 경합을 못 막는다
   - `@Version` 만 → 시간 차 요청을 경합으로 오보한다
@@ -115,7 +114,7 @@ git diff develop...HEAD
 ### H. LAZY 기본과 N+1
 
 - `@ManyToOne` / `@OneToMany` 에 `EAGER` 가 있으면 위반
-- `GET /api/review-queue` 에서 항목별 `ErrorGroup`·`ClassificationResult` 접근 시 `@EntityGraph` 가 없으면 N+1 (size=20 이면 1+40=41 쿼리)
+- `GET /api/inquiry-review-queue` 에서 항목별 `Inquiry`·`InquiryClassificationResult` 접근 시 `@EntityGraph` 가 없으면 N+1 (size=20 이면 1+40=41 쿼리)
 - `open-in-view=false` 이므로 DTO 변환이 서비스 계층 안에서 끝나는지 확인 — 밖에서 LAZY 를 건드리면 `LazyInitializationException`
 
 ### I. 작업 경계
@@ -123,7 +122,7 @@ git diff develop...HEAD
 - 비밀 정보(`.env`, JWT secret, API key)가 커밋에 포함되면 **최우선 보고**
 - `src/main/` 과 `docs/`·`tests/e2e/`·`.github/` 가 한 PR 에 섞였으면 분리 권고
 - **API 가 바뀌었는데 `API-CONTRACT.md` 동반 변경이 없으면 위반** (계약과 구현의 괴리 방지)
-- 인덱스 변경 시 — `V2__candidate_index.sql` 의 후보 인덱스가 **측정 5ⓔ 없이 V1 으로 승격**됐으면 위반 (D-023). `ddl-auto` 로 인덱스를 붙였다 떼면 A/B 측정 자체가 불가능해진다
+- 스키마 변경이 **`ddl-auto` 로 처리**됐으면 위반 (D-023). 새 마이그레이션 파일을 동반해야 한다
 
 ---
 
