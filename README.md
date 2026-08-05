@@ -1,6 +1,8 @@
 > 이 레포는 **1기** 의 **1기-team-01** 팀 프로젝트 레포입니다.
 > 멤버: @agbink, @whitejh, @techietaek
 > 운영용 SoT: https://github.com/GaeChwiRpg/devcamp-team-submission-sample — 빈 템플릿 12개 채우면서 진행하세요.
+>
+> ⚠️ **아래 본문은 안내 템플릿 그대로입니다.** 우리 팀의 실제 작업 안내는 **[`ONBOARDING.md`](./ONBOARDING.md)** 를 보세요 — 로컬 환경 셋업(Docker Desktop 버전 제약 포함), 작업 시작부터 PR 머지까지의 순서, 문서 지도.
 
 # Dev Camp Team Submission Sample
 

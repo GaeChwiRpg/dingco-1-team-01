@@ -3,6 +3,7 @@
 > 이 파일은 모든 prompt 에 자동으로 포함되며 위반 시 hook 이 차단합니다.
 > 변경은 반드시 `DECISIONS.md` 새 항목으로. 덮어쓰기 금지.
 > 상세 요구사항은 `PRD.md`, endpoint 계약은 `API-CONTRACT.md`.
+> 처음 합류했다면 `ONBOARDING.md` 부터 — 로컬 환경 셋업(⚠️ Docker Desktop 버전 제약)과 작업 순서 안내.
 
 ## 도메인 컨텍스트
 
