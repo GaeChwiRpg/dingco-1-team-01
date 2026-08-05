@@ -62,6 +62,17 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # POST /api/errors 의 X-Api-Key (Phase 2 헤더 stub). TRI-26 착수 시 :? 로 승격.
       SDK_API_KEY: ${SDK_API_KEY:-}
+      # Sentry DSN (배포·운영, MONITORING.md). 비어 있으면 SDK 가 no-op — 키 없이도 기동된다.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # application.yml 의 sentry.environment: ${ENV:local} 가 참조하는 값. 이걸 안 넘기면
+      # docker compose 로 띄워도 항상 "local" 로 찍혀서 로컬 개발과 구분이 안 된다
+      # (AI 코드리뷰 지적, SENTRY-GUIDE.md 3-1 이 경고한 문제가 설정에서 그대로 재현됨).
+      ENV: ${ENV:-local}
+      # 기본 0.1(안전) — application.yml 의 기본값과 반드시 맞춘다. 여기서 다른 값으로
+      # fallback 하면 .env 에 값이 없을 때도 컨테이너엔 "1.0" 같은 값이 그대로 전달돼
+      # Spring 쪽 안전 기본값이 무력화된다 (AI 코드리뷰 지적으로 발견). 로컬 전수 확인은
+      # .env 의 SENTRY_TRACES_SAMPLE_RATE=1.0 으로 명시적으로 올린다.
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     depends_on:
       mysql:
         # ddl-auto=validate + Flyway 라 DB 가 준비되기 전에 뜨면 부팅이 실패한다.

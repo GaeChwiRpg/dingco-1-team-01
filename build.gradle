@@ -4,6 +4,11 @@ plugins {
     // (현재 4.0.7 / 4.1.0 만) 플러그인 버전을 직접 못박는다.
     id 'org.springframework.boot' version '3.3.13'
     id 'io.spring.dependency-management' version '1.1.7'
+    // Source Context (SENTRY-GUIDE.md §5) — 스택트레이스에서 실제 소스 코드를 Sentry
+    // 화면에서 바로 보이게 한다. 버전은 Gradle Plugin Portal maven-metadata.xml 실측
+    // 확인(2026-08-04, latest=6.17.0), 프로퍼티명(org/projectName/authToken)은 플러그인
+    // 소스(SentryPluginExtension.kt) 직접 대조.
+    id 'io.sentry.jvm.gradle' version '6.17.0'
 }
 
 group = 'com.dingco'
@@ -41,6 +46,11 @@ dependencies {
     // AI SDK 는 여기에 없다 — AI 호출은 P2 범위이고, 프로바이더가 문서 간에 어긋나 있어
     // (D-003/PRD 는 OpenAI, API-CONTRACT §3 예시는 claude-sonnet-5) baseline 이 선점하지 않는다.
 
+    // 배포·운영 단계 산출물 — Sentry. 버전은 Maven Central maven-metadata.xml 실측 확인
+    // (2026-08-04, latest=8.51.0). SENTRY_DSN 이 비어 있으면 SDK 는 이벤트를 전송하지
+    // 않고 조용히 no-op 으로 동작한다 — 키 없이도 앱은 정상 기동한다.
+    implementation 'io.sentry:sentry-spring-boot-starter-jakarta:8.51.0'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     // 측정 5(EXPLAIN)·7(동시성)이 의미를 가지려면 테스트 DB 가 운영과 같은 엔진이어야 한다.
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
@@ -51,4 +61,31 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // 개발자가 로컬에서 `.env` 를 source 한 채로 테스트를 돌리면 쉘의 실 SENTRY_DSN 이
+    // Gradle 이 포크하는 테스트 JVM 에 그대로 상속돼 BaselineSmokeTest 의 no-op 회귀
+    // 테스트(Sentry.isEnabled() == false 기대)가 깨진다 — AI 코드리뷰 지적을 실제로
+    // 재현해서 확인한 버그(Expecting value to be false but was true). 테스트 프로세스
+    // 안에서만 명시적으로 비워 정규 스위트가 개발자의 쉘 상태에 흔들리지 않게 한다.
+    //
+    // 알려진 트레이드오프(AI 코드리뷰 지적): 이 `test` 태스크 전체에 거는 방식이라, 나중에
+    // "실제로 Sentry 로 전송되는지"를 검증하는 영구 통합 테스트가 필요해지면 이 설정이
+    // 그것도 같이 막는다. application-test.yml 에 sentry.dsn 을 두는 대안은 이미 확인했듯
+    // Spring 의 OS 환경변수 우선순위 때문에 애초에 안 먹힌다(이 파일 커밋 로그 참조).
+    // 지금은 그런 영구 통합 테스트가 하나도 없어 문제되지 않지만, 필요해지면 별도
+    // source set/task(예: integrationTest)로 분리해 이 설정과 분리해야 한다.
+    environment 'SENTRY_DSN', ''
+}
+
+// SENTRY_AUTH_TOKEN 이 없는 팀원 환경(로컬)에서도 빌드가 실패하면 안 된다 — 소스 업로드는
+// 배포·운영 산출물이지 컴파일 전제조건이 아니다. 토큰 없으면 업로드만 건너뛴다.
+//
+// org/projectName 은 gradle.properties 로 분리를 시도했으나, e2e CI 의 Dockerfile 빌드 스테이지가
+// gradle.properties 를 COPY 하지 않아 프로퍼티가 없는 채로 평가돼 빌드가 깨졌다(재현 확인).
+// authToken 처럼 환경변수로 뺄 수도 있지만 비밀값이 아니라 굳이 그럴 이유가 없어, 원래대로
+// 하드코딩으로 되돌린다 — Dockerfile COPY 목록을 계속 맞춰줘야 하는 별도 파일을 늘리지 않는 쪽.
+sentry {
+    includeSourceContext = true
+    org = "dingcodingco"
+    projectName = "java-spring-boot"
+    authToken = System.getenv("SENTRY_AUTH_TOKEN")
 }

@@ -9,11 +9,11 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-029) |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-030) |
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline 완료 (PR #2~#5) — 엔티티·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종은 **PR #8 리뷰 중**. `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 테스트 4개 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` | ✅ PR #1~#8 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건) |
-| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 산출물 3종 + `.env.example` 존재. 실기동·실 트래픽 검증은 로드맵 Phase 3 |
+| 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md` 는 아직 템플릿 상태. 실제 `api/`·`service/` 트래픽 검증은 Phase 3 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-002).
 > 코딩 단계는 전원 공동이며, 코드 범위 분할(P1/P2/P3)은 아래 참조.
@@ -86,7 +86,7 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`(9절 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-029)
+- 산출물: `PRD.md`(9절 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-030)
 - 도구:
   - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
   - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
@@ -129,11 +129,11 @@
   - `docker-compose.yml` + `Dockerfile` — mysql / redis / app 3서비스. **셋 다 healthcheck 필수**다. app 의 healthcheck 를 빼면 `--wait` 가 "컨테이너가 떴다"까지만 보고 통과해, 부팅 미완 상태에서 Playwright 가 붙어 간헐 실패가 된다
   - `.env.example` — `ANTHROPIC_API_KEY` 포함 전 환경변수 목록. 실제 `.env` 는 `.gitignore` + `constitution-guard.py` 로 이중 차단
   - `MONITORING.md` — ⚠️ **아직 템플릿 상태다.** 파일은 있으나 도구 선택 표가 미기입이고 예시가 ticket 도메인 그대로다
-- 도구: Docker Compose (동작). Sentry MCP (미연동)
+- 도구: Docker Compose (동작), Sentry SDK + Source Context + MCP 연동 (실측 검증 완료 — `SENTRY-GUIDE.md`, PR #9)
 - 관측 설계는 되어 있다 — `GET /api/stats` 4개 블록 + Actuator gauge 5종(`triage.groups.stuck_new` 포함). **노출할 코드가 없을 뿐 무엇을 볼지는 정해져 있다** (`API-CONTRACT.md` §8~§9)
 - 한계:
   - **실 트래픽 0.** 부하 측정(§5-a, §5-b)과 `stuckNew` 실측은 `service/`·`api/` 착수 후
-  - **Sentry MCP 미연동** — 잔여 4건 중 1건. 다만 이 시스템은 자체 에러 수집 파이프라인이라 Sentry 와 역할이 겹친다. "무엇을 Sentry 로 보내고 무엇을 자체 큐로 보낼지"를 먼저 정하지 않으면 연동해도 시연이 되지 않는다
+  - Sentry MCP 연동 자체는 PR #9 로 완료됐다(`SENTRY-GUIDE.md` 실측 검증). 다만 이 시스템은 자체 에러 수집 파이프라인이라 Sentry 와 역할이 겹친다 — "무엇을 Sentry 로 보내고 무엇을 자체 큐로 보낼지"는 아직 정하지 않아 실 트래픽에서의 캡처 시나리오는 남아 있다
   - `MONITORING.md` 채우기가 이 단계의 실제 잔여 작업이다 (도구 선택 + 운영 시나리오 1사이클)
 
 ## 진행 상태
@@ -153,12 +153,12 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-029) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-030) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
 | 코딩 | ✅ src/ (엔티티·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md v0.8 | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 테스트 4개 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
 | 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (15건) | ✅ PR #1~#8 전원 자동 리뷰 동작 | ✅ |
-| 운영 | 🔄 docker-compose.yml, Dockerfile, .env.example ✅ / **MONITORING.md 는 템플릿 상태** | ⏳ Sentry MCP 미연동 | 🔄 |
+| 운영 | 🔄 docker-compose.yml, Dockerfile, .env.example ✅ / **MONITORING.md 는 템플릿 상태** | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료(`SENTRY-GUIDE.md`, PR #9) — 실 트래픽 0 | 🔄 |
 
-> **잔여 5건이 실제로 남은 작업이다** — ⓐ Jira MCP dry-run ⓑ `.claude/commands/` ⓒ e2e 시나리오 확장 ⓓ Sentry MCP ⓔ `MONITORING.md` 채우기.
+> **잔여 4건이 실제로 남은 작업이다** — ⓐ Jira MCP dry-run ⓑ `.claude/commands/` ⓒ e2e 시나리오 확장 ⓓ `MONITORING.md` 채우기. Sentry MCP 연동은 PR #9 로 완료돼 잔여 5건 → 4건으로 줄었다.
 > 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서 실제 잔여가 가려진다. 그래서 **산출물 존재와 도구 설정을 두 열로 나눠** 둔다.
-> ⓑⓒⓔ 는 지금 바로 할 수 있고, ⓐⓓ 는 외부 서비스 연동이라 시연 시나리오를 먼저 정해야 한다. **ⓒ 는 `service/`·`api/` 착수에 종속**되므로 사실상 P1/P2/P3 진행에 묶여 있다.
+> ⓑⓒⓓ 는 지금 바로 할 수 있고, ⓐ 는 외부 서비스 연동이라 시연 시나리오를 먼저 정해야 한다. **ⓒ 는 `service/`·`api/` 착수에 종속**되므로 사실상 P1/P2/P3 진행에 묶여 있다.

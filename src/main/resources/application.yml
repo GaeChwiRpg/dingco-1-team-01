@@ -49,6 +49,22 @@ management:
     health:
       show-details: when-authorized
 
+# 배포·운영 단계 산출물 (MONITORING.md). DSN 이 비어 있으면 SDK 가 no-op 으로 동작해
+# 키 없이도 앱이 정상 기동한다 — TRI-14(ANTHROPIC_API_KEY) 착수 전과 같은 이유로
+# 필수(:?)가 아니라 선택(:) 값으로 둔다.
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${ENV:local}
+  # 에러 이벤트 자체는 별도 설정이 없으면 기본 100% 캡처된다 — 이 값은 성능 트레이싱
+  # 샘플링만 제어한다. 두 값을 같은 것으로 착각하지 않는다.
+  # 기본값은 0.1(보수적) — env var 를 깜빡 안 넘겨도 운영에서 전수 트레이싱으로 비용이
+  # 튀는 사고를 막는다. 이 프로젝트의 "미등록 카테고리는 0.9 fallback = 격리 쪽으로
+  # 보수적 실패"(D-006)와 같은 방향의 fail-safe. 로컬에서 전수 확인하고 싶으면
+  # .env 에서 SENTRY_TRACES_SAMPLE_RATE=1.0 으로 명시적으로 올린다 (AI 코드리뷰 지적).
+  traces-sample-rate: ${SENTRY_TRACES_SAMPLE_RATE:0.1}
+  # PII(요청 헤더·쿠키·사용자 식별자 등)를 이벤트에 실어 보내지 않는다.
+  send-default-pii: false
+
 # ─────────────────────────────────────────────────────────────
 # D-023 부수 확정 — property 이름은 D-023 본문 그대로 유지한다
 # ─────────────────────────────────────────────────────────────
