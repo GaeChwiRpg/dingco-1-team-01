@@ -28,11 +28,13 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.util.StringUtils;
 
 /**
  * baseline 이 실제로 서 있는지 확인하는 4가지.
@@ -70,6 +72,9 @@ class BaselineSmokeTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    @Autowired
+    private Environment environment;
+
     @Test
     @DisplayName("엔티티 5개가 V1 DDL 과 일치한다 — ddl-auto=validate 아래에서 부팅 성공")
     void contextLoadsUnderSchemaValidation() {
@@ -100,6 +105,20 @@ class BaselineSmokeTest {
                 .extracting(ClassificationPolicy::getThreshold)
                 .as("AUTH 는 보안 인접이라 임계값이 가장 높다 (D-006)")
                 .isEqualTo(new BigDecimal("0.900"));
+    }
+
+    @Test
+    @DisplayName("SENTRY_DSN 없으면 no-op 으로 초기화될 조건(dsn 빈 값)이 실제로 성립한다 — 회귀 방지 (AI 코드리뷰 반영)")
+    void sentryDsnPropertyIsBlankByDefault() {
+        // application-test.yml 에는 SENTRY_DSN 이 없다(SENTRY-GUIDE.md 1번 — 비어 있으면 no-op).
+        // Sentry.isEnabled() 대신 Environment 를 보는 이유: Sentry.isEnabled() 는 JVM 전역
+        // static 상태라 같은 JVM에서 도는 다른 @SpringBootTest(가짜 DSN 을 주입하는 통합테스트 등)
+        // 가 먼저 컨텍스트를 띄우면 실행 순서에 따라 이 값이 오염된다. Environment 는 이 컨텍스트
+        // 스코프라 그 오염에서 자유롭고, 원래 잡으려던 회귀(쉘의 실 DSN 이 테스트 JVM 에 새어
+        // 들어가는 것)도 OS 환경변수가 property source 인 이상 여기서 그대로 잡힌다.
+        assertThat(StringUtils.hasText(environment.getProperty("sentry.dsn")))
+                .as("DSN 없는 팀원 환경에서도 앱이 뜨는 이유가 바로 이 no-op 조건이다")
+                .isFalse();
     }
 
     @Test
