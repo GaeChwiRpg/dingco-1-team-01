@@ -9,7 +9,7 @@
 
 | 도구 | 역할 | 선택? |
 | --- | --- | --- |
-| Sentry MCP | 에러 수집 + AI 위임 분석 | ✅ / ⏳ / ❌ |
+| Sentry MCP | **앱 자체의 장애** 수집 + AI 위임 분석 (이 시스템이 다루는 **CS 문의**와는 별개 축 — D-030) | ✅ / ⏳ / ❌ |
 | Datadog | APM + 로그 통합 | |
 | Grafana + Prometheus | 메트릭 + 알림 | |
 | Docker Compose | 시연용 스택 | |
@@ -41,7 +41,7 @@ sentry:
 
 ### 운영 시나리오
 
-1. (예: 의도적 NPE 1건 발생) → Sentry 알람
+1. (예: 분류 워커에 의도적 NPE 1건 발생) → Sentry 알람
 2. Sentry MCP 에 "에러 ID X 의 root cause 후보 5개" 요청
 3. 후보 검증 → 실제 일치 1개 → 수정 PR
 
