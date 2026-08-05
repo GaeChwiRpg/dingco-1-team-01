@@ -150,6 +150,12 @@ class DomainFactoryTest {
                 Arguments.of(Verdict.AUTO_ACCEPTED,
                         InquiryClassificationResult.autoAccepted(inquiry(),
                                 InquiryCategory.RETURN_REFUND, new BigDecimal("0.950"), "m", "{}", 1),
+                        QueueReason.AUDIT_SAMPLE),
+                // REUSED 도 격리 사유가 아니다 — 감사로 뽑힐 때만 큐에 들어오므로 AUDIT_SAMPLE 이다.
+                // AUTO_ACCEPTED 와 같은 reason 이지만 verdict 로 구분되므로 측정 8ⓐ/8ⓑ 는 섞이지 않는다 (D-033).
+                Arguments.of(Verdict.REUSED,
+                        InquiryClassificationResult.reusedFromHuman(inquiry(),
+                                InquiryCategory.PAYMENT, 4471L),
                         QueueReason.AUDIT_SAMPLE));
     }
 
@@ -177,7 +183,7 @@ class DomainFactoryTest {
     }
 
     @Test
-    @DisplayName("Verdict 3종이 모두 reason 으로 매핑된다 — 값이 늘면 from(...) 이 컴파일 에러로 막는다")
+    @DisplayName("Verdict 4종이 모두 reason 으로 매핑된다 — 값이 늘면 from(...) 이 컴파일 에러로 막는다")
     void everyVerdictMapsToSomeReason() {
         Stream<Verdict> covered = verdictToReason().map(args -> (Verdict) args.get()[0]);
 

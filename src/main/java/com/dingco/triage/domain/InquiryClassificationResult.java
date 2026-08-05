@@ -160,6 +160,43 @@ public class InquiryClassificationResult {
                 rawResponse, attemptCount);
     }
 
+    /**
+     * 같은 정규화 키의 <b>사람 확정 답</b>을 재사용한다 — AI 를 부르지 않는다 (D-033).
+     *
+     * <p><b>파라미터에 {@code confidence} 가 없다.</b> 사람은 확신도를 매기지 않으므로 {@code null}
+     * 이어야 하는데, 자리를 열어두면 {@code 1} 이나 원본 AI 값이 채워진다. {@code 1} 은 거짓말이고
+     * (사람도 틀린다), 원본 AI 값은 <b>사람이 뒤집은 값</b>이라 의미가 없다. {@code failed(...)} 가
+     * D-022 를 컴파일러로 막은 것과 같은 방식이다.
+     *
+     * @param sourceResultId 재사용한 <b>원본</b> 결과 id. 재사용 건을 다시 재사용하지 않으므로
+     *                       여기에는 항상 원본이 온다 — 체인이 길어지면 원본 하나가 틀렸을 때
+     *                       어디까지 퍼졌는지 추적할 수 없다 (D-033)
+     */
+    public static InquiryClassificationResult reusedFromHuman(Inquiry inquiry,
+            InquiryCategory category, Long sourceResultId) {
+        return reused(inquiry, category, null, sourceResultId);
+    }
+
+    /** 같은 키의 <b>AI 답</b>을 재사용한다. 이때는 {@code confidence} 가 원본 값 그대로다 (D-033). */
+    public static InquiryClassificationResult reusedFromAi(Inquiry inquiry,
+            InquiryCategory category, BigDecimal confidence, Long sourceResultId) {
+        return reused(inquiry, category, Objects.requireNonNull(confidence, "confidence"),
+                sourceResultId);
+    }
+
+    private static InquiryClassificationResult reused(Inquiry inquiry, InquiryCategory category,
+            BigDecimal confidence, Long sourceResultId) {
+        // model 에 원본 결과 id 를 남긴다 (D-033). 실제 AI 호출과 구분되지 않으면
+        // 측정 6(절감률)과 8ⓑ(재사용 건 오분류율)를 검산할 수 없다.
+        //
+        // attemptCount 는 1 로 고정한다 — AI 를 부르지 않았으므로 "시도"가 없지만 0 은 생성자가
+        // 막는다(D-022 재평가 근거를 0 으로 오염시키지 않으려는 제약). 재시도 집계에서는
+        // verdict 로 걸러낸다 — reason 판별과 마찬가지로 verdict 가 판별식이다 (계약 B).
+        return new InquiryClassificationResult(inquiry, Verdict.REUSED,
+                Objects.requireNonNull(category, "category"), confidence,
+                "reused:" + Objects.requireNonNull(sourceResultId, "sourceResultId"), null, 1);
+    }
+
     private static InquiryClassificationResult classified(Inquiry inquiry, Verdict verdict,
             InquiryCategory category, BigDecimal confidence, String model, String rawResponse,
             int attemptCount) {
