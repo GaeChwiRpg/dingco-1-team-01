@@ -11,7 +11,7 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-034) — **D-031 으로 도메인 전환, PRD 전면 재작성** |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-038) — **D-031 으로 도메인 전환, PRD 전면 재작성** |
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16 |
@@ -49,7 +49,7 @@
 
 **교차 지점 주의**
 
-- 캐시(계약 C)는 **P1 이 읽고 쓰며, P2 가 판정 확정 후 put 한다** → 값 구조 변경 시 양쪽 합의 필요
+- 캐시(계약 C)는 **P1 이 읽고 쓰고, P2 가 ② 커밋 후, P3 가 ③ 커밋 후 put 한다** (D-036) → 값 구조 변경 시 **3자** 합의 필요. **P3 가 캐시를 건드리는 것은 이번이 처음**이라 여기가 가장 놓치기 쉬운 자리다
 - 트랜잭션 ②(P2)가 삽입한 `inquiry_review_queue` 행을 ③(P3)이 소비한다 → `reason` 별 보장 사항은 계약 B 고정
 - `InquiryReceivedEvent`(계약 A)는 P1 발행 → P2 수신. **전건 발행이므로 P2 워커가 절감 여부를 판단**한다 (D-031)
 
@@ -69,13 +69,13 @@
 | 2 | 검토 큐 적체율 — 사유별 삽입 건수 | 김준현 (P2) | Day 4 |
 | 3 | **롤백 경계 검증** — ② 롤백 + ① **생존** 동시 확인 + `stuckReceived` 증가 (D-031) | 김은빈 (P3) | **Day 3 필수 체크포인트** |
 | 4 | 재시도 동작 — AI 오류 주입 → 재시도 횟수·간격 + 최종 큐 삽입 | 김준현 (P2) | Day 3 |
-| 5ⓐ~ⓓ | 조회 `EXPLAIN` 4 케이스 (큐 / `normalized_key` / 문의 목록 / **`final_category IS NOT NULL` 필터** — AI 리뷰 지적으로 추가) | 김은빈 (P3) | Day 4 |
+| 5ⓐ~ⓓ | 조회 `EXPLAIN` 4 케이스 (큐 / 문의 목록 / **2단 절감 경로 1순위·2순위 조인 쿼리 2개** — D-037). ⓓ 는 `final_category IS NOT NULL` 이 서버 필터라 `rows` 가 키당 얼마나 늘어나는지를 본다 | 김은빈 (P3) | Day 4 |
 | 6 | **AI 호출 절감률** (2단 경로 효과) — 1000건 투입 대비 실제 호출 수 + **동시 유입 중복 호출분** | 이용택 (P1) | Day 4 |
 | 7ⓑ | 동시 `PATCH` → 409 2종 비율 (`CONCURRENT_UPDATE` 0 이면 무효) | 김은빈 (P3) | Day 2 오후 |
 | 8ⓐ | 신뢰도 구간별 실측 오분류율 (자동 확정 건) — **이 프로젝트의 결론** | 김준현 (P2) | Day 4 |
 | 8ⓑ | **재사용 건의 오분류율** — ⓐ 와 섞지 않는다. 비교할 AI 답이 없기 때문 (D-033) | 김준현 (P2) | Day 4 |
 | 10 | blind 무결성 — 결정적 역산 0건 / 확률적 추론 목록화 | 김준현 (P2) | Day 5 재점검 |
-| 11 | 캐시 hit rate (절감률과 별개 지표임을 수치로 확인) | 김은빈 (P3) | Day 4 |
+| 11 | 캐시 hit rate (절감률과 별개 지표임을 수치로 확인) + **③ 확정 직후 같은 키 문의가 사람 답을 받는지** (D-036) | 김은빈 (P3) | Day 4 |
 | 12 | **검토자 간 일치도** — 측정 8 에서 검토자 불일치분 분리 (D-027) | 김준현 (P2) 집계<br>독립 분류: 이용택·김은빈 | Day 5 |
 
 **속도 측정** — 목표치는 `PRD.md` §9 하단, 수치는 본인 `hey` 실측만
@@ -94,7 +94,7 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`(12절 · US 13개 · 측정 11개), `DECISIONS.md`(D-001~D-034)
+- 산출물: `PRD.md`(12절 · US 13개 · 측정 11개), `DECISIONS.md`(D-001~D-038)
 - 도구:
   - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
   - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
@@ -111,7 +111,7 @@
   - Hooks — `.claude/hooks/dispatcher.sh` (PreToolUse) → `handlers/constitution-guard.py` (편집 시점 헌법 위반 차단) + `handlers/verify-before-push.sh` (push 전 `./gradlew test`)
   - 서브에이전트 5종 — `.claude/agents/` (constitution-auditor / implementation / test / refactoring / docs). PR #8 머지 완료. **도메인 전환 시 함께 갱신했다** — 프롬프트는 헌법의 사본이 아니라 "어떻게 검증하는가"라서 도메인이 바뀌면 낡고, **낡은 프롬프트는 틀린 규칙을 자신 있게 강제**한다
   - Commands — **미작성**. `.claude/commands/` 디렉토리 자체가 없다
-- **훅과 서브에이전트의 역할이 다르다**: 훅은 조건이 맞으면 무조건 돌고 정적으로 확실한 것만 본다(비밀 파일·크리덴셜 하드코딩·`api/` 의 `@Transactional`·`V1` 수정). 판단이 필요한 규칙(트랜잭션 경계 ①②③, 계약 A/B/C, 감사 표본 역산 가능성)은 정적 검사로 못 가리므로 `constitution-auditor` 의 몫이다. **오탐이 잦은 규칙을 훅에 넣지 않는 것이 원칙** — 정상 작업을 막는 훅은 곧 꺼지고, 꺼진 훅은 통과가 보증처럼 보여서 없는 것만 못하다
+- **훅과 서브에이전트의 역할이 다르다**: 훅은 조건이 맞으면 무조건 돌고 정적으로 확실한 것만 본다(비밀 파일·크리덴셜 하드코딩·`api/` 의 `@Transactional`·**커밋된 마이그레이션 수정**). 판단이 필요한 규칙(트랜잭션 경계 ①②③, 계약 A/B/C, 감사 표본 역산 가능성)은 정적 검사로 못 가리므로 `constitution-auditor` 의 몫이다. **오탐이 잦은 규칙을 훅에 넣지 않는 것이 원칙** — 정상 작업을 막는 훅은 곧 꺼지고, 꺼진 훅은 통과가 보증처럼 보여서 없는 것만 못하다
 - 한계: `verify-before-push.sh` 는 로컬 Docker 환경에 의존한다 (D-026 — Docker Desktop 4.44.2 이하). 조건이 깨지면 코드와 무관하게 push 가 막힌다
 
 ### 3. 테스트
@@ -161,7 +161,7 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-034) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-038) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
 | 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.1** | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 8건 + 단위 8건 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
 | 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건) | ✅ PR #1~#11 전원 자동 리뷰 동작 | ✅ |

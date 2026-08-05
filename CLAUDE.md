@@ -70,8 +70,8 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | 쿼리 | 인덱스 | 예상 EXPLAIN |
 | --- | --- | --- |
 | `GET /api/inquiry-review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
-| `normalized_key` 로 직전 분류 결과 조회 (2단 절감 경로의 2단) | `(normalized_key, created_at DESC)` | `ref`, 정렬까지 커버 |
-| 위 조회의 **1순위 — 사람이 확정한 것 우선** (`final_category IS NOT NULL`) | 같은 인덱스 + **서버 필터** ⚠️ | `ref` 후 필터. **측정 5 케이스** — AI 리뷰 지적 |
+| 2단 절감 경로의 **1순위** — 같은 키에서 사람이 확정한 답 (`inquiries ⋈ result`, `final_category IS NOT NULL`) | 구동 `inquiries(normalized_key, created_at DESC)`<br>조인 `result(inquiry_id, created_at DESC)` | 구동 `ref` + 정렬 커버, 조인 `ref`, `final_category` 는 **서버 필터** ⚠️ |
+| 2단 절감 경로의 **2순위** — 위가 비었을 때만. AI 자동확정 (`verdict='AUTO_ACCEPTED'`) | 같은 두 인덱스 | 같음. `verdict` 는 등치라 필터가 싸다 |
 | `GET /api/inquiries` — status 필터 + 기간 범위 + `received_at` 정렬 | `(status, received_at)` | `range`, 정렬까지 커버 |
 | 위 + `category` 필터 동시 사용 | `(status, current_category, received_at)` | category 는 등치라 선행 컬럼에 두면 뒤의 범위 + 정렬까지 커버 가능 |
 | 문의별 최신 분류 결과 | `(inquiry_id, created_at DESC)` | `ref` |
@@ -79,8 +79,12 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 
 > 측정 5 에서 위 예상이 맞는지 `EXPLAIN` 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
 >
-> ⚠️ **`final_category IS NOT NULL` 은 인덱스로 걸리지 않는다 (AI 리뷰 지적).** 2단 절감 경로의 1순위 조회는 `(normalized_key, created_at DESC)` 로 행을 좁힌 뒤 이 조건을 **서버에서 필터**하므로, 같은 키의 판정 행이 쌓일수록 훑는 양이 늘어난다.
-> 그렇다고 지금 인덱스를 더 붙이지 않는다 — **이득을 측정으로 확인하기 전에 쓰기 비용을 얹지 않는다**(D-018 이 남긴 논거). 측정 5 에 이 쿼리의 `EXPLAIN` 을 케이스로 넣어 `rows` 가 실제로 문제 될 규모인지 먼저 본다. 키당 판정 행이 한 자릿수면 인덱스는 낭비다.
+> ⚠️ **2단 절감 경로의 조회는 조인이다 (D-037).** `normalized_key` 는 `inquiries` 에, `final_category` · `verdict` 는 `inquiry_classification_result` 에 있다. 이전 판이 이 조회를 단일 테이블처럼 적어둔 탓에 인덱스 하나가 조회 전체를 커버하는 것처럼 보였다 — **커버되는 것은 구동 테이블 쪽뿐**이다.
+>
+> ⚠️ **1순위와 2순위는 쿼리를 따로 친다 (D-037).** 우선순위를 `ORDER BY (final_category IS NOT NULL) DESC` 같은 정렬식으로 표현하면 filesort 가 확정이고, 그렇다고 `LIMIT 1` 로 최신 한 건만 뽑으면 **사람 확정 행을 지나쳐 D-033 이 무력화된다.** 1순위가 맞으면 거기서 끝나고, 두 번째 쿼리는 1순위가 빈 경우에만 나간다.
+>
+> ⚠️ **`final_category IS NOT NULL` 은 인덱스로 걸리지 않는다 (AI 리뷰 지적).** 1순위 조회는 위 두 인덱스로 행을 좁힌 뒤 이 조건을 **서버에서 필터**하므로, 같은 키의 판정 행이 쌓일수록 훑는 양이 늘어난다.
+> 그렇다고 지금 인덱스를 더 붙이지 않는다 — **이득을 측정으로 확인하기 전에 쓰기 비용을 얹지 않는다**(D-018 이 남긴 논거). 측정 5ⓓ 에 이 쿼리의 `EXPLAIN` 을 케이스로 넣어 `rows` 가 실제로 문제 될 규모인지 먼저 본다. 키당 판정 행이 한 자릿수면 인덱스는 낭비다.
 >
 > **인덱스 컬럼의 갱신 빈도를 함께 보는 습관은 유지한다.** 근거였던 D-018 은 대상 컬럼(`occurrence_count`)이 사라져 폐기됐지만, 논거 자체는 살아 있다 — `inquiries` 는 INSERT 위주이고 UPDATE 는 판정 확정 시 1회뿐이라 지금은 트레이드오프가 성립하지 않을 뿐이다. **갱신 빈도가 높은 컬럼을 인덱스에 넣으려 할 때 D-018 을 다시 읽는다.**
 > 검토 큐에 `category` 필터가 없는 이유는 blind 규칙 — 아래 참조.
@@ -111,7 +115,8 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - 묶음 read+write 만 — 위 표의 ①②③ **세 메서드**. 여기 밖에 새로 붙이려면 근거를 PR 본문에 쓴다
 - **트랜잭션 ①과 ②는 반드시 분리된 상태로 둔다 (D-031).** ① 은 고객에게 접수 확인을 돌려준 시점에 이미 커밋돼 있어야 한다. ②가 실패해도 ①은 **살아남아야 한다** — 롤백되면 고객이 받은 접수 확인이 거짓말이 된다. 대신 문의가 `RECEIVED` 로 방치되므로 stuck 지표로 드러낸다 (D-017)
 - **측정 장치를 트랜잭션 밖에 두지 않는다.** 감사 표본 큐 삽입은 ② 안에 포함한다 — 누락되면 감사율이 설정값 미달이 되어 측정 8 의 분모가 조용히 줄어든다. "부차적이라 분리한다"는 판단은 외부 의존성에만 적용한다 (D-012)
-- **캐시 갱신/evict 는 커밋 후** (`@TransactionalEventListener(AFTER_COMMIT)`). 롤백된 판정이 캐시에 남으면 안 됨
+- **캐시 갱신은 커밋 후** (`@TransactionalEventListener(AFTER_COMMIT)`). 롤백된 판정이 캐시에 남으면 안 됨
+- **분류 캐시를 건드리는 자리는 ②와 ③ 둘뿐이다 (D-036).** ③(사람 확정)도 캐시를 갱신한다 — 안 하면 사람이 정정한 답을 두고 캐시가 옛 AI 답을 계속 재사용한다
 
 ### LAZY 기본
 
@@ -139,24 +144,32 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 
   ```text
   @Async 워커
-    ├ 1단 캐시 조회 (normalized_key)      → hit  : AI 호출 없이 결과 재사용
-    ├ 2단 DB 조회 (normalized_key 인덱스) → hit  : AI 호출 없이 재사용 + 캐시 put
-    └ miss                                      : AI 호출
+    ├ 1단 캐시 조회 (normalized_key)   → hit  : AI 호출 없이 결과 재사용
+    ├ 2단 DB 조회 (쿼리 2번 — 아래)    → hit  : AI 호출 없이 재사용 + 캐시 put
+    └ miss                                   : AI 호출
   ```
 
-  **2단 DB 조회의 우선순위 (D-033)** — 사람 노동까지 아끼는 자리다
+  **2단 DB 조회의 우선순위 (D-033)** — 사람 노동까지 아끼는 자리다. **쿼리를 두 번 친다 (D-037)**
 
   | 순위 | 대상 | 이유 |
   | --- | --- | --- |
   | 1 | 사람이 확정한 것 (`final_category IS NOT NULL`) | 사람 답이 AI 답보다 신뢰도가 높다 |
-  | 2 | AI 가 자동 확정한 것 (`verdict = AUTO_ACCEPTED`) | |
-  | — | **`verdict = REUSED` 는 참조하지 않는다** | **체인 금지** — 재사용을 다시 재사용하면 원본이 틀렸을 때 어디까지 퍼졌는지 추적할 수 없다 |
+  | 2 | 위가 비었을 때만 — AI 가 자동 확정한 것 (`verdict = AUTO_ACCEPTED`) | |
+  | — | **재사용을 다시 재사용하지 않는다** | **체인 금지** — 원본이 틀렸을 때 어디까지 퍼졌는지 추적할 수 없다. 2순위의 `verdict = AUTO_ACCEPTED` 등치 조건이 `REUSED` 를 걸러낸다 |
 
   1순위가 없으면 같은 내용의 저확신 문의가 **사람이 아무리 확정해도 계속 큐에 쌓인다.** AI 호출만 아끼고 사람 노동은 하나도 못 아끼는 상태가 된다.
+
+  > **1순위는 `verdict = REUSED` 행도 포함한다 (D-037).** 재사용 건에 `final_category` 가 있다는 것은 **감사로 뽑혀 사람이 다시 판단했다**는 뜻이므로, 참조하는 값은 재사용된 답이 아니라 사람이 새로 매긴 답이다 — 체인이 아니라 새 원본이다. 여기서 빼면 **감사가 잡아낸 정정이 재사용 경로에 못 들어간다.**
+  >
+  > **우선순위를 정렬식으로 쓰지 않는다.** `ORDER BY (final_category IS NOT NULL) DESC` 는 filesort 가 확정이고, `LIMIT 1` 로 최신 한 건만 뽑으면 사람 확정 행을 지나친다.
 
   - **캐시가 줄이는 것은 DB 조회이지 AI 호출이 아니다** (D-014). 캐시 miss 여도 DB 에 같은 키의 이전 결과가 있으면 AI 를 부르지 않는다
   - 따라서 `hit rate` 와 `AI 절감률` 은 **별개 메트릭으로 각각 노출**한다. hit rate 는 항상 절감률 이하다
   - **2단(DB)을 빼고 캐시만 두면 안 된다** — Redis 재시작 시 절감이 0 으로 리셋되고, 두 지표가 같은 값이 되어 D-014 가 무의미해진다
+- **덮어쓰기 방향은 한 방향이다 (D-036)** — **사람 답은 AI 답을 덮고, AI 답은 사람 답을 덮지 않는다**
+  - 사람이 확정하면(③) 그 답으로 캐시를 **덮어쓴다.** 안 덮으면 1단 hit 이 나는 동안 2단이 아예 실행되지 않아 **위 1순위 규칙이 실행될 기회조차 없다** — 감사가 잡아낸 정정을 시스템이 도로 무시하게 된다
+  - ②의 put 은 기존 값이 사람 답(`source=HUMAN`)이면 덮지 않는다
+  - **완벽한 원자성은 목표가 아니다.** 워커가 AI 를 부르는 사이 사람이 확정하면 창이 남지만, 그 결과는 옛 AI 답이 잠시 더 재사용되는 것이고 재사용 건은 감사 대상이다 (D-033). 막으려고 키 단위 직렬화를 넣으면 그룹핑으로 되돌아간다
 - **정규화 규칙** — 소문자화 · 연속 공백/문장부호 정리 · **주문번호·날짜·금액·연락처 마스킹**. 강도는 측정으로 확정한다 (D-031 재평가 조항)
   - **과도 병합**(서로 다른 문의가 한 키로) 과 **과소 병합**(같은 문의가 다른 키로) 을 **양쪽 다** 테스트 케이스로 만든다
   - **과도 병합이 더 위험하다** — 잘못된 분류가 재사용되면서 조용히 퍼진다. 정규화를 조일 때는 항상 이쪽을 먼저 확인한다
@@ -230,17 +243,26 @@ inquiry_id, classification_result_id, reason, status=PENDING, created_at, versio
 
 > **`REUSED` 는 격리 사유가 아니다.** 재사용 건은 자동 확정되며 큐에 들어가지 않는다 — **감사로 뽑힐 때만** 들어가고 그때 사유는 기존과 같은 `AUDIT_SAMPLE` 이다. 계약 B 의 구조는 바뀌지 않고 `verdict → reason` 매핑에 한 줄이 늘 뿐이라, 판별식은 여전히 `verdict` 하나다 (D-033).
 
-**계약 C — `classification:byNormalizedKey` 캐시 값 구조 (P1 쓰기·읽기 ↔ P2 쓰기)**
+**계약 C — `classification:byNormalizedKey` 캐시 값 구조 (P1 읽기·쓰기 ↔ P2 쓰기 ↔ P3 쓰기)** — D-036 으로 개정
 
 ```text
 key   : normalized_key (String)
-value : { category, confidence, model }
-  └ 판정이 확정된 결과만 담는다. 미판정 상태는 캐시하지 않는다
+value : { category, confidence, source, sourceResultId }
+  └ source         : HUMAN | AI            — 캐시 단에서도 1순위/2순위를 구분한다
+  └ sourceResultId : 원본 결과 id           — REUSED 행의 model 컬럼에 그대로 쓴다 (추적 경로)
+  └ confidence     : source=AI 면 원본 값 / source=HUMAN 이면 null (D-033)
+  └ 판정이 확정된 결과만 담는다. 미판정 상태(NEEDS_REVIEW·FAILED)는 캐시하지 않는다
   └ inquiryId 를 담지 않는다 — 담으면 "이 문의의 판정"으로 오해돼 그룹핑처럼 쓰이게 된다
+  └ 모델명을 담지 않는다 — 재사용 행의 model 은 모델명이 아니라 원본 id 다. 필요하면 원본을 따라간다
 
-put   : 판정 확정 트랜잭션(②) 커밋 후. 2단(DB) hit 시에도 put 해 다음 요청을 1단에서 끊는다
-evict : 없음. TTL 은 메모리 상한 목적으로만 사용
+put   : 판정 행이 저장되는 트랜잭션의 AFTER_COMMIT, 그 두 자리뿐
+          ② 커밋 후 — AUTO_ACCEPTED · REUSED   (원본이 사람 답이면 source=HUMAN 을 물려받는다)
+          ③ 커밋 후 — 사람이 확정한 final_category (source=HUMAN, 조건 없이 덮는다)
+        ⚠ "2단 hit 시에도 put" 은 별도 경로가 아니다 — 2단 hit 이면 REUSED 행을 저장하고 그게 곧 ②다
+evict : 없음. TTL 은 메모리 상한 목적으로만 사용. 정확성은 evict 가 아니라 ③의 덮어쓰기가 지킨다
 ```
+
+> **P3 가 캐시를 건드리는 것은 D-036 이 처음이다.** ③ 이 캐시를 갱신하지 않으면 사람이 정정한 답을 두고 1단이 옛 AI 답을 계속 돌려준다.
 
 ## 작업 경계
 

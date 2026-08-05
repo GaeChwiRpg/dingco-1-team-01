@@ -1,9 +1,10 @@
-# API-CONTRACT v1.1
+# API-CONTRACT v1.2
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
 > **v1.0 은 도메인 전환(D-031)에 따른 전면 개정이다** — 에러 분류 → CS 문의 분류.
 > **v1.1 은 사람 확정 답의 재사용(D-033)** — `verdict` 에 `REUSED` 추가, 감사 통계를 자동확정/재사용으로 분리.
+> **v1.2 는 계약 내부 모순 정정(D-036·D-038)** — §2 의 `customerId` 는 파라미터가 아니라 서버 강제 필터, §5 확정은 캐시를 덮어쓴다.
 
 ## 형식 원칙
 
@@ -121,6 +122,9 @@ X-User-Role: CUSTOMER
 | `page` | 0 | |
 | `size` | 20 | 최대 100 |
 
+> **`customerId` 파라미터는 두지 않는다 (D-038).** `ROLE_CUSTOMER` 의 조회 범위는 클라이언트가 값을 넣어 좁히는 것이 아니라 **서버가 `X-User-Id` 로 강제**한다. 파라미터로 두면 "안 넣으면 전체 조회"가 기본 동작이 되어, **검사를 빠뜨렸을 때 남의 문의가 보이는 쪽으로 실패**한다. 서버 강제는 반대 방향으로 실패한다 — 필터를 안 걸면 아무것도 안 보인다.
+> 역할 검사(`SecurityConfig`)만으로는 부족하다. 그건 endpoint 접근까지만 막는다 — **범위 좁히기는 `service/` 에서 건다.**
+>
 > `category` / `confidence` 는 `inquiry_classification_result` 를 조인하지 않고 **`inquiries` 에 역정규화된 `current_category` / `current_confidence` 를 읽는다** (D-011). 목록 조회에서 행마다 조인이 발생하는 것을 막고, `(status, current_category, received_at)` 인덱스로 필터 + 정렬을 함께 커버하기 위함.
 >
 > **정렬 축은 `received_at` 하나뿐이라 `sort` 파라미터를 두지 않는다.** 이전 도메인에는 `occurrence_count` 라는 두 번째 정렬 축이 있어 D-013 이 필요했지만, 그 컬럼이 사라지면서 함께 폐기됐다.
@@ -149,7 +153,9 @@ X-User-Role: CUSTOMER
 - `content` 는 **마스킹된 본문**을 반환한다. 원문은 저장하되 응답으로 되돌려주지 않는다
 - `confidence` 는 `ROLE_AGENT` 이상에게만 포함된다 — 고객에게는 생략
 
-**오류**: 403 (`ROLE_CUSTOMER` 가 `customerId` 필터 없이 전체 조회 시도)
+**오류**: 401 (인증 헤더 누락), 400 (`status` · `category` enum 불일치 / `size` 100 초과)
+
+> **403 은 없다 (D-038).** `ROLE_CUSTOMER` 의 목록 조회는 거부 대상이 아니라 **범위가 좁혀진 채 200** 이다 — 자기 문의가 없으면 빈 목록이 나간다. 남의 문의를 id 로 직접 지목하는 §3 의 403 과 혼동하지 않는다.
 
 ---
 
@@ -281,6 +287,7 @@ X-User-Role: AGENT
 - `matched: false` = AI 제안과 사람 확정 불일치 → 오분류 집계 대상
 - **`suggestedCategory` 가 null(= `CLASSIFY_FAILED`)이면 `matched` 도 `null`** — 비교할 AI 제안이 없으므로 `false` 가 아니다 (D-022). `false` 로 채우면 측정 8 의 오분류 건수에 "AI 가 틀린 건"과 "AI 가 아예 답을 못 낸 건"이 합산된다
 - 감사 표본이었더라도 응답에 그 사실은 드러내지 않는다 (blind 유지)
+- **이 확정은 커밋 후 분류 캐시를 사람 답으로 덮어쓴다 (D-036).** 그래서 같은 정규화 키로 뒤이어 들어오는 문의는 옛 AI 답이 아니라 **이 답**을 재사용한다. 응답에는 드러나지 않지만 **관측 가능한 동작이므로 계약에 적는다** — 안 덮으면 감사가 잡아낸 정정이 재사용 경로에 반영되지 않는다
 
 **오류**: 400 (`finalCategory` enum 불일치), 403, 404, **409 (확정 충돌 — 아래 2종)**
 
@@ -437,4 +444,5 @@ X-User-Role: AGENT
 | v0.8 | 2026-08-04 | `service/`·`api/` 착수 전 계약 공백 메우기 — ⓐ 공통 오류 **응답 바디 형식**과 `code` 상수 신설 ⓑ §1 **요청 필드 표** ⓒ §6 에 `mode`·`globalThreshold`·`audit.sampleRate` 를 **읽기 전용**으로 노출 (D-028) ⓓ §7 을 **upsert** 로 정정하고 404 제거 (D-029) ⓔ §2 `sort` 근거의 결정 번호 정정 (D-012 → D-013) | #10 |
 | **v1.0** | 2026-08-05 | **도메인 전환에 따른 전면 개정 (D-031)** — 에러 분류 → CS 문의 분류. ⓐ endpoint 8개 → **7개 + Actuator**: `POST/GET /api/inquiries`, `GET /api/inquiries/{id}`, `GET/PATCH /api/inquiry-review-queue`, `GET /api/policies`(읽기 전용 축소), `GET /api/stats` ⓑ **`PATCH /api/policies/{category}` 삭제** (D-006·D-029 폐기) ⓒ 역할 `ROLE_INGEST`/`REVIEWER`/`ADMIN` → **`CUSTOMER`/`AGENT`/`MANAGER`** ⓓ 카테고리 enum 10종 **전면 교체** + 경계 규칙("원인이 아니라 조치")을 `PRD.md` §7 으로 위임 ⓔ `sort` 파라미터 삭제 (D-013 폐기 — 정렬 축이 하나뿐) ⓕ `stuckNew` → **`stuckReceived`** ⓖ 개인정보 마스킹 규약 신설 (문의 본문은 고객 자연어) ⓗ 남의 문의 조회는 **404 가 아니라 403** (id 훑기 차단) | #11 |
 | v1.1 | 2026-08-05 | **사람 확정 답의 재사용 (D-033)** — ⓐ `verdict` 에 `REUSED` 추가. 사람 확정을 재사용한 건은 `confidence` 가 `null` (D-022 부분 개정) ⓑ `GET /api/stats` 의 `audit` 을 `autoAccepted` / `reused` 두 블록으로 분리 — 합치면 측정 8ⓐ 가 오염된다 ⓒ `model` 에 **원본 결과 id** 를 남기도록 명시 ⓓ 계약 B 는 불변 — `REUSED` 는 격리 사유가 아니고 감사로 뽑힐 때만 `AUDIT_SAMPLE` 로 큐에 들어간다 | #11 |
+| v1.2 | 2026-08-05 | **AI 리뷰 반영 — 계약 내부 모순 정정** ⓐ §2 `customerId` 모순 해소: 파라미터를 두지 않고 **서버가 `X-User-Id` 로 범위 강제**, 오류란의 403 삭제 (D-038) ⓑ §5 에 **확정 후 캐시 덮어쓰기**를 관측 가능한 동작으로 명시 (D-036) | #12 |
 <!-- 변경 시 한 줄씩 추가 -->
