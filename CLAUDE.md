@@ -70,12 +70,16 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | --- | --- | --- |
 | `GET /api/inquiry-review-queue` — status + 기간 필터 + `created_at ASC` (오래된 순) | `(status, created_at)` | `ref` + 인덱스 순서로 정렬, filesort 없음 |
 | `normalized_key` 로 직전 분류 결과 조회 (2단 절감 경로의 2단) | `(normalized_key, created_at DESC)` | `ref`, 정렬까지 커버 |
+| 위 조회의 **1순위 — 사람이 확정한 것 우선** (`final_category IS NOT NULL`) | 같은 인덱스 + **서버 필터** ⚠️ | `ref` 후 필터. **측정 5 케이스** — AI 리뷰 지적 |
 | `GET /api/inquiries` — status 필터 + 기간 범위 + `received_at` 정렬 | `(status, received_at)` | `range`, 정렬까지 커버 |
 | 위 + `category` 필터 동시 사용 | `(status, current_category, received_at)` | category 는 등치라 선행 컬럼에 두면 뒤의 범위 + 정렬까지 커버 가능 |
 | 문의별 최신 분류 결과 | `(inquiry_id, created_at DESC)` | `ref` |
 | 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |
 
 > 측정 5 에서 위 예상이 맞는지 `EXPLAIN` 실측으로 확인하고, 틀렸으면 `evidence/` 에 기록한다.
+>
+> ⚠️ **`final_category IS NOT NULL` 은 인덱스로 걸리지 않는다 (AI 리뷰 지적).** 2단 절감 경로의 1순위 조회는 `(normalized_key, created_at DESC)` 로 행을 좁힌 뒤 이 조건을 **서버에서 필터**하므로, 같은 키의 판정 행이 쌓일수록 훑는 양이 늘어난다.
+> 그렇다고 지금 인덱스를 더 붙이지 않는다 — **이득을 측정으로 확인하기 전에 쓰기 비용을 얹지 않는다**(D-018 이 남긴 논거). 측정 5 에 이 쿼리의 `EXPLAIN` 을 케이스로 넣어 `rows` 가 실제로 문제 될 규모인지 먼저 본다. 키당 판정 행이 한 자릿수면 인덱스는 낭비다.
 >
 > **인덱스 컬럼의 갱신 빈도를 함께 보는 습관은 유지한다.** 근거였던 D-018 은 대상 컬럼(`occurrence_count`)이 사라져 폐기됐지만, 논거 자체는 살아 있다 — `inquiries` 는 INSERT 위주이고 UPDATE 는 판정 확정 시 1회뿐이라 지금은 트레이드오프가 성립하지 않을 뿐이다. **갱신 빈도가 높은 컬럼을 인덱스에 넣으려 할 때 D-018 을 다시 읽는다.**
 > 검토 큐에 `category` 필터가 없는 이유는 blind 규칙 — 아래 참조.
