@@ -21,7 +21,9 @@ stdout : permissionDecision=deny 인 경우에만 JSON. 통과면 아무것도 �
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
 
 # ── 1. 비밀 정보 (헌법 「작업 경계」 — commit 절대 금지) ──────────────
@@ -46,6 +48,40 @@ HARDCODED_SECRETS = [
 ]
 
 TX_ANNOTATION = re.compile(r"@Transactional\b")
+
+# ── Flyway 마이그레이션 (D-023 — forward-only) ───────────────────────
+MIGRATION_FILENAME = re.compile(r"(^|/)V(\d+)__[A-Za-z0-9_]+\.sql$")
+
+# git 을 못 쓸 때만 쓰는 최소 안전망. 여기 적힌 버전은 "확실히 적용됐다"고 아는 것만.
+# 평시에는 아래 is_committed() 가 판정하므로 V3·V4 가 생겨도 이 목록을 고칠 필요가 없다.
+FALLBACK_APPLIED_VERSIONS = {1, 2}
+
+
+def is_committed(path: str) -> "bool | None":
+    """이 파일이 git 에 커밋돼 있나. 판정 불가면 None.
+
+    **"적용됨"의 판정 기준을 커밋 여부로 둔다.** flyway_schema_history 를 직접 보는 편이
+    정확하지만 훅이 DB 에 붙어야 하고, DB 가 안 떠 있으면 검사가 통째로 죽는다.
+    커밋된 마이그레이션은 팀원 로컬·CI 볼륨에 이미 적용됐다고 봐야 안전한 쪽이다.
+
+    작성 중인 새 마이그레이션(아직 커밋 전)은 여러 번 고치는 것이 정상 작업이므로 통과시킨다 —
+    이 훅의 원칙이 "오탐이 거의 없을 것"이기 때문이다.
+    """
+    directory = os.path.dirname(path) or "."
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", path],
+            cwd=directory,
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:  # 추적되지 않는 파일 — 아직 커밋 전이다
+        return False
+    return None  # 128 등 — 레포 밖이거나 git 자체가 실패. 판정하지 않는다
 
 
 def deny(reason: str) -> None:
@@ -107,16 +143,32 @@ def main() -> None:
         )
 
     # ── 4. 적용된 마이그레이션 수정 (D-023) ──
-    # V1(구 도메인) · V2(도메인 전환, D-031) 둘 다 이미 적용된 상태다.
-    if re.search(r"V[12]__[A-Za-z0-9_]+\.sql$", path):
-        deny(
-            f"[D-023] 이미 적용된 마이그레이션을 수정하려 한다: {path}\n"
-            "Flyway 는 forward-only 이고 checksum 이 어긋나면 부팅이 실패한다 — "
-            "이미 적용한 팀원 로컬·CI 볼륨이 전부 깨진다. "
-            "스키마를 바꾸려면 `V3__*.sql` 을 새로 만든다.\n"
-            "V1 은 구 도메인(에러 분류) 스키마이고 V2 가 그것을 걷어낸다 (D-031). "
-            "둘 다 지우거나 합치지 않는다 — 이력을 앞으로만 남기기 위한 왕복이다."
-        )
+    # 버전 번호를 하드코딩하지 않는다 — 하드코딩하면 다음에 만들 V3 가 적용된 뒤에도
+    # 훅이 막아주지 않는다. 판정은 "커밋됐나"로 하고, git 을 못 쓸 때만 상수로 떨어진다.
+    migration = MIGRATION_FILENAME.search(path)
+    if migration:
+        version = int(migration.group(2))
+        committed = is_committed(path)
+        if committed is None:
+            print(
+                "[constitution-guard] git 판정에 실패해 상수 목록으로 대체한다 "
+                f"(V3 이상은 검사되지 않는다): {path}",
+                file=sys.stderr,
+            )
+            applied = version in FALLBACK_APPLIED_VERSIONS
+        else:
+            applied = committed
+
+        if applied:
+            deny(
+                f"[D-023] 이미 적용된 마이그레이션을 수정하려 한다: {path}\n"
+                "Flyway 는 forward-only 이고 checksum 이 어긋나면 부팅이 실패한다 — "
+                "이미 적용한 팀원 로컬·CI 볼륨이 전부 깨진다. "
+                f"스키마를 바꾸려면 V{version + 1} 이상을 새 파일로 만든다.\n"
+                "지난 버전을 지우거나 합치지도 않는다 — 만들었다 지우는 왕복이 생기더라도 "
+                "이력은 앞으로만 남긴다 (V1 → V2 도메인 전환이 그 예다).\n"
+                "커밋 전 작성 중인 마이그레이션은 이 검사에 걸리지 않는다."
+            )
 
     sys.exit(0)
 

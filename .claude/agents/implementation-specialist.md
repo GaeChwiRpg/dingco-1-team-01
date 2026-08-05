@@ -108,7 +108,8 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 
 ### 스키마 (D-023)
 
-- `ddl-auto: validate` 다. 엔티티에 필드를 더하면 **`V2__*.sql` 마이그레이션을 함께** 쓴다. 안 그러면 부팅이 실패한다 (의도된 동작이다)
+- `ddl-auto: validate` 다. 엔티티에 필드를 더하면 **마이그레이션을 함께** 쓴다. 안 그러면 부팅이 실패한다 (의도된 동작이다)
+- **V1·V2 는 이미 적용됐다. 고치지 말고 다음 번호로 새 파일을 만든다** (D-023, forward-only). 커밋된 마이그레이션을 편집하려 하면 훅이 차단한다
 - 후보 인덱스 분리(구 `V2__candidate_index.sql`)는 **D-031 으로 폐기**됐다 — 근거였던 D-018 의 대상 컬럼이 사라졌기 때문. `spring.flyway.target` 도 함께 제거됐다
 
 ---
