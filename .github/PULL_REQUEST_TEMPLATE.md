@@ -3,8 +3,13 @@ Week 9 팀 프로젝트 PR 본문 표준 (SoT).
 
 학생 개인 레포의 PR 형식과 다릅니다 (개인 = 미션 폴더 1개 + report.md / 팀 = 라이프사이클 단계 + 책임자 + AI 보조 흔적).
 
-자동 추론 규칙: team-pr-guard.yml 이 PR 본문에서 "라이프사이클 단계" / "검증" 키워드 존재를 검사합니다.
+자동 추론 규칙: team-pr-guard.yml 이 공통 항목을 검사하고, `대표 PAAR PR` 선택 시 아래 증거 항목을 추가 검사합니다.
 -->
+
+## PR 유형
+
+- [ ] 일반 PR
+- [ ] 대표 PAAR PR (`PAAR-CARDS.md` 의 본인 카드와 연결)
 
 ## 담당 기능
 
@@ -32,6 +37,23 @@ Week 9 팀 프로젝트 PR 본문 표준 (SoT).
 - (예: contract test 4건 통과 — `tests/...`)
 - (예: Playwright E2E 1 시나리오 — `tests/e2e/...`)
 
+## 대표 PAAR
+
+> `대표 PAAR PR` 일 때만 채우세요. Result는 같은 조건의 전후 변화 또는 불변식이어야 합니다.
+
+- PAAR card:
+- Problem:
+- Analyze option 1:
+- Analyze option 2:
+- Decision criteria:
+- Action owner:
+- Action PR link:
+- Action evidence link:
+- Baseline evidence:
+- Result (same condition/invariant):
+- Limitation:
+- Next action:
+
 ## API 변경
 
 - [ ] API 변경 없음
@@ -51,7 +73,10 @@ Week 9 팀 프로젝트 PR 본문 표준 (SoT).
 
 ## 체크리스트
 
+- [ ] `일반 PR` 또는 `대표 PAAR PR` 중 1개만 체크
 - [ ] 라이프사이클 단계 1개 이상 체크
 - [ ] 검증 근거 1개 이상 명시
+- [ ] 대표 PAAR PR 이라면 모든 PAAR 증거 항목 완료
+- [ ] 대표 PAAR Result를 CI/PR 수/테스트 개수 같은 활동량만으로 쓰지 않음
 - [ ] API 변경 시 `API-CONTRACT.md` 갱신
 - [ ] AI 보조 사용 시 hallucination 잡힌 사례가 있다면 `evidence/failure-cases.md` 에 추가
