@@ -330,7 +330,7 @@ evict : 없음. TTL 은 메모리 상한 목적으로만 사용. 정확성은 ev
 | 기획 | 김준현 | Jira MCP, AI PRD |
 | 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI |
 | 테스트 | 이용택 | Playwright MCP |
-| 리뷰 | 김은빈 | Claude GitHub Actions |
+| 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit |
 | 배포·운영 | 이용택 | Sentry MCP, Docker |
 
 인원 3명 / 단계 5개라 이용택이 2단계를 겸한다. **코딩은 전원 공동**이고, 코드 범위는 위 「모듈 간 계약」의 P1/P2/P3 로 나눈다.

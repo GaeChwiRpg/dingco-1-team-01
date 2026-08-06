@@ -1,0 +1,42 @@
+language: "ko-KR"
+tone_instructions: "팀 부트캠프 프로젝트 리뷰. 존중하는 말투, 실제 diff 코드를 인용해서 구체적으로."
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!**/build/**"
+    - "!**/node_modules/**"
+    - "!**/*.lock"
+    - "!**/gradle/wrapper/**"
+  path_instructions:
+    - path: "src/main/java/**/domain/**"
+      instructions: >
+        CLAUDE.md 불변 규칙을 확인한다: 엔티티에 setter 를 열지 않는다(의미 있는 메서드로만
+        상태 전이), Inquiry.status 는 사람만 UNCLASSIFIED→CLASSIFIED 전이시킨다,
+        InquiryClassificationResult.category 는 final_category 기록 시 덮어쓰지 않는다.
+    - path: "src/main/java/**/api/**"
+      instructions: >
+        도메인 객체를 그대로 응답으로 반환하지 않는지, GET /api/inquiry-review-queue 응답에
+        reason·confidence·threshold·category 필터가 새는지(blind 규칙 D-010) 확인한다.
+    - path: "src/main/java/**/service/**"
+      instructions: >
+        @Transactional 이 Controller 에 없는지, 단일 read 에 불필요하게 붙지 않았는지,
+        캐시 갱신이 커밋 후(AFTER_COMMIT)에 이루어지는지, 트랜잭션 ①(문의 접수)과
+        ②(분류 결과 저장)가 분리된 채로 남아 있는지(② 실패가 ① 을 롤백시키지 않는지 — D-031)
+        확인한다.
+        AI 응답 검증(D-034): confidence·category 값을 임계값 비교 전에 검증하는지, 범위를
+        벗어난 값을 clamp(예: 1.5 를 1.0 으로 자름)하지 않고 FAILED 로 처리하는지 확인한다.
+        캐시 덮어쓰기 방향(D-036): 사람이 확정한 답(source=HUMAN)을 AI 답이 덮어쓰지 않는지,
+        반대로 사람 답은 AI 답을 덮어쓰는지 확인한다.
+        예외 처리(D-030): catch 해서 로그만 찍고 끝내는 코드가 없는지, 재시도 끝에 최종
+        실패로 확정되는 지점에서 Sentry.captureException() 을 명시적으로 호출하는지 확인한다.
+
+chat:
+  auto_reply: true

@@ -11,10 +11,10 @@
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-049) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-054) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** / **D-054 로 CodeRabbit 병행 리뷰 도입** |
 | 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
-| 4. 리뷰 | 김은빈 | Claude GitHub Actions | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16 |
+| 4. 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md`, `.coderabbit.yaml` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16. ✅ CodeRabbit 은 D-054 로 병행 도입, `.coderabbit.yaml` 은 Inquiry 도메인 용어로 작성 완료, **GitHub App 설치 완료 — 현재 PR 마다 실제로 동작 중** |
 | 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md`·`SENTRY-GUIDE.md` 실측 기록 완료. 실제 `api/`·`service/` 트래픽 검증은 남음 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-020).
@@ -110,7 +110,7 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`(12절 + PAAR 한 장 요약 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-049)
+- 산출물: `PRD.md`(12절 + PAAR 한 장 요약 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-054)
 - 도구:
   - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
   - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
@@ -144,9 +144,9 @@
 
 ### 4. 리뷰
 
-- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **16건** 기록)
-- 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달
-- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조)
+- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **16건** 기록), `.coderabbit.yaml`
+- 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달 + **CodeRabbit** — 라인별 인라인 코멘트 · 정적분석 · 커밋 단위 증분 리뷰 (D-054, GitHub App 설치 완료로 현재 병행 동작 중)
+- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조). CodeRabbit 도입 초기라 `ai-review.yml` 과의 중복·고유 지적 비율은 아직 관측되지 않았다 — **`service/`·`api/` PR 이 열리면 두 도구의 지적을 각각 집계해 「중복 N건 / CodeRabbit 고유 N건 / ai-review 고유 N건」 형태로 `evidence/failure-cases.md` 에 기록한다.** D-054 의 핵심 판단 근거("겹치는 영역보다 못 잡는 영역이 더 크다")는 이 집계 전까지는 검증되지 않은 가설이다
 
 ### 5. 배포·운영
 
@@ -177,10 +177,10 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-042) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-054) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
 | 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.3** (PRD 와 어긋난 5건은 `api/` PR 에서 정정 — `INTEGRATION-LOG.md`) | 🔄 claude.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
 | 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 8건 + 단위 8건 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
-| 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건) | ✅ PR #1~#11 전원 자동 리뷰 동작 | ✅ |
+| 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건), .coderabbit.yaml | ✅ PR #1~#11 전원 자동 리뷰 동작 + **CodeRabbit GitHub App 설치 완료, 실제 코멘트 동작 확인됨**(Walkthrough·리뷰 코멘트) (D-054) | ✅ |
 | 운영 | ✅ docker-compose.yml, Dockerfile, .env.example, MONITORING.md, SENTRY-GUIDE.md | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료(`SENTRY-GUIDE.md`, PR #9) — 실 트래픽 0 | 🔄 |
 
 > **잔여 3건이 실제로 남은 작업이다** — ⓐ Jira MCP dry-run ⓑ `.claude/commands/` ⓒ e2e 시나리오 확장.
