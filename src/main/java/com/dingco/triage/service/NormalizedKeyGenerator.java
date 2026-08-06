@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
@@ -28,8 +29,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class NormalizedKeyGenerator {
 
-    /** 연속 공백·문장부호를 공백 하나로 접는다. 마스킹 토큰의 대괄호도 여기서 정리된다. */
-    private static final Pattern PUNCT_OR_SPACE = Pattern.compile("[\\p{Punct}\\s]+");
+    /**
+     * 연속 공백·문장부호를 공백 하나로 접는다.
+     *
+     * <p><b>유니코드 범주를 쓴다 (D-053).</b> {@code \p{Punct}}·{@code \s} 는 ASCII 만 잡아
+     * 전각 문장부호({@code ！} U+FF01)·전각 공백(U+3000)·비단절 공백(U+00A0) 이 남는다. 그러면
+     * 전각으로 쓴 문의와 반각으로 쓴 같은 문의가 다른 키가 되는 <b>과소 병합</b>이 생긴다(실측
+     * 확인). {@code \p{P}}(모든 유니코드 문장부호)·{@code \p{Z}}(모든 유니코드 구분자)로 접는다.
+     */
+    private static final Pattern PUNCT_OR_SPACE = Pattern.compile("[\\p{P}\\p{Z}\\s]+");
 
     private final ContentMasker contentMasker;
 
@@ -40,18 +48,24 @@ public class NormalizedKeyGenerator {
     /**
      * 본문에서 64자 조회 키를 만든다.
      *
-     * <p>순서: 소문자화 → <b>마스킹</b> → 연속 공백·문장부호 정리 → SHA-256 hex.
+     * <p>순서: 소문자화 → <b>키 마스킹</b> → 연속 공백·문장부호 정리 → SHA-256 hex.
      *
      * <p><b>마스킹을 문장부호 정리보다 먼저 하는 이유</b> — 마스킹 규칙은 주문번호·전화의
      * 하이픈을 구분자로 쓴다. 문장부호를 먼저 지우면 하이픈이 사라져 마스킹이 개인정보를 못
      * 잡는다. 그래서 개인정보를 먼저 가린 뒤에 남은 문장부호를 정리한다.
      *
-     * @param content 원문. {@code null} 이면 {@link NullPointerException}
+     * <p><b>{@code maskForKey} 를 쓰는 이유 (D-053)</b> — 표시용 {@code [주문번호]} 토큰은
+     * 문장부호 정리에서 대괄호를 잃고 {@code 주문번호} 가 되어, "주문번호"라고만 쓴 문의와 같은
+     * 키가 되는 과도 병합을 만든다. 키 경로는 자연어와 겹치지 않는 키 전용 토큰을 쓴다.
+     *
+     * @param content 원문. {@code null} 이면 {@link NullPointerException}(접수 경로가 상류에서
+     *     non-null 을 보장하므로 여기서는 계약 위반으로 본다)
      * @return 소문자 hex 64자. 같은 내용이면 항상 같은 값
      */
     public String generate(String content) {
+        Objects.requireNonNull(content, "content");
         String lowered = content.toLowerCase(Locale.ROOT);
-        String masked = contentMasker.mask(lowered);
+        String masked = contentMasker.maskForKey(lowered);
         String collapsed = PUNCT_OR_SPACE.matcher(masked).replaceAll(" ").trim();
         return sha256Hex(collapsed);
     }

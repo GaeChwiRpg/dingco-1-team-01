@@ -72,4 +72,43 @@ class NormalizedKeyGeneratorTest {
                 .as("서로 다른 문의가 같은 키가 되면 틀린 분류가 조용히 재사용된다 — 가장 위험한 실패")
                 .isNotEqualTo(generator.generate(delivery));
     }
+
+    @Test
+    @DisplayName("과도 병합 방지 — 마스킹 토큰이 자연어 낱말과 충돌하지 않는다 (D-053, Claude 리뷰)")
+    void maskTokenDoesNotCollideWithLiteralWord() {
+        // A: 실제 주문번호가 든 문의, B: 고객이 '주문번호'라는 낱말만 두 번 쓴 문의.
+        // 표시용 [주문번호] 토큰을 키에 그대로 쓰면 대괄호가 지워져 둘이 같은 키가 됐었다.
+        String withOrderNo = "환불해주세요 주문번호 20260801-773412";
+        String literalWord = "환불해주세요 주문번호 주문번호";
+
+        assertThat(generator.generate(withOrderNo))
+                .as("마스킹 토큰이 자연어로 뭉개지면 실제 주문번호 문의와 '주문번호' 낱말 문의가 "
+                        + "같은 키가 되어 과도 병합된다 — 가장 위험한 방향")
+                .isNotEqualTo(generator.generate(literalWord));
+    }
+
+    @Test
+    @DisplayName("과소 병합 방지 — 전각 문장부호·유니코드 공백도 접힌다 (D-053, CodeRabbit 리뷰)")
+    void foldsFullwidthPunctuationAndUnicodeSpace() {
+        // \p{Punct}·\s 는 ASCII 만 잡아 전각 문장부호·전각 공백이 남았다 → 같은 문의가 다른 키.
+        String ascii = "주문 상태 알려주세요!";
+        String fullwidthPunct = "주문 상태 알려주세요！";      // U+FF01
+        String ideographicSpace = "주문　상태　알려주세요!"; // U+3000 전각 공백
+
+        String key = generator.generate(ascii);
+        assertThat(generator.generate(fullwidthPunct))
+                .as("전각 느낌표(U+FF01)만 다른 같은 문의는 같은 키여야 한다")
+                .isEqualTo(key);
+        assertThat(generator.generate(ideographicSpace))
+                .as("전각 공백(U+3000)으로 띄운 같은 문의는 같은 키여야 한다")
+                .isEqualTo(key);
+    }
+
+    @Test
+    @DisplayName("null 원문은 명확한 메시지로 거부한다 — 접수 경로 계약 위반")
+    void rejectsNullContent() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> generator.generate(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("content");
+    }
 }
