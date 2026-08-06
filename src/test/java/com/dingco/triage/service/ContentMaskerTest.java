@@ -136,4 +136,24 @@ class ContentMaskerTest {
         assertThat(masker.mask(null)).isNull();
         assertThat(masker.mask("")).isEmpty();
     }
+
+    @Test
+    @DisplayName("maskForKey 는 입력의 예약 마커(U+E000)를 먼저 지운다 — 키 토큰 위조 차단 (D-053)")
+    void maskForKeyStripsReservedMarkerFromInput() {
+        // 실제 주문번호가 만드는 키 토큰(\uE000ORDER\uE000)을 입력에 그대로 붙여넣어도,
+        // maskForKey 가 마커를 먼저 지우므로 그 토큰을 재현할 수 없다.
+        // ⚠ 이 검사는 소문자화가 끼지 않는 maskForKey 수준이라 strip 을 실제로 지킨다 —
+        //    generate 수준(소문자화)에서는 대소문자 차이가 strip 결함을 가려 회귀를 못 잡는다.
+        String tokenFromOrder = masker.maskForKey("20260801-773412");
+        String literalAttempt = masker.maskForKey("\uE000ORDER\uE000");
+
+        assertThat(tokenFromOrder)
+                .as("실제 주문번호는 마커로 감싼 키 토큰을 만든다")
+                .contains("\uE000");
+        assertThat(literalAttempt)
+                .as("입력에 붙인 마커는 지워지므로 위조 토큰이 실제 토큰과 같아질 수 없다 — "
+                        + "maskForKey 의 마커 선제거를 없애면 이 단언이 깨진다")
+                .doesNotContain("\uE000")
+                .isNotEqualTo(tokenFromOrder);
+    }
 }

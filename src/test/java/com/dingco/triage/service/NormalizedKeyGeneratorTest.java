@@ -100,18 +100,6 @@ class NormalizedKeyGeneratorTest {
                 .isNotEqualTo(generator.generate(literalToken));
     }
 
-    @Test
-    @DisplayName("선점 공격 차단 — 예약 마커(U+E000)를 직접 넣어도 키 토큰을 위조할 수 없다 (D-053)")
-    void reservedMarkerInInputCannotForgeKeyToken() {
-        // 입력에 마커를 붙여넣어 키 토큰을 흉내 내려는 시도. maskForKey 가 마커를 먼저 지우므로
-        // 실제 주문번호가 만든 키와 절대 같아지지 않는다(단사).
-        String withOrderNo = "환불해주세요 20260801-773412";
-        String forged = "환불해주세요 ORDER";
-
-        assertThat(generator.generate(withOrderNo))
-                .as("마커를 직접 입력해도 마스킹이 만든 키 토큰과 겹치면 안 된다 — 단사 보장")
-                .isNotEqualTo(generator.generate(forged));
-    }
 
     @Test
     @DisplayName("대문자 입력도 같은 키로 접힌다 — 키 토큰 구별이 대소문자에 의존하지 않는다 (D-053, Claude 리뷰)")
