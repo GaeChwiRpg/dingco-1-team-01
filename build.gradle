@@ -27,6 +27,7 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
@@ -43,8 +44,10 @@ dependencies {
     implementation 'org.flywaydb:flyway-mysql'
     runtimeOnly 'com.mysql:mysql-connector-j'
 
-    // AI SDK 는 여기에 없다 — AI 호출은 P2 범위이고, 프로바이더가 문서 간에 어긋나 있어
-    // (D-003/PRD 는 OpenAI, API-CONTRACT §3 예시는 claude-sonnet-5) baseline 이 선점하지 않는다.
+    // AI SDK — D-024 로 Anthropic 확정. baseline 이 보류했던 사유("프로바이더가 문서 간에
+    // 어긋나 있다")가 소멸했으므로 이제 넣는다. 버전은 D-024 확정값.
+    // 키는 ANTHROPIC_API_KEY 환경변수로만 주입한다 — 코드/설정 파일 하드코딩 금지.
+    implementation 'com.anthropic:anthropic-java:2.34.0'
 
     // 배포·운영 단계 산출물 — Sentry. 버전은 Maven Central maven-metadata.xml 실측 확인
     // (2026-08-04, latest=8.51.0). SENTRY_DSN 이 비어 있으면 SDK 는 이벤트를 전송하지
@@ -52,6 +55,7 @@ dependencies {
     implementation 'io.sentry:sentry-spring-boot-starter-jakarta:8.51.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
     // 측정 5(EXPLAIN)·7(동시성)이 의미를 가지려면 테스트 DB 가 운영과 같은 엔진이어야 한다.
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:mysql'
