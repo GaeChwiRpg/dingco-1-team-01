@@ -102,6 +102,6 @@ public class GlobalExceptionHandler {
         // 내부 메시지(ex.getMessage())를 응답에 담지 않는다 — 서버 구조가 새는 자리다.
         log.error("처리되지 않은 예외", ex);
         Sentry.captureException(ex);
-        return ErrorResponse.of("INTERNAL_ERROR", "서버 오류가 발생했습니다.");
+        return ErrorResponse.of(ErrorCode.INTERNAL_ERROR.name(), "서버 오류가 발생했습니다.");
     }
 }

@@ -1,5 +1,7 @@
 package com.dingco.triage.config;
 
+import com.dingco.triage.api.dto.ErrorResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,12 +28,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * {@link HeaderAuthenticationFilter} 다 (TRI-25). 이 파일은 그 인증 정보를 가지고
  * endpoint 별로 어느 역할이 들어올 수 있는지 정한다 (TRI-26, API-CONTRACT.md 공통 규약).
  *
- * <p><b>401/403 응답 형식은 임시다.</b> 정식 오류 응답 DTO·공용 예외 처리 지점
- * ({@code api/GlobalExceptionHandler}, TRI-28·TRI-29) 이 아직 없어서, 이 파일 안에서
- * {@code {code, message}} 모양만 직접 맞춰 내보낸다. Security 필터 단계에서 던져지는
- * 인증/인가 예외는 애초에 {@code @RestControllerAdvice} 로 못 잡는다(디스패치 이전 단계라서) —
- * 그래서 이 자리가 필요하다. TRI-28 이 공용 오류 DTO 를 만들면 문자열 조립 대신 그걸 쓰도록
- * 바꾼다.
+ * <p>401/403은 컨트롤러가 실행되기도 전에(보안 필터 단계에서) 터지므로 {@code GlobalExceptionHandler}
+ * (TRI-28·TRI-29)가 못 잡는다 — 그래서 이 파일 안에 오류 응답을 만드는 코드가 따로 있다. 모양은
+ * 같은 {@link ErrorResponse} 를 쓰고, {@link ObjectMapper} 로 만든다(문자열을 직접 이어붙이면
+ * message 안에 큰따옴표가 섞였을 때 JSON이 깨진다).
  *
  * <p><b>역할 검사는 endpoint 접근까지만 막는다.</b> "내 문의만 보이게" 좁히는 것은
  * {@code service/} 에서 따로 건다 (D-038) — 여기서 다 됐다고 착각하면 안 된다.
@@ -50,8 +50,9 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(new HeaderAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
-                // API-CONTRACT.md 공통 규약 매핑표 그대로. 매니저가 상담원 endpoint 에 들어가는
-                // 경우처럼 표에 없는 상위 호환은 만들지 않는다 — 3역할은 계층이 아니라 분리다.
+                // API-CONTRACT.md 공통 규약 매핑표 그대로. 「접근 범위」 열은 역할별 상한이 아니라
+                // 누적이다 — AGENT 는 CUSTOMER 읽기 범위(전체 문의 조회)까지, MANAGER 는 AGENT 범위
+                // (검토 큐)까지 포함한다. hasRole() 로 역할마다 딱 맞게 막으면 이 누적이 깨진다.
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health").permitAll()
                         // 컨트롤러가 없는 경로로 요청이 오면(아직 미착수인 endpoint 포함) 서블릿이
@@ -59,9 +60,13 @@ public class SecurityConfig {
                         // 여기 없으면 anyRequest().authenticated() 에 걸려 "404 여야 할 응답"이
                         // 401 로 가려진다 (실제 재현: MANAGER 로 허용된 요청도 컨트롤러가 없으면 401).
                         .requestMatchers("/error").permitAll()
+                        // 문의 접수는 고객만 — 상담원/매니저가 고객 대신 접수하는 흐름은 계약에 없다.
                         .requestMatchers(HttpMethod.POST, "/api/inquiries").hasRole("CUSTOMER")
-                        .requestMatchers(HttpMethod.GET, "/api/inquiries", "/api/inquiries/**").hasRole("CUSTOMER")
-                        .requestMatchers("/api/inquiry-review-queue", "/api/inquiry-review-queue/**").hasRole("AGENT")
+                        // 조회는 누적: 고객(자기 문의만 — service/ 에서 D-038 로 좁힘) + 상담원(전체) + 매니저.
+                        .requestMatchers(HttpMethod.GET, "/api/inquiries", "/api/inquiries/**")
+                        .hasAnyRole("CUSTOMER", "AGENT", "MANAGER")
+                        .requestMatchers("/api/inquiry-review-queue", "/api/inquiry-review-queue/**")
+                        .hasAnyRole("AGENT", "MANAGER")
                         .requestMatchers("/api/stats", "/api/policies").hasRole("MANAGER")
                         .anyRequest().authenticated())
                 // 인증 없음(401) · 권한 부족(403) 을 공용 응답 형식으로 — 위 javadoc 「응답 형식은 임시다」 참조.
@@ -73,12 +78,14 @@ public class SecurityConfig {
                 .build();
     }
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private static void writeError(HttpServletResponse response, int status, String code, String message) throws IOException {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         // setContentType 뒤에 호출해야 한다 — 반대 순서면 setContentType 이 인코딩을 다시 덮어쓴다.
         // 한글 message 가 getWriter() 기본 인코딩(ISO-8859-1)으로 깨지는 걸 실제로 재현해서 확인했다.
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.getWriter().write("{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}");
+        response.getWriter().write(OBJECT_MAPPER.writeValueAsString(ErrorResponse.of(code, message)));
     }
 }

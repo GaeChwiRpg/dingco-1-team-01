@@ -39,8 +39,12 @@ class SecurityConfigTest {
         "/api/inquiries,                      POST,  AGENT,    403",
         "/api/inquiries,                      POST,  NONE,     401",
         "/api/inquiries,                      GET,   CUSTOMER, 200",
+        // 접근 범위는 누적이다 — 상담원·매니저도 전체 문의 조회가 열려 있다.
+        "/api/inquiries,                      GET,   AGENT,    200",
+        "/api/inquiries,                      GET,   MANAGER,  200",
         "/api/inquiries/1,                    GET,   CUSTOMER, 200",
         "/api/inquiry-review-queue,           GET,   AGENT,    200",
+        "/api/inquiry-review-queue,           GET,   MANAGER,  200",
         "/api/inquiry-review-queue,           GET,   CUSTOMER, 403",
         "/api/inquiry-review-queue/1,         PATCH, AGENT,    200",
         "/api/stats,                          GET,   MANAGER,  200",
