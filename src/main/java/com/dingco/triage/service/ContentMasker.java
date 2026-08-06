@@ -41,8 +41,20 @@ public class ContentMasker {
     /** 금액: {@code 43000원} · {@code 35,000원}. 천 단위 콤마 허용. */
     private static final Pattern AMOUNT = Pattern.compile("[0-9][0-9,]*원");
 
-    /** 날짜: {@code 2026-08-31} · {@code 2026-08}(연-월). 일은 선택. */
-    private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}(?:-\\d{2})?");
+    /**
+     * 날짜(ISO 하이픈): {@code 2026-08-31} · {@code 2026-8-31} · {@code 2026-08}(연-월).
+     * 월·일은 1~2자리 모두 허용하고 일은 선택. 구분자 {@code .} 는 <b>일부러 넣지 않는다</b> —
+     * {@code 12000.50} 같은 소수·가격을 날짜로 오인해 과잉 마스킹하기 때문이다(실측 확인).
+     */
+    private static final Pattern DATE_ISO = Pattern.compile("\\d{4}-\\d{1,2}(?:-\\d{1,2})?");
+
+    /**
+     * 날짜(한국어 년월일): {@code 2026년 8월 30일} · {@code 2026년 8월}. 공백은 있어도 없어도
+     * 되고 일은 선택. {@code 년·월·일} 글자가 앵커라 {@code 3개월}·{@code 8월} 같은 표현을
+     * 날짜로 오인하지 않는다.
+     */
+    private static final Pattern DATE_KO =
+            Pattern.compile("\\d{4}년\\s?\\d{1,2}월(?:\\s?\\d{1,2}일)?");
 
     private static final String ORDER_TOKEN = "[주문번호]";
     private static final String CONTACT_TOKEN = "[연락처]";
@@ -53,7 +65,7 @@ public class ContentMasker {
      * 본문에서 주문번호·연락처·금액·날짜를 고정 토큰으로 가린다.
      *
      * <p><b>가리는 순서가 load-bearing 이다.</b> 주문번호({@code \d{8}-\d{6}})와 전화
-     * ({@code 010-2345-6789})는 둘 다 하이픈을 품는다. 날짜 규칙({@code \d{4}-\d{2}})을 먼저
+     * ({@code 010-2345-6789})는 둘 다 하이픈을 품는다. 날짜 규칙({@code \d{4}-\d{1,2}})을 먼저
      * 돌리면 {@code 20260802-556781} 안의 {@code 0802-55} 나 전화 안의 {@code 2345-67} 을
      * 날짜로 오인해 갉아먹는다. 그래서 <b>주문번호·전화를 날짜보다 먼저</b> 가린다. 가린 뒤의
      * 토큰은 숫자·하이픈이 없어 뒤 규칙이 건드리지 못한다.
@@ -71,7 +83,8 @@ public class ContentMasker {
         masked = ORDER_NO.matcher(masked).replaceAll(ORDER_TOKEN);
         masked = PHONE.matcher(masked).replaceAll(CONTACT_TOKEN);
         masked = AMOUNT.matcher(masked).replaceAll(AMOUNT_TOKEN);
-        masked = DATE.matcher(masked).replaceAll(DATE_TOKEN);
+        masked = DATE_ISO.matcher(masked).replaceAll(DATE_TOKEN);
+        masked = DATE_KO.matcher(masked).replaceAll(DATE_TOKEN);
         return masked;
     }
 }

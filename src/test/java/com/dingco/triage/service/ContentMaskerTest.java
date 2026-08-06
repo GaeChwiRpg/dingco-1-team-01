@@ -70,6 +70,44 @@ class ContentMaskerTest {
     }
 
     @Test
+    @DisplayName("월·일이 1자리인 하이픈 날짜도 가려진다 — 2026-8-31")
+    void masksSingleDigitMonthDay() {
+        assertThat(masker.mask("2026-8-31 까지 처리해주세요"))
+                .doesNotContain("2026-8-31")
+                .contains("[날짜]");
+    }
+
+    @Test
+    @DisplayName("한국어 년월일 표현이 가려진다 — 2026년 8월 30일 · 2026년 8월")
+    void masksKoreanDate() {
+        assertThat(masker.mask("2026년 8월 30일에 주문했어요"))
+                .doesNotContain("2026년 8월 30일")
+                .contains("[날짜]");
+        assertThat(masker.mask("2026년 8월 중에 들어오나요?"))
+                .doesNotContain("2026년 8월")
+                .contains("[날짜]");
+    }
+
+    @Test
+    @DisplayName("월/일만 있는 표현은 날짜로 오인하지 않는다 — 3개월·8월·12일")
+    void doesNotMaskBareMonthOrDay() {
+        // 년/월/일 규칙은 4자리 연도를 앵커로 요구한다. 이게 없으면 3개월·8월 같은
+        // 흔한 표현이 통째로 [날짜]로 가려져 상담원이 문맥을 잃는다(과잉 마스킹 방지).
+        assertThat(masker.mask("3개월 뒤에 8월에 다시 살게요")).doesNotContain("[날짜]");
+    }
+
+    @Test
+    @DisplayName("점(.) 구분자 날짜는 일부러 가리지 않는다 — 소수·가격 오탐을 막기 위함")
+    void leavesDotSeparatedNumbersUnmaskedByDesign() {
+        // 12000.50 같은 소수·가격을 날짜로 오인하지 않도록 '.' 구분자는 규칙에서 뺐다.
+        // 그 대가로 2026.08.31 표기는 현재 못 가린다 — 이 한계를 테스트로 명시해둔다.
+        // '.' 을 넣으려면 월/일 범위 제약을 함께 설계해야 한다(마스킹 강도 재평가, D-031).
+        assertThat(masker.mask("결제 금액 12000.50 확인"))
+                .as("소수는 날짜가 아니다 — 과잉 마스킹하지 않는다")
+                .doesNotContain("[날짜]");
+    }
+
+    @Test
     @DisplayName("날짜 규칙이 주문번호·전화의 하이픈을 갉아먹지 않는다 — 가리는 순서가 지켜진다")
     void dateRuleDoesNotCorruptOrderOrPhone() {
         // 20260802-556781 안의 '0802-55', 010-2345-6789 안의 '2345-67' 이 날짜로
