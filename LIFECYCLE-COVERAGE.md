@@ -12,7 +12,7 @@
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
 | 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-054) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** / **D-054 로 CodeRabbit 병행 리뷰 도입** |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). `service/`·`api/` 미착수, `.claude/commands/` 미작성 |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). **`config/` 완료(TRI-25/26, 2026-08-06)** — 헤더 인증 필터 + endpoint 별 역할 매핑, 도커 실증 검증 완료. **`api/` 착수(TRI-27~30)** — 공용 예외 처리 지점(`GlobalExceptionHandler`) + 오류 DTO(`ErrorResponse`/`ErrorCode`) + Sentry 500 배선, 응답 6종(400/401/403/404/409/500) 전수 실측 — 테스트 53건 통과. `service/` 미착수, `.claude/commands/` 미작성 |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md`, `.coderabbit.yaml` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16. ✅ CodeRabbit 은 D-054 로 병행 도입, `.coderabbit.yaml` 은 Inquiry 도메인 용어로 작성 완료, **GitHub App 설치 완료 — 현재 PR 마다 실제로 동작 중** |
 | 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md`·`SENTRY-GUIDE.md` 실측 기록 완료. 실제 `api/`·`service/` 트래픽 검증은 남음 |
