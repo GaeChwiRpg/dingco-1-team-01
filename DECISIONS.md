@@ -1441,4 +1441,22 @@
 - **영향**: `PROJECT-BRIEF.md` 머리에 역할·갱신 규칙 블록. `ONBOARDING.md` 문서 지도. `PRD.md` §1-1 에 역방향 링크 1줄. **코드·스키마 변경 없음**
 - **재평가**: Week 10 발표 후 브리프가 실제로 낡아 있었다면 **원인이 ⓑ 위반인지 ⓒ 위반인지 구분해 적는다.** ⓑ 위반(브리프에 먼저 쓴 것)이면 규칙이 안 지켜진 것이고, ⓒ 위반(갱신 시점을 놓친 것)이면 시점 정의가 틀린 것이라 대응이 다르다
 
-<!-- 다음 결정 추가 시 D-051 부터 -->
+### D-051. 리뷰 단계에 CodeRabbit 을 두 번째 AI 리뷰 도구로 추가 — `ai-review.yml` 이 놓치는 지점 보강
+
+- **일자**: 2026-08-05
+- **상태**: 채택
+- **배경**: 리뷰 단계는 `ai-review.yml`(Claude, GitHub Actions 커스텀 스크립트)로 이미 동작 중이다(PR #1~#11, `evidence/failure-cases.md` 16건 기록). 다만 이 워크플로우는 구조적 한계가 있다 — (1) diff 전체를 텍스트로 모델에 보내 PR 전체에 **댓글 1개**로만 응답하고 라인 단위 인라인 코멘트가 없다, (2) LLM 추론에만 의존해 실제 정적분석 도구(린터류) 없이 코드를 본다, (3) push 마다 diff 를 처음부터 다시 보내 **커밋 단위 증분 리뷰가 없다**, (4) 댓글에 대화형으로 후속 질문·수정 요청이 불가능하다(1회성 서술). CodeRabbit 은 이 네 가지를 상호 보완한다 — 라인별 인라인 코멘트(커밋 가능한 suggested diff), 정적분석 도구 병행, 커밋 단위 증분 리뷰, 댓글 스레드 대화, 경로별 커스텀 규칙(`path_instructions`)까지 제공한다.
+- **선택지**:
+  1. `ai-review.yml` 유지, 추가 도구 없음 — 중복 코멘트 노이즈가 없다. 다만 위 네 가지 갭은 그대로 남는다
+  2. `ai-review.yml` 을 CodeRabbit 으로 **교체** — 부트캠프 채점 기준(요구사항 충족도/구조·가독성/기술 포인트/검증 근거/설명력)에 맞춘 커스텀 프롬프트와 팀 소유 Anthropic 키 통제를 포기해야 한다
+  3. **둘 다 병행** — PR 마다 리뷰 코멘트가 2개씩 달리는 노이즈가 생기지만, 두 도구가 잡는 지점이 겹치지 않는다
+- **결정**: 3번. `ai-review.yml` 은 설계·계약 수준 결함(D-010, D-012, D-016, D-021 등 실제 사례)에 강했고, CodeRabbit 은 라인 단위 실수(정적분석형 결함)와 커밋 단위 대화형 수정에 강점이 있어 겹치는 영역보다 서로 못 잡는 영역이 더 크다고 판단했다.
+- **영향**:
+  - `.coderabbit.yaml` 추가 — 리뷰 언어 한국어, `domain/`·`api/`·`service/` 경로별로 CLAUDE.md 핵심 불변 규칙(setter 금지, blind 규칙 D-010, `@Transactional` 위치) 체크 지시 포함
+  - `path_instructions` 는 D-031 도메인 전환 이후 기준(`Inquiry`/`InquiryClassificationResult`/`InquiryReviewQueueItem`, `GET /api/inquiry-review-queue`)으로 작성했다 — 최초 초안이 전환 이전 용어(`ErrorGroup`/`ClassificationResult`/`GET /api/review-queue`)를 썼던 것을 같은 날 바로잡았다
+  - GitHub App 설치 **완료** — 리포지토리 access 는 이 레포로 한정(조직 전체 아님). 설치 이후 PR 부터 `.coderabbit.yaml` 기준으로 리뷰가 실제 동작한다
+  - `CLAUDE.md` 「라이프사이클 단계 책임자」 표의 리뷰 도구 칸에 CodeRabbit 추가
+  - `path_instructions` 의 `service/` 항목에 D-034(AI 응답 검증 순서·clamp 금지)·D-036(캐시 덮어쓰기 방향)·D-030(Sentry 캡처) 체크 지시 추가 — `service/` 착수 전에 세부 규칙을 먼저 걸어둔다
+- **재평가**: 도메인이 다시 바뀌거나 엔티티·엔드포인트 이름이 리네이밍되면 `path_instructions` 도 함께 갱신한다. 실제 PR에서 CodeRabbit 이 `ai-review.yml` 과 중복되는 지적만 반복하고 고유 가치가 관측되지 않으면 도구를 하나로 축소한다.
+
+<!-- 다음 결정 추가 시 D-052 부터 -->
