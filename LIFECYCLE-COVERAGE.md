@@ -145,7 +145,7 @@
 
 - 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **16건** 기록), `.coderabbit.yaml`
 - 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달 + **CodeRabbit** — 라인별 인라인 코멘트 · 정적분석 · 커밋 단위 증분 리뷰 (D-051, GitHub App 설치 완료로 현재 병행 동작 중)
-- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조). CodeRabbit 도입 초기라 `ai-review.yml` 과의 중복·고유 지적 비율은 아직 관측되지 않았다
+- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조). CodeRabbit 도입 초기라 `ai-review.yml` 과의 중복·고유 지적 비율은 아직 관측되지 않았다 — **`service/`·`api/` PR 이 열리면 두 도구의 지적을 각각 집계해 「중복 N건 / CodeRabbit 고유 N건 / ai-review 고유 N건」 형태로 `evidence/failure-cases.md` 에 기록한다.** D-051 의 핵심 판단 근거("겹치는 영역보다 못 잡는 영역이 더 크다")는 이 집계 전까지는 검증되지 않은 가설이다
 
 ### 5. 배포·운영
 

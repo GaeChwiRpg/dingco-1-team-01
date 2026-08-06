@@ -1457,6 +1457,8 @@
   - GitHub App 설치 **완료** — 리포지토리 access 는 이 레포로 한정(조직 전체 아님). 설치 이후 PR 부터 `.coderabbit.yaml` 기준으로 리뷰가 실제 동작한다
   - `CLAUDE.md` 「라이프사이클 단계 책임자」 표의 리뷰 도구 칸에 CodeRabbit 추가
   - `path_instructions` 의 `service/` 항목에 D-034(AI 응답 검증 순서·clamp 금지)·D-036(캐시 덮어쓰기 방향)·D-030(Sentry 캡처) 체크 지시 추가 — `service/` 착수 전에 세부 규칙을 먼저 걸어둔다
-- **재평가**: 도메인이 다시 바뀌거나 엔티티·엔드포인트 이름이 리네이밍되면 `path_instructions` 도 함께 갱신한다. 실제 PR에서 CodeRabbit 이 `ai-review.yml` 과 중복되는 지적만 반복하고 고유 가치가 관측되지 않으면 도구를 하나로 축소한다.
+  - `reviews.profile: "chill"` (`assertive` 대신) 선택 — 이미 `ai-review.yml` 이 설계·계약 수준 결함을 훑고 있어, CodeRabbit 까지 `assertive` 로 두면 PR 마다 코멘트가 나노 단위 지적으로 늘어나 "코멘트 2개" 노이즈가 더 커진다. `chill` 로 유의미한 지적만 남겨 두 도구의 병행 비용을 억제한다
+  - **검증 예정**: `service/`·`api/` PR 이 열려 CodeRabbit 이 실제 코멘트를 달면 해당 PR 링크·코멘트 캡처를 `evidence/` 에 추가하고 여기 링크를 남긴다 — 지금까지는 "설치 완료·병행 동작 중"이 설정 완료 사실일 뿐, 실제 코멘트 결과물로 검증되지는 않았다
+- **재평가**: 도메인이 다시 바뀌거나 엔티티·엔드포인트 이름이 리네이밍되면 `path_instructions` 도 함께 갱신한다. 실제 PR에서 CodeRabbit 이 `ai-review.yml` 과 중복되는 지적만 반복하고 고유 가치가 관측되지 않으면 도구를 하나로 축소한다. **판단은 위 중복/고유 집계가 나온 뒤에 내린다** — 지금은 가설 단계다.
 
 <!-- 다음 결정 추가 시 D-052 부터 -->
