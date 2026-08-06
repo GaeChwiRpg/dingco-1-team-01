@@ -65,16 +65,25 @@ public class ContentMasker {
     private static final String DATE_TOKEN = "[날짜]";
 
     /**
-     * 정규화 키 전용 토큰 (D-053). 표시용 {@code [주문번호]} 를 그대로 쓰면 키 생성 단계의
-     * 문장부호 정리에서 대괄호가 지워져 {@code 주문번호} 가 되고, 고객이 "주문번호"라고만 쓴
-     * 문의와 <b>같은 키가 되는 과도 병합</b>이 생긴다(실측 확인). 그래서 키 경로는 자연어와
-     * 겹치지 않는 영문 센티넬을 쓴다. {@code NormalizedKeyGenerator} 가 소문자화 후 부르므로
-     * 소문자로 둔다. 이 토큰은 절대 밖으로 나가지 않는다 — 해시 입력으로만 쓰인다.
+     * 키 토큰을 감싸는 <b>예약 마커</b> — Private Use Area U+E000 (D-053).
+     *
+     * <p>사용자가 타이핑할 일이 없고, 정리 단계 정규식({@code [\p{P}\p{Z}\s]+})의 어느 범주에도
+     * 안 들어가 해시 입력까지 살아남는다. {@link #maskForKey} 가 입력에서 이 문자를 <b>먼저
+     * 제거</b>하므로, 마커로 감싼 키 토큰은 <b>오직 이 클래스의 마스킹만 만들 수 있다(단사)</b> —
+     * 어떤 자연어 입력도 키 토큰과 겹칠 수 없다.
      */
-    private static final String KEY_ORDER = " ordertoken ";
-    private static final String KEY_CONTACT = " contacttoken ";
-    private static final String KEY_AMOUNT = " amounttoken ";
-    private static final String KEY_DATE = " datetoken ";
+    private static final char KEY_MARK = '\uE000';
+
+    /**
+     * 정규화 키 전용 토큰 (D-053). 표시용 {@code [주문번호]} 를 키에 그대로 쓰면 정리 단계에서
+     * 대괄호가 지워져 {@code 주문번호} 가 되고, 고객이 "주문번호"라고만 쓴 문의와 <b>같은 키가
+     * 되는 과도 병합</b>이 생겼다(실측 확인). 예약 마커로 감싸 그 충돌을 구조적으로 없앤다.
+     * 이 토큰은 절대 밖으로 나가지 않는다 — 해시 입력으로만 쓰인다.
+     */
+    private static final String KEY_ORDER = KEY_MARK + "ORDER" + KEY_MARK;
+    private static final String KEY_CONTACT = KEY_MARK + "CONTACT" + KEY_MARK;
+    private static final String KEY_AMOUNT = KEY_MARK + "AMOUNT" + KEY_MARK;
+    private static final String KEY_DATE = KEY_MARK + "DATE" + KEY_MARK;
 
     /**
      * 탐지 규칙 <b>한 벌</b>. 순서가 load-bearing 이라 리스트 순서가 곧 적용 순서다.
@@ -115,11 +124,23 @@ public class ContentMasker {
      * 쓰되, 자연어와 겹치지 않는 키 토큰으로 바꾼다. 표시/AI 경로가 아니라 해시 입력에만 쓰이므로
      * 토큰이 달라도 D-040(두 출력 경로가 같은 구현) 을 깨지 않는다 — 키는 세 번째 용도다.
      *
+     * <p><b>단사(injective) 보장</b> — 마스킹 전에 입력에서 {@link #KEY_MARK} 를 먼저 제거한다.
+     * 그러면 마커로 감싼 키 토큰은 이 마스킹만 만들 수 있어, 어떤 자연어 입력도(심지어 마커를
+     * 직접 붙여넣어도) 키 토큰과 겹칠 수 없다 — 서로 다른 문의가 같은 키가 되는 과도 병합을
+     * 구조적으로 차단한다.
+     *
      * @param content 원문. {@code null} 이면 그대로 돌려준다
      * @return 개인정보가 키 토큰으로 바뀐 본문. {@code NormalizedKeyGenerator} 만 쓴다
      */
     public String maskForKey(String content) {
-        return apply(content, false);
+        if (content == null || content.isEmpty()) {
+            return content;
+        }
+        // 예약어 선점 방지: 입력에 이미 있는 마커를 지운 뒤 마스킹한다 (단사 보장의 핵심).
+        String reserved = content.indexOf(KEY_MARK) < 0
+                ? content
+                : content.replace(String.valueOf(KEY_MARK), "");
+        return apply(reserved, false);
     }
 
     private String apply(String content, boolean display) {

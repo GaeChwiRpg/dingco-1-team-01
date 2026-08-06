@@ -88,6 +88,43 @@ class NormalizedKeyGeneratorTest {
     }
 
     @Test
+    @DisplayName("과도 병합 방지 — 키 토큰 문자열을 그대로 써도 실제 주문번호와 안 겹친다 (D-053, CodeRabbit 리뷰)")
+    void keyTokenTextDoesNotCollideWithOrderNumber() {
+        // 센티넬을 영문 낱말로만 두면 'ordertoken' 을 그대로 친 문의가 실제 주문번호 문의와
+        // 같은 키가 됐다(실측). 예약 마커로 감싸 그 충돌을 구조적으로 없앤다.
+        String withOrderNo = "환불해주세요 20260801-773412";
+        String literalToken = "환불해주세요 ordertoken";
+
+        assertThat(generator.generate(withOrderNo))
+                .as("키 토큰 낱말을 그대로 쓴 문의가 실제 주문번호 문의로 병합되면 안 된다")
+                .isNotEqualTo(generator.generate(literalToken));
+    }
+
+    @Test
+    @DisplayName("선점 공격 차단 — 예약 마커(U+E000)를 직접 넣어도 키 토큰을 위조할 수 없다 (D-053)")
+    void reservedMarkerInInputCannotForgeKeyToken() {
+        // 입력에 마커를 붙여넣어 키 토큰을 흉내 내려는 시도. maskForKey 가 마커를 먼저 지우므로
+        // 실제 주문번호가 만든 키와 절대 같아지지 않는다(단사).
+        String withOrderNo = "환불해주세요 20260801-773412";
+        String forged = "환불해주세요 ORDER";
+
+        assertThat(generator.generate(withOrderNo))
+                .as("마커를 직접 입력해도 마스킹이 만든 키 토큰과 겹치면 안 된다 — 단사 보장")
+                .isNotEqualTo(generator.generate(forged));
+    }
+
+    @Test
+    @DisplayName("대문자 입력도 같은 키로 접힌다 — 키 토큰 구별이 대소문자에 의존하지 않는다 (D-053, Claude 리뷰)")
+    void uppercaseInputFoldsToSameKey() {
+        String lower = "refund 20260801-773412 로 환불";
+        String upper = "REFUND 20260801-773412 로 환불";
+
+        assertThat(generator.generate(lower))
+                .as("대소문자만 다른 같은 문의는 같은 키여야 한다 — 마커가 토큰 구별을 보장한다")
+                .isEqualTo(generator.generate(upper));
+    }
+
+    @Test
     @DisplayName("과소 병합 방지 — 전각 문장부호·유니코드 공백도 접힌다 (D-053, CodeRabbit 리뷰)")
     void foldsFullwidthPunctuationAndUnicodeSpace() {
         // \p{Punct}·\s 는 ASCII 만 잡아 전각 문장부호·전각 공백이 남았다 → 같은 문의가 다른 키.
