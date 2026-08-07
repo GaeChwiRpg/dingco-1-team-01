@@ -12,7 +12,7 @@
 | `PRD.md` | 무엇을 만드는지 — 페르소나, User Story(US-1~US-13), 핵심 흐름, 5일 범위 |
 | `CLAUDE.md` | **어떻게 짜는지. 코딩 규칙의 유일한 기준(SoT)** — 도메인 모델, 3계층 분리, 트랜잭션 위치, 캐시 전략, AI 호출 규칙, 모듈 간 계약 A/B/C |
 | `DECISIONS.md` | 왜 이렇게 정했는지 — D-001 부터 누적. **본문은 고치지 않고 새 항목으로 덮는다** |
-| `API-CONTRACT.md` | endpoint 계약 (**v1.3**, 현행 도메인 기준). 새 API 를 만들면 같은 PR 에서 이 문서도 고친다.<br>⚠️ **PRD 와 어긋난 5건이 남아 있다** — `INTEGRATION-LOG.md` 「API-CONTRACT 재대조」 참조. 계약은 코드 PR 에서만 고칠 수 있어 `api/` 착수 때 함께 맞춘다 |
+| `API-CONTRACT.md` | endpoint 계약 (**v1.5**, 현행 도메인 기준). 새 API 를 만들면 같은 PR 에서 이 문서도 고친다.<br>⚠️ **PRD 와 어긋난 4건이 남아 있다** (모델 id 1건은 v1.5 에서 닫힘) — `INTEGRATION-LOG.md` 「API-CONTRACT 재대조」 참조. 계약은 코드 PR 에서만 고칠 수 있어 해당 절을 건드리는 PR 에서 함께 맞춘다 |
 | `DOMAIN-MODEL.md` | **`domain/` 패키지에 뭐가 있나** — 엔티티 3개·enum 7개의 역할, 필드가 언제 `null` 인지, 팩토리를 왜 그렇게 만들었는지. 코드를 짜다 막힐 때 본다.<br>⚠️ 코드가 바뀌면 **같은 PR 에서** 이 문서도 고친다 (`API-CONTRACT.md` 와 같은 규칙) |
 | `GLOSSARY.md` | 용어 — "판정", "격리", "재사용", "감사 표본", "2인 독립 레이블" 같은 말이 헷갈릴 때 |
 | `SENTRY-GUIDE.md` | 예외를 잡을지 말지, Sentry 에 어떻게 남길지 (판단 표는 2-4) |
@@ -25,8 +25,14 @@
 
 **안 만든 것을 만든 것처럼 쓰지 않는다** (`CLAUDE.md` 문서 작성 규칙 4).
 
-- **있는 것**: 도메인 엔티티 3개 + enum 7개(`domain/` — 자세한 건 `DOMAIN-MODEL.md`), 저장소 인터페이스 3개(`domain/repository/`), 설정 2개(`config/`), Flyway 스키마 `V1`·`V2`, 스모크 테스트
-- **아직 없는 것**: `service/` · `api/` 패키지 전체. 즉 CLAUDE.md 의 트랜잭션 ①②③, 캐시, AI 호출, 컨트롤러는 **전부 미착수**다
+- **있는 것** (2026-08-07 기준)
+  - baseline — 도메인 엔티티 3개 + enum 7개(`domain/` — 자세한 건 `DOMAIN-MODEL.md`), 저장소 인터페이스 3개(`domain/repository/`), Flyway 스키마 `V1`·`V2`
+  - `config/` — 헤더 인증 필터 + endpoint 별 역할 매핑 + 재시도·시각·JPA Auditing 설정
+  - `api/` — 공용 예외 처리 지점(`GlobalExceptionHandler`) + 오류 DTO + **`POST /api/inquiries`**
+  - `service/` — 개인정보 가리기(`ContentMasker`) · 정규화 키(`NormalizedKeyGenerator`) · **접수 트랜잭션 ①**(`InquiryIngestService`) · **AI 호출과 응답 검증**(`service/ai/` — 호출 · 파싱 · 값 검증 4종 · 실패 사유 5종)
+  - 테스트 **88건** 통과
+- **아직 없는 것**: **트랜잭션 ②·③** (분류 결과 저장 / 사람 확정), **비동기 분류 리스너**, **캐시와 2단 절감 경로**, 문의 목록·상세 조회, 검토 큐 조회, 통계
+  - 즉 지금은 **접수는 되지만 판정이 안 된다.** 문의가 `RECEIVED` 에서 멈춘다
 
 작업 범위는 `CLAUDE.md` 「모듈 간 계약」의 **P1 접수·절감 경로 / P2 분류·검증 / P3 검토·관측** 으로 나뉜다 (D-015, 재배정은 D-031).
 
