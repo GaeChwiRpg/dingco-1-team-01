@@ -11,6 +11,8 @@ import com.dingco.triage.domain.type.InquiryStatus;
 import com.dingco.triage.domain.type.Verdict;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
+import java.time.Clock;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -52,6 +54,12 @@ public class ClassificationService {
     private final ClassificationProperties properties;
 
     /**
+     * 판정 시각의 출처. 상태 전이 UPDATE 가 {@code updated_at} 을 직접 쓰기 때문에 필요하다 —
+     * 벌크 UPDATE 는 auditing 을 타지 않는다 ({@code InquiryRepository} 참조).
+     */
+    private final Clock clock;
+
+    /**
      * 판정하고 저장한다 (트랜잭션 ②).
      *
      * @param inquiryId    분류 대상 문의 id
@@ -70,7 +78,8 @@ public class ClassificationService {
         //
         // 어떤 쓰기보다 먼저 친다. 뒤에 두면 두 번째 실행이 결과 행과 큐 항목을 만든 뒤에야
         // 막히고, 그러면 막는 의미가 없다.
-        int updated = inquiryRepository.transitionFromReceived(inquiryId, statusFor(verdict));
+        int updated = inquiryRepository.transitionFromReceived(
+                inquiryId, statusFor(verdict), Instant.now(clock));
         if (updated == 0) {
             // 조용히 삼키지 않는다 — 이 로그가 측정 2 에서 "신호가 두 번 왔다"를 세는 근거다.
             log.info("classification_skipped reason=already_processed inquiryId={} verdict={}",

@@ -2,6 +2,7 @@ package com.dingco.triage.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.dingco.triage.config.ClassificationProperties;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.InquiryReviewQueueItem;
@@ -46,17 +47,34 @@ import org.springframework.test.context.ActiveProfiles;
  * <p><b>왜 통합 테스트인가</b> — 중복 차단이 「한 문장 안에서 읽고 판단하고 쓰는 것」(D-049)이라
  * 실제 DB 없이는 검증할 수 없다. 모의 객체로 바꾸면 검증하는 것이 <b>DB 의 원자성이 아니라
  * 모의 객체의 반환값</b>이 된다.
+ *
+ * <p><b>재현</b>: {@code ./gradlew test --tests '*ClassificationServiceTest'}
+ * (Testcontainers 로 실제 MySQL 을 띄운다 — Docker Desktop 버전 제약은 D-026).
+ * 기준값은 이 클래스가 따로 안 적고 {@link ClassificationProperties} 에서 받는다.
+ *
+ * <p><b>여기서 검증하지 않는 것</b> — <b>두 스레드가 동시에</b> 같은 문의를 판정하는 경우.
+ * 조건부 UPDATE 의 원자성은 DB 가 보장하고 조건절은 순차 호출로 충분히 고정된다. 동시 도착이
+ * 실제 경로가 되는 것은 D-045⑤(대기줄 포화 시 호출한 쪽이 대신 처리)를 붙일 때이므로,
+ * 두 스레드를 맞춰 출발시키는 케이스는 <b>그때 넣는다</b> (AI 리뷰와 합의).
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(MySqlTestContainer.class)
 class ClassificationServiceTest {
 
-    /** {@code application.yml} 의 {@code classification.threshold}. */
-    private static final BigDecimal THRESHOLD = new BigDecimal("0.800");
-
     @Autowired
     private ClassificationService classificationService;
+
+    /**
+     * <b>기준값을 테스트가 따로 안 적는다</b> (AI 리뷰 지적).
+     *
+     * <p>앞선 판은 {@code 0.800} 을 상수로 복제해뒀다. 그러면 {@code application.yml} 이 바뀌었을 때
+     * {@code acceptsExactlyAtThreshold} 는 실패로 드러나지만, {@code 0.400} 처럼 여유가 큰 케이스는
+     * <b>검증 강도가 약해진 채로 조용히 통과한다</b> — 기준값이 0.3 이 되면 그 테스트는 「기준값
+     * 미만」을 더 이상 검증하지 않으면서도 초록불이다.
+     */
+    @Autowired
+    private ClassificationProperties properties;
 
     @Autowired
     private InquiryRepository inquiryRepository;
@@ -78,15 +96,26 @@ class ClassificationServiceTest {
     }
 
     private List<InquiryReviewQueueItem> queueOf(Inquiry inquiry) {
-        return queueRepository.findAll().stream()
-                .filter(item -> item.getInquiry().getId().equals(inquiry.getId()))
-                .toList();
+        return queueRepository.findByInquiryId(inquiry.getId());
     }
 
     private List<InquiryClassificationResult> resultsOf(Inquiry inquiry) {
-        return resultRepository.findAll().stream()
-                .filter(r -> r.getInquiry().getId().equals(inquiry.getId()))
-                .toList();
+        return resultRepository.findByInquiryIdOrderByCreatedAtDesc(inquiry.getId());
+    }
+
+    /**
+     * 기준값보다 <b>확실히 낮은</b> 확신도.
+     *
+     * <p>고정값 대신 기준값에서 빼서 만든다 — 설정이 바뀌어도 <b>「미만」이라는 사실은 유지</b>돼야
+     * 이 테스트가 계속 같은 것을 검증한다. 기준값이 0.1 아래로 내려가는 경우를 위해 0 에서 자른다.
+     */
+    private BigDecimal belowThreshold() {
+        return properties.threshold().subtract(new BigDecimal("0.100")).max(BigDecimal.ZERO);
+    }
+
+    /** 기준값보다 <b>확실히 높은</b> 확신도. 위와 같은 이유로 1 에서 자른다. */
+    private BigDecimal aboveThreshold() {
+        return properties.threshold().add(new BigDecimal("0.100")).min(BigDecimal.ONE);
     }
 
     @Nested
@@ -99,7 +128,7 @@ class ClassificationServiceTest {
             Inquiry inquiry = givenReceivedInquiry();
 
             boolean persisted = classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.930")),
+                    AiParsedClassification.classified(InquiryCategory.DELIVERY, aboveThreshold()),
                     raw(), 1);
 
             assertThat(persisted).isTrue();
@@ -107,7 +136,7 @@ class ClassificationServiceTest {
             Inquiry reloaded = inquiryRepository.findById(inquiry.getId()).orElseThrow();
             assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.CLASSIFIED);
             assertThat(reloaded.getCurrentCategory()).isEqualTo(InquiryCategory.DELIVERY);
-            assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo("0.930");
+            assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo(aboveThreshold());
 
             assertThat(resultsOf(inquiry))
                     .singleElement()
@@ -124,7 +153,8 @@ class ClassificationServiceTest {
             Inquiry inquiry = givenReceivedInquiry();
 
             classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.PAYMENT, THRESHOLD), raw(), 1);
+                    AiParsedClassification.classified(InquiryCategory.PAYMENT, properties.threshold()),
+                    raw(), 1);
 
             assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.CLASSIFIED);
@@ -141,14 +171,17 @@ class ClassificationServiceTest {
             Inquiry inquiry = givenReceivedInquiry();
 
             classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.400")),
+                    AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, belowThreshold()),
                     raw(), 1);
 
             assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.UNCLASSIFIED);
 
-            InquiryReviewQueueItem item = queueOf(inquiry).getFirst();
-            assertThat(queueOf(inquiry)).hasSize(1);
+            // 건수를 먼저 본다 — 큐가 비었을 때 getFirst() 가 먼저 터지면 실패 원인이
+            // "큐 항목이 0건" 이 아니라 예외 스택으로 나온다 (AI 리뷰 지적)
+            List<InquiryReviewQueueItem> items = queueOf(inquiry);
+            assertThat(items).hasSize(1);
+            InquiryReviewQueueItem item = items.getFirst();
             assertThat(item.getReason()).isEqualTo(QueueReason.LOW_CONFIDENCE);
             assertThat(item.getStatus()).isEqualTo(QueueStatus.PENDING);
             // 계약 B — classification_result_id 가 반드시 채워진다
@@ -162,7 +195,7 @@ class ClassificationServiceTest {
             Inquiry inquiry = givenReceivedInquiry();
 
             classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.400")),
+                    AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, belowThreshold()),
                     raw(), 1);
 
             InquiryClassificationResult result = resultsOf(inquiry).getFirst();
@@ -216,6 +249,32 @@ class ClassificationServiceTest {
                     .isEqualTo(Verdict.FAILED);
             assertThat(queueOf(inquiry)).hasSize(1);
         }
+
+        @Test
+        @DisplayName("실패 판정도 updated_at 이 갱신된다 — 언제 판정됐는지 읽을 수 있어야 한다")
+        void touchesUpdatedAtOnFailure() {
+            // 이 케이스만 따로 두는 이유: 세 판정 중 FAILED 에서만 시각이 안 찍히던 결함이 있었다
+            // (AI 리뷰 지적, 재현 확인).
+            //
+            // 상태 전이는 벌크 UPDATE 라 auditing 을 안 타고, 그 뒤 applyClassification 의
+            // dirty checking 이 시각을 채우는 구조였다. 그런데 FAILED 는 applyClassification(null, null)
+            // 이라 원래 null 이던 두 칸이 그대로여서 Hibernate 가 UPDATE 를 아예 안 날린다.
+            // 그러면 status 는 UNCLASSIFIED 인데 updated_at 은 접수 시각에 멈춘 행이 생긴다.
+            //
+            // 지금은 전이 UPDATE 가 시각을 직접 쓰므로 세 판정이 같은 방식으로 찍힌다.
+            Inquiry inquiry = givenReceivedInquiry();
+            Instant beforeVerdict =
+                    inquiryRepository.findById(inquiry.getId()).orElseThrow().getUpdatedAt();
+
+            classificationService.verifyAndPersist(inquiry.getId(),
+                    AiParsedClassification.failed(ClassifyFailureReason.PARSE_ERROR), raw(), 3);
+
+            Instant afterVerdict =
+                    inquiryRepository.findById(inquiry.getId()).orElseThrow().getUpdatedAt();
+            assertThat(afterVerdict)
+                    .as("실패 판정에도 판정 시각이 찍혀야 한다")
+                    .isAfter(beforeVerdict);
+        }
     }
 
     @Nested
@@ -227,7 +286,7 @@ class ClassificationServiceTest {
         void secondCallChangesNothing() {
             Inquiry inquiry = givenReceivedInquiry();
             AiParsedClassification parsed =
-                    AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.400"));
+                    AiParsedClassification.classified(InquiryCategory.DELIVERY, belowThreshold());
 
             boolean first = classificationService.verifyAndPersist(inquiry.getId(), parsed, raw(), 1);
             boolean second = classificationService.verifyAndPersist(inquiry.getId(), parsed, raw(), 1);
@@ -245,19 +304,19 @@ class ClassificationServiceTest {
         void doesNotOverwriteConfirmedInquiry() {
             Inquiry inquiry = givenReceivedInquiry();
             classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.930")),
+                    AiParsedClassification.classified(InquiryCategory.DELIVERY, aboveThreshold()),
                     raw(), 1);
 
             // 두 번째 신호가 낮은 확신도를 들고 왔다 — 격리로 뒤집히면 안 된다
             boolean second = classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.ETC, new BigDecimal("0.100")),
+                    AiParsedClassification.classified(InquiryCategory.ETC, belowThreshold()),
                     raw(), 1);
 
             assertThat(second).isFalse();
             Inquiry reloaded = inquiryRepository.findById(inquiry.getId()).orElseThrow();
             assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.CLASSIFIED);
             assertThat(reloaded.getCurrentCategory()).isEqualTo(InquiryCategory.DELIVERY);
-            assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo("0.930");
+            assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo(aboveThreshold());
         }
 
         @Test
@@ -265,14 +324,14 @@ class ClassificationServiceTest {
         void aiCannotConfirmIsolatedInquiry() {
             Inquiry inquiry = givenReceivedInquiry();
             classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.400")),
+                    AiParsedClassification.classified(InquiryCategory.DELIVERY, belowThreshold()),
                     raw(), 1);
             assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.UNCLASSIFIED);
 
             // 높은 확신도로 다시 와도 격리된 문의를 확정시킬 수 없다
             boolean second = classificationService.verifyAndPersist(inquiry.getId(),
-                    AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.990")),
+                    AiParsedClassification.classified(InquiryCategory.DELIVERY, aboveThreshold()),
                     raw(), 1);
 
             assertThat(second).isFalse();

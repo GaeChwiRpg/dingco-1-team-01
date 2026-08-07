@@ -2,6 +2,7 @@ package com.dingco.triage.domain.repository;
 
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.InquiryStatus;
+import java.time.Instant;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -50,17 +51,30 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
      * (불변 규칙 2). 조건을 쿼리에 고정해 그 경로 자체를 없앤다.
      *
      * <p>⚠️ <b>영속성 컨텍스트를 우회하는 벌크 UPDATE 다.</b> {@code clearAutomatically} 로 컨텍스트를
-     * 비워, 이 뒤에 같은 문의를 읽는 코드가 <b>옛 상태를 보지 않게</b> 한다. {@code updated_at} 은 이
-     * 문장으로는 안 바뀌고, 뒤이은 {@code applyClassification} 의 dirty checking 에서 auditing 이 채운다.
+     * 비워, 이 뒤에 같은 문의를 읽는 코드가 <b>옛 상태를 보지 않게</b> 한다.
      *
+     * <p>⚠️ <b>{@code updated_at} 을 이 문장이 직접 쓴다.</b> 벌크 UPDATE 는 엔티티 리스너를 타지
+     * 않아 {@code @LastModifiedDate} 가 안 돈다. 앞선 판은 <i>"뒤이은 {@code applyClassification} 의
+     * dirty checking 에서 auditing 이 채운다"</i> 고 적어뒀는데, <b>{@code FAILED} 에서는 그것이
+     * 성립하지 않는다</b> — 실패 건은 {@code applyClassification(null, null)} 이라 원래 {@code null}
+     * 이던 두 칸이 그대로여서 <b>Hibernate 가 변경으로 보지 않고 UPDATE 를 아예 안 날린다.</b>
+     * 그러면 상태는 {@code UNCLASSIFIED} 로 바뀌었는데 {@code updated_at} 은 접수 시각에 멈춰,
+     * <b>판정이 언제 났는지 읽을 수 없는 행</b>이 생긴다 (AI 리뷰 지적, 재현 확인).
+     * 판정 종류에 따라 시각이 채워지기도 하고 안 채워지기도 하는 쪽이 더 나쁘므로, <b>세 판정 모두
+     * 같은 문장에서 같은 방식으로</b> 쓴다.
+     *
+     * @param now 판정 시각. 엔티티가 {@code Instant.now()} 를 직접 부르지 않는 이유와 같다 —
+     *            호출부가 {@code Clock} 으로 주입해야 테스트에서 고정할 수 있다 (D-017)
      * @return 갱신된 행 수. <b>0 이면 이미 누가 처리한 것</b>이므로 호출부는 조용히 반환한다
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Inquiry i
-               SET i.status = :status
+               SET i.status = :status,
+                   i.updatedAt = :now
              WHERE i.id = :id
                AND i.status = com.dingco.triage.domain.type.InquiryStatus.RECEIVED
             """)
-    int transitionFromReceived(@Param("id") Long id, @Param("status") InquiryStatus status);
+    int transitionFromReceived(@Param("id") Long id, @Param("status") InquiryStatus status,
+            @Param("now") Instant now);
 }
