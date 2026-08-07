@@ -6,6 +6,7 @@ import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.service.InquiryIngestService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,13 +26,10 @@ import org.springframework.web.bind.annotation.RestController;
  * ({@code GlobalExceptionHandler}) 한 곳에서 공통 형식으로 내보낸다.
  */
 @RestController
+@RequiredArgsConstructor
 public class InquiryController {
 
     private final InquiryIngestService inquiryIngestService;
-
-    public InquiryController(InquiryIngestService inquiryIngestService) {
-        this.inquiryIngestService = inquiryIngestService;
-    }
 
     @PostMapping("/api/inquiries")
     public ResponseEntity<InquiryCreateResponse> receive(

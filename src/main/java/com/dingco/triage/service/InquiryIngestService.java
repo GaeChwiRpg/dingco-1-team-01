@@ -6,6 +6,7 @@ import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.service.event.InquiryReceivedEvent;
 import java.time.Clock;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,22 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
  * 절감률 전체가 바뀌므로 그 규칙을 한 자리({@link NormalizedKeyGenerator})에 두고 서버가 강제한다.
  */
 @Service
+@RequiredArgsConstructor
 public class InquiryIngestService {
 
     private final InquiryRepository inquiryRepository;
     private final NormalizedKeyGenerator normalizedKeyGenerator;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
-
-    public InquiryIngestService(InquiryRepository inquiryRepository,
-            NormalizedKeyGenerator normalizedKeyGenerator,
-            ApplicationEventPublisher eventPublisher,
-            Clock clock) {
-        this.inquiryRepository = inquiryRepository;
-        this.normalizedKeyGenerator = normalizedKeyGenerator;
-        this.eventPublisher = eventPublisher;
-        this.clock = clock;
-    }
 
     /**
      * 문의를 접수한다 (트랜잭션 ①).
