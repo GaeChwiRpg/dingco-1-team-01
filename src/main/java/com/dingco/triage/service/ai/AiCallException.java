@@ -1,4 +1,4 @@
-package com.dingco.triage.service;
+package com.dingco.triage.service.ai;
 
 /**
  * AI 호출이 실패했다 — 응답을 <b>받지 못한</b> 경우다.

@@ -1,4 +1,4 @@
-package com.dingco.triage.service;
+package com.dingco.triage.service.ai;
 
 /**
  * AI 가 돌려준 <b>날것 그대로의</b> 응답. 아직 아무것도 해석하지 않았다.

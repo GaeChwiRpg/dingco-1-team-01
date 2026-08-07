@@ -166,7 +166,7 @@ US-1~9는 팀이 합의한 번호 그대로다. 10~13은 설계하면서 추가�
 | 검색·필터 | 조건부 조회 + 페이징. 항목마다 추가 쿼리가 안 나가게 `@EntityGraph` | `domain/repository/InquiryReviewQueueRepository.search` | `EXPLAIN` 전후 비교 (측정 5), 쿼리 개수 세기 (속도 b) |
 | 캐시 | Redis. **1단은 직접 넣고 빼고**(조건부라 `@Cacheable` 로 안 됨), 통계 요약만 `@Cacheable` + `@CacheEvict` | ① `service/ClassificationCache`<br>② `service/StatsService.summary` | AI 호출 횟수 (측정 6), 캐시 적중률 (측정 11) |
 | 비동기·이벤트 | `@Async` + 스레드풀 직접 지정, `@Retryable(3)` + `@Recover` | `service/event/InquiryReceivedEventListener`, `service/event/` | 오류 주입 → 재시도 3회 + 큐 삽입 (측정 4) |
-| AI 보조 | Anthropic 호출 + 값 검증 4가지 + 기준값 비교 + 감사 5% 뽑기 | `service/AiClassificationService`, `service/AuditSamplingPolicy` | 정답 대조 (측정 1), 오분류율 (측정 8ⓐ-1) |
+| AI 보조 | Anthropic 호출 + 값 검증 4가지 + 기준값 비교 + 감사 5% 뽑기 | `service/ai/` (호출·값 검증), `service/AuditSamplingPolicy` | 정답 대조 (측정 1), 오분류율 (측정 8ⓐ-1) |
 
 **시작 전에 넣어야 할 것 2개** — 지금 `build.gradle` 에 없어서, 없는 채로 코드를 쓰면 컴파일부터 막힌다.
 
