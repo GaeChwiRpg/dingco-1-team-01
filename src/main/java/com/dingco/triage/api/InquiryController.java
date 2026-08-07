@@ -2,6 +2,7 @@ package com.dingco.triage.api;
 
 import com.dingco.triage.api.dto.InquiryCreateRequest;
 import com.dingco.triage.api.dto.InquiryCreateResponse;
+import com.dingco.triage.api.dto.InquiryDetailResponse;
 import com.dingco.triage.api.dto.InquiryListResponse;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.Channel;
@@ -20,6 +21,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -96,6 +98,20 @@ public class InquiryController {
             return inquiryQueryService.listForCustomer(customerId, criteria, pageable);
         }
         return inquiryQueryService.listForAgent(criteria, pageable);
+    }
+
+    /**
+     * 문의 상세 + 분류 시도 이력 (계약 §3). 고객은 자기 문의만 — <b>남의 문의는 403, 없는 문의는
+     * 404</b> 다 (D-045(1)). 404 가 아니라 403 으로 답하는 건 계약이 정한 것으로, 범위·존재 판단은
+     * {@code service/} 가 한다. 상담원 이상에게만 {@code classifications} 가 나간다.
+     */
+    @GetMapping("/api/inquiries/{id}")
+    public InquiryDetailResponse detail(@PathVariable long id, Authentication authentication) {
+        if (isCustomer(authentication)) {
+            long customerId = Long.parseLong(authentication.getName());
+            return inquiryQueryService.getForCustomer(customerId, id);
+        }
+        return inquiryQueryService.getForAgent(id);
     }
 
     private static boolean isCustomer(Authentication authentication) {

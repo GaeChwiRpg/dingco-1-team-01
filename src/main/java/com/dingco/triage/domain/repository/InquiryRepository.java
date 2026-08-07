@@ -4,6 +4,7 @@ import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.InquiryStatus;
 import java.time.Instant;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -72,4 +73,20 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
             @Param("from") Instant from,
             @Param("to") Instant to,
             Pageable pageable);
+
+    /**
+     * 고객 자신의 문의 1건 (계약 §3). {@code customerId} 로 소유를 함께 건다 — 남의 문의는 애초에
+     * 조회되지 않는다 (D-045(1) · D-038). 비면 "없거나(404) 남의 것(403)"인데, 이 둘의 구분은
+     * 서비스가 {@link #existsById}(내용을 꺼내지 않는 존재 여부 확인)로 가른다 — 계약이 정한
+     * 403/404 를 지키기 위해서다.
+     */
+    Optional<Inquiry> findByIdAndCustomerId(long id, long customerId);
+
+    /**
+     * 문의 1건 — {@code ROLE_AGENT} 이상 전용 (계약 §3). 소유자 없는 조회이므로 이름이 "상담원용"
+     * 임을 드러낸다 (D-045(1)). 상속된 {@code findById} 를 그대로 쓰지 않는 이유는, 소유자 없는
+     * 조회가 실수로 고객 경로에 섞이는 것을 막기 위해서다.
+     */
+    @Query("SELECT i FROM Inquiry i WHERE i.id = :id")
+    Optional<Inquiry> findByIdForAgent(@Param("id") long id);
 }

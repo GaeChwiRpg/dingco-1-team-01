@@ -1,6 +1,7 @@
 package com.dingco.triage.domain.repository;
 
 import com.dingco.triage.domain.InquiryClassificationResult;
+import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -15,4 +16,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
  */
 public interface InquiryClassificationResultRepository
         extends JpaRepository<InquiryClassificationResult, Long> {
+
+    /**
+     * 한 문의의 분류 시도 이력 (계약 §3 {@code classifications}). 최신순으로 준다 —
+     * {@code (inquiry_id, created_at DESC)} 인덱스를 그대로 탄다.
+     *
+     * <p>{@code inquiry} 는 LAZY 연관이지만 여기서는 그 id 로 거를 뿐 객체를 로드하지 않는다.
+     */
+    List<InquiryClassificationResult> findByInquiry_IdOrderByCreatedAtDesc(long inquiryId);
 }
