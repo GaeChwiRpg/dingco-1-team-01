@@ -61,4 +61,28 @@ class HeaderAuthenticationFilterTest {
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
+
+    @Test
+    void 숫자가_아닌_사용자id는_인증없이_통과한다() throws ServletException, IOException {
+        // 신원 파싱은 인증의 몫이라, 숫자가 아닌 X-User-Id 는 여기서 걸러 미인증으로 둔다.
+        // 그래야 보호된 endpoint 에서 500 이 아니라 일관되게 401 이 된다.
+        var request = new MockHttpServletRequest();
+        request.addHeader("X-User-Id", "not-a-number");
+        request.addHeader("X-User-Role", "CUSTOMER");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void 사용자id가_공백이면_인증없이_통과한다() throws ServletException, IOException {
+        var request = new MockHttpServletRequest();
+        request.addHeader("X-User-Id", "   ");
+        request.addHeader("X-User-Role", "CUSTOMER");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
 }

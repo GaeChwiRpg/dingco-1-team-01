@@ -7,7 +7,6 @@ import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.service.InquiryIngestService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,7 +37,9 @@ public class InquiryController {
     public ResponseEntity<InquiryCreateResponse> receive(
             @Valid @RequestBody InquiryCreateRequest request,
             Authentication authentication) {
-        Long customerId = customerId(authentication);
+        // principal(= X-User-Id)의 숫자 검증은 HeaderAuthenticationFilter 가 이미 했다 —
+        // 비숫자면 애초에 인증되지 않아 여기 도달하지 못하고 401 이 된다. 그래서 여기선 안전하게 파싱한다.
+        Long customerId = Long.parseLong(authentication.getName());
         Channel channel = request.channel() != null ? request.channel() : Channel.WEB;
 
         Inquiry inquiry = inquiryIngestService.receive(customerId, request.content(), channel);
@@ -46,24 +47,5 @@ public class InquiryController {
         InquiryCreateResponse body = new InquiryCreateResponse(
                 inquiry.getId(), inquiry.getStatus(), inquiry.getReceivedAt());
         return ResponseEntity.accepted().body(body);
-    }
-
-    /**
-     * principal(= {@code X-User-Id} 문자열, {@code HeaderAuthenticationFilter})에서 고객 id 를 꺼낸다.
-     *
-     * <p><b>숫자가 아니면 인증 실패(401)로 좁힌다.</b> 그냥 두면 {@code parseLong} 이
-     * {@code NumberFormatException} 을 던져 공용 핸들러의 500 으로 나가는데, {@code X-User-Id} 는
-     * 클라이언트가 넣는 값이라 그건 클라이언트 잘못을 서버 오류로 기록하는 셈이다 — 계약 §1 이
-     * content 길이에서 경계한 것과 같은 이유다. 신원을 신뢰할 수 없으니 401 이 맞다.
-     *
-     * <p>더 근본적인 자리는 인증 필터(신원 파싱은 인증의 몫)지만, 그 필터는 전 endpoint 공용이라
-     * 여기서 국소적으로 막고 팀에 공유한다.
-     */
-    private static Long customerId(Authentication authentication) {
-        try {
-            return Long.parseLong(authentication.getName());
-        } catch (NumberFormatException e) {
-            throw new BadCredentialsException("X-User-Id 가 올바르지 않습니다");
-        }
     }
 }
