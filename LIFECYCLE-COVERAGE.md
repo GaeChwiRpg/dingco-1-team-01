@@ -3,18 +3,20 @@
 > 5 단계 누가 무엇을 적용했는지 매트릭스 + 단계별 산출물 추적.
 > 일자별 진행은 `INTEGRATION-LOG.md`, 결정 근거는 `DECISIONS.md`.
 > 참고용 sample: [`examples/week9-team-lifecycle-coverage.md`](./examples/week9-team-lifecycle-coverage.md).
-> **기준 시점: 2026-08-05** (PR #1~#10 머지 / **PR #11 = 도메인 전환 진행 중 — D-031**).
+> **기준 시점: 2026-08-07** (PR #1~**#24** 머지 — 마지막이 `service/ai` 패키지 경계, D-059).
 >
 > ⚠️ **2026-08-05 도메인 전환**: 에러 분류 → CS 문의 분류 (D-031). 라이프사이클 5단계의 **구조·책임자·도구는 그대로**이고 각 단계의 산출물 내용만 바뀐다. 코딩 단계의 baseline(엔티티·스키마)은 **재작성 대상**이 됐다.
+>
+> ✅ **2026-08-06~07 로 「`service/`·`api/` 0줄」 상태가 끝났다.** 8/4·8/5 두 번 기록한 blocker 다. 셋이 각자 착수했고 P3(김은빈)의 첫 코드 기여도 8/7 에 들어왔다.
 
 ## 매트릭스
 
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
-| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~D-054) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** / **D-054 로 CodeRabbit 병행 리뷰 도입** |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). **`config/` 완료(TRI-25/26, 2026-08-06)** — 헤더 인증 필터 + endpoint 별 역할 매핑, 도커 실증 검증 완료. **`api/` 착수(TRI-27~30)** — 공용 예외 처리 지점(`GlobalExceptionHandler`) + 오류 DTO(`ErrorResponse`/`ErrorCode`) + Sentry 500 배선, 응답 6종(400/401/403/404/409/500) 전수 실측 — 테스트 53건 통과. `service/` 미착수, `.claude/commands/` 미작성 |
+| 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~**D-059**) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** / **D-054 로 CodeRabbit 병행 리뷰 도입** / **D-051·D-055~059 는 코드를 짜다가 정해야 했던 것들** — 성격이 앞과 다르다. ✅ **Jira MCP 시연 완료(2026-08-07)** — 상태 전이·기한 재배치·코멘트 |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). **`config/` 완료(TRI-25/26)** — 헤더 인증 필터 + endpoint 별 역할 매핑. **`api/` 착수(TRI-27~30, TRI-32)** — 공용 예외 처리 지점 + 오류 DTO + Sentry 500 배선, 응답 6종 전수 실측 / `POST /api/inquiries`. **`service/` 착수(2026-08-06~07)** — P1 `ContentMasker`·`NormalizedKeyGenerator`·트랜잭션 ①(TRI-31·33·37~39) / P2 `service/ai` AI 호출·응답 파싱·값 검증 4종(TRI-46·48·49·50). **Lombok 도입 — `@Data`·`@Setter` 는 컴파일 에러로 차단**(D-057). 테스트 **88건** 통과. **잔여: 트랜잭션 ②③·캐시·큐 조회·통계, `.claude/commands/` 미작성** |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
-| 4. 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md`, `.coderabbit.yaml` | ✅ PR #1~#11 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례도 1건 기록** — 사례 16. ✅ CodeRabbit 은 D-054 로 병행 도입, `.coderabbit.yaml` 은 Inquiry 도메인 용어로 작성 완료, **GitHub App 설치 완료 — 현재 PR 마다 실제로 동작 중** |
+| 4. 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md`, `.coderabbit.yaml` | ✅ PR #1~#24 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례 2건 기록** — 사례 16(잘린 diff 를 보고 "없다") · **사례 17**(검증값 오산). ✅ CodeRabbit 은 D-054 로 병행 도입, `.coderabbit.yaml` 은 Inquiry 도메인 용어로 작성 완료, **GitHub App 설치 완료 — 현재 PR 마다 실제로 동작 중** |
 | 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md`·`SENTRY-GUIDE.md` 실측 기록 완료. 실제 `api/`·`service/` 트래픽 검증은 남음 |
 
 > 인원 3명 / 단계 5개이므로 이용택이 테스트 + 배포·운영 2단계를 겸한다 (D-020).
@@ -34,9 +36,17 @@
 
 > **baseline 은 PR #2~#5 로 완료됐다 — P1·P2·P3 의 착수 조건은 전부 해제된 상태다.**
 >
-> **현재 미착수**: `service/`·`api/` 전체, `.claude/commands/` 미작성.
-> **측정 수치**: 전부 미실측 (코드 착수 후 채울 예정).
-> **E2E 시나리오**: health 1건만 실행, 핵심 흐름은 `test.skip`.
+> **진행 상황 (2026-08-07)**
+>
+> | 패키지 | 끝난 것 | 다음 |
+> | --- | --- | --- |
+> | **P1** | `ContentMasker`·`NormalizedKeyGenerator`(D-052·D-053) · 트랜잭션 ① · `POST /api/inquiries` · 계약 A 발행 | 목록·상세 조회, **1단 캐시 + 2단 절감 경로**(TRI-40~43) |
+> | **P2** | `config/` · `service/ai/` — AI 호출 + 응답 파싱 + **값 검증 4종**(TRI-46·48·49·50) | **트랜잭션 ②**(TRI-51·52) → 리스너·재시도(TRI-47·54·55) |
+> | **P3** | 역할 필터 + endpoint 별 매핑 + 공용 예외 처리 지점(TRI-25~30) | 큐 조회(TRI-56~58) → 트랜잭션 ③ → 통계 |
+>
+> **여전히 미착수**: `.claude/commands/`.
+> **측정 수치**: 전부 미실측 (장치가 아직 다 안 붙었다).
+> **E2E 시나리오**: health 1건만 실행, 핵심 흐름은 `test.skip` — **변화 없음**.
 >
 > **baseline = 이용택.** 착수 조건이 없는 유일한 담당이고, `docker-compose.yml`·`Dockerfile` 이 본인의 배포·운영 단계 산출물이며, baseline 이 뜨는 순간 `tests/e2e` health 테스트가 통과해 테스트 단계 산출물도 함께 확보된다.
 > 다만 **`settings.gradle` + `build.gradle` + wrapper 는 20분 안에 먼저 push** 한다 — 김준현의 첫 코드(`SecurityConfig`)는 도메인 의존이 0이라 이것만으로 착수 가능하고, baseline 전체를 완성한 뒤 push 하면 반나절을 통째로 대기시킨다.
@@ -110,13 +120,14 @@
 
 ### 1. 기획
 
-- 산출물: `PRD.md`(12절 + PAAR 한 장 요약 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~D-054)
+- 산출물: `PRD.md`(12절 + PAAR 한 장 요약 · US 13개 · 측정 12개), `DECISIONS.md`(D-001~**D-059**)
 - 도구:
   - **AI PRD** — 페·목·형·제 4요소 prompt 로 초안 생성 → AI 코드리뷰 5회로 반증. 리뷰가 잡은 설계 결함 9건은 전부 **AI 가 만든 설계**였고, 그중 무엇을 고치고 무엇을 한계로 수용할지는 사람이 정했다 (`evidence/failure-cases.md` 관찰 2)
   - **결정 로그를 불변으로 운영** — 기존 항목을 고치지 않고 후속 항목으로 무효화한다. D-004(캐시=절감률 등식) → D-014, D-007(재시도 경계) → D-016, D-002 → D-020 이 그 예다. 덮어썼다면 "왜 틀렸었는지"가 사라졌다
   - **도메인 전환도 같은 방식으로 처리했다 (D-031)** — 결정 14건(폐기 6 + 부분 개정 8)이 정리됐지만 **본문은 하나도 지우지 않고 상태 필드만 갱신**했다. 그 결과 "무엇을 포기하고 이 도메인으로 왔는가"가 로그에 남는다. 전환 근거를 D-027 이 세운 판별 기준으로 평가한 것도 같은 취지다 — **기준이 있으니 탈락 사실과 그 대가를 계산할 수 있었다**
 - 한계:
-  - **Jira MCP 미시연.** `.mcp.json` 에 Atlassian MCP 서버는 등록했으나(커밋 `3c2c782`) PRD → 이슈 분해를 실제로 돌리지 않았다. 잔여 3건 중 1건
+  - ~~**Jira MCP 미시연.**~~ → **2026-08-07 시연 완료.** 이슈 88건(TRI-1~88)은 그 전에 분해돼 있었고, 이날 MCP 로 **상태 전이 · 기한 재배치 · 진행 코멘트**를 실제로 돌렸다. **잔여 3건 → 2건**
+    - 이날 확인된 한계: 하위 작업 기한을 옮겨도 **부모 스토리·에픽 기한이 자동으로 안 따라온다.** 사람이 하위 최댓값을 보고 맞춰야 하고, 안 맞추면 보드가 실제보다 앞서 보인다
   - PRD 의 측정 목표치는 **전부 미실측**이다. 값이 채워지는 시점은 `service/`·`api/` 착수 이후이며, 그 전까지 목표치는 목표일 뿐 evidence 가 아니다
 
 ### 2. 코딩
@@ -139,14 +150,17 @@
 - 도구: Playwright MCP (`request` fixture 기반 API 레벨). 브라우저를 띄우지 않으므로 CI 에서 chromium 설치를 제거했다 — 검토자 화면이 생겨 `page` fixture 를 쓰게 되면 되살린다
 - **e2e.yml 이 실제로 검증하는 것**: "앱이 기동한다" 한 줄에 세 가지가 함께 들어 있다 — Flyway `V1` → `V2__domain_switch.sql` 이 깨끗이 적용됨 / `ddl-auto=validate` 아래에서 엔티티 3종이 **전환 후 스키마**와 일치함(어긋나면 부팅 실패) / MySQL·Redis 연결이 실제로 성립함. **이 workflow 가 red 면 P1·P2·P3 전부의 착수 전제가 깨진 것**이다. 도메인 전환 후 이 검증이 특히 중요하다 — 스키마와 엔티티를 **동시에** 갈아엎었기 때문이다
 - 한계:
-  - **시나리오가 health 1건뿐이다.** 핵심 흐름(투입 → 격리 → 확정)과 차별 흐름(자동 확정 → 감사 표본 → 정정)은 `service/`·`api/` 착수 후에야 쓸 수 있다. 잔여 3건 중 1건
+  - **시나리오가 health 1건뿐이다.** `service/`·`api/` 는 착수했지만, 핵심 흐름(투입 → 격리 → 확정)을 쓰려면 **트랜잭션 ②(TRI-51)와 ③(TRI-59)이 붙어야** 한다 — 지금은 접수까지만 되고 판정·확정이 없어 시나리오가 중간에서 끊긴다. **잔여 2건 중 1건**
   - 로컬 Testcontainers 는 Docker Desktop 버전에 의존한다 (D-026). CI 는 `docker compose` 를 직접 쓰므로 이 제약의 영향을 받지 않는다 — **로컬만 깨지고 CI 는 green 인 상태가 가능**하다는 뜻이라, 로컬 실패를 CI 로 덮지 않는다
 
 ### 4. 리뷰
 
-- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **16건** 기록), `.coderabbit.yaml`
+- 산출물: `.github/workflows/ai-review.yml`, `evidence/failure-cases.md` (AI hallucination·오류 **17건** 기록), `.coderabbit.yaml`
 - 도구: Claude GitHub Actions Review — 팀 CLAUDE.md 핵심 룰 prompt 전달 + **CodeRabbit** — 라인별 인라인 코멘트 · 정적분석 · 커밋 단위 증분 리뷰 (D-054, GitHub App 설치 완료로 현재 병행 동작 중)
-- 한계: PR #1 부터 전원 자동 리뷰가 동작했다. 다만 검출은 **문서·설계 층에 집중**돼 있고, `service/`·`api/` 미착수라 **런타임 결함에 대한 검출력은 아직 미검증**이다 (`evidence/failure-cases.md` 「미검출 위험이 남은 영역」 참조). CodeRabbit 도입 초기라 `ai-review.yml` 과의 중복·고유 지적 비율은 아직 관측되지 않았다 — **`service/`·`api/` PR 이 열리면 두 도구의 지적을 각각 집계해 「중복 N건 / CodeRabbit 고유 N건 / ai-review 고유 N건」 형태로 `evidence/failure-cases.md` 에 기록한다.** D-054 의 핵심 판단 근거("겹치는 영역보다 못 잡는 영역이 더 크다")는 이 집계 전까지는 검증되지 않은 가설이다
+- **코드 PR 에서의 검출 실적 (2026-08-06~07)** — 문서 층에서만 입증됐던 검출력이 처음으로 코드에 적용됐다
+  - 잡은 것: 정규화 키의 병합 결함 2종(PR #18, **D-053** 까지 감) / 절반만 채워진 실패가 record 생성자를 통과(PR #23, **재현 확인됨**) / blind 시드에 원본 id 가 남아 정답이 역산됨(PR #22) / 역할 누적 매핑·JSON 직렬화(PR #19) / `X-User-Id` 검증 위치(PR #20)
+  - **틀린 것 1건**: 반올림 테스트 값으로 `0.9315` 를 제안 — 그 값으로는 `HALF_UP` 과 `HALF_EVEN` 이 구분되지 않는다 (사례 **17**). **지적 방향은 맞고 값만 틀려서, 그대로 받았으면 테스트가 통과하면서 아무것도 보장하지 않았다**
+- 한계: **두 도구의 중복·고유 지적 비율은 여전히 미집계다.** 코드 PR 이 6건 열렸으므로 이제 집계할 표본이 생겼다 — 「중복 N건 / CodeRabbit 고유 N건 / ai-review 고유 N건」 형태로 `evidence/failure-cases.md` 에 기록한다. D-054 의 핵심 판단 근거("겹치는 영역보다 못 잡는 영역이 더 크다")는 이 집계 전까지 **검증되지 않은 가설**이다
 
 ### 5. 배포·운영
 
@@ -167,8 +181,8 @@
 | 주차 단계 | 내용 | 상태 |
 | --- | --- | --- |
 | 1 | 기획 골격 — README, PRD, DECISIONS 초안 | ✅ |
-| 2 | 코드 baseline + 5 단계 도구 설정 | 🔄 진행 중 — **2026-08-05 도메인 전환으로 baseline 재작성** (D-031) |
-| 3 | 3명 병렬 PR 시연 — P1/P2/P3 feature 브랜치별 PR + `service/`·`api/` + 측정 12개 | ⏳ |
+| 2 | 코드 baseline + 5 단계 도구 설정 | ✅ — **2026-08-05 도메인 전환으로 재작성**(D-031) 후 완료. 도구는 `.claude/commands/` 하나만 남았다 |
+| 3 | 3명 병렬 PR 시연 — P1/P2/P3 feature 브랜치별 PR + `service/`·`api/` + 측정 12개 | 🔄 **진행 중 (2026-08-06 착수)** — 병렬 PR 시연은 성립했다(8/7 하루에 P1·P2·P3 가 각각 머지). **측정 12개는 전부 미실측** — 장치가 아직 다 안 붙었다 |
 | 4 | Week 10 마무리 — 발표 자료, 회고, 면접 답변 | ⏳ |
 
 **나중에 할 항목**은 `PRD.md` §8 표 (A~G) 참조. 주차 단계 3 과는 다른 축이다.
@@ -177,13 +191,15 @@
 
 | 단계 | 산출물 존재 | AI 도구 설정 | 통과 |
 | --- | --- | --- | --- |
-| 기획 | ✅ PRD.md, DECISIONS.md (D-001~D-054) | ⏳ Jira MCP dry-run 미시연 | 🔄 |
-| 코딩 | ✅ src/ (엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리), CLAUDE.md, API-CONTRACT.md **v1.4**(500 `INTERNAL_ERROR` 추가, TRI-25~30) — **PRD 와 어긋난 5건은 여전히 남아 있음**, `TRI-14` 착수 시 정정 예정 (`INTEGRATION-LOG.md`) | 🔄 CLAUDE.md ✅ / Hooks ✅ / 서브에이전트 5종 🔄(PR #8 리뷰 중) / **Commands 미작성** | 🔄 |
-| 테스트 | ✅ tests/e2e/, e2e.yml, Testcontainers 8건 + 단위 8건 | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
-| 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (16건), .coderabbit.yaml | ✅ PR #1~#11 전원 자동 리뷰 동작 + **CodeRabbit GitHub App 설치 완료, 실제 코멘트 동작 확인됨**(Walkthrough·리뷰 코멘트) (D-054) | ✅ |
+| 기획 | ✅ PRD.md, DECISIONS.md (D-001~**D-059**) | ✅ **Jira MCP 시연 완료** (2026-08-07 — 상태 전이·기한 재배치·코멘트) | ✅ |
+| 코딩 | ✅ src/ — baseline(엔티티 3종·enum·repository·Flyway V1/V2·정적 팩토리) + **`config/`·`api/` 일부·`service/` 착수분**(마스킹·정규화 키·트랜잭션 ①·AI 호출·응답 파싱·값 검증 4종), `lombok.config`(D-057), CLAUDE.md, API-CONTRACT.md **v1.5**(모델 id 정정 + 실패 사유 5종 로그 전용 명시, TRI-49·50) — **PRD 와 어긋난 항목은 1건 닫히고 4건 잔여** (`INTEGRATION-LOG.md`) | 🔄 CLAUDE.md ✅ / Hooks ✅ / 서브에이전트 5종 ✅(PR #8 머지) / **Commands 미작성** | 🔄 |
+| 테스트 | ✅ tests/e2e/, e2e.yml, 단위·통합 **88건** | ⏳ Playwright MCP 시나리오는 health 1건뿐 | 🔄 |
+| 리뷰 | ✅ ai-review.yml, evidence/failure-cases.md (**17건**), .coderabbit.yaml | ✅ PR #1~#24 전원 자동 리뷰 동작 + **CodeRabbit 병행 동작 중** (D-054). **코드 PR 에서의 검출 실적도 쌓이기 시작** | ✅ |
 | 운영 | ✅ docker-compose.yml, Dockerfile, .env.example, MONITORING.md, SENTRY-GUIDE.md | 🔄 Sentry SDK + Source Context + MCP 연동, 실측 검증 완료(`SENTRY-GUIDE.md`, PR #9) — 실 트래픽 0 | 🔄 |
 
-> **잔여 3건이 실제로 남은 작업이다** — ⓐ Jira MCP dry-run ⓑ `.claude/commands/` ⓒ e2e 시나리오 확장.
-> PR #9 로 Sentry MCP 연동과 `MONITORING.md` 작성이 함께 끝나 **5건 → 3건**으로 줄었다. 이 문서가 한동안 `MONITORING.md` 를 "템플릿 상태"로 적고 있었는데 실제로는 채워진 뒤였다 — **문서가 자기 잔여 목록을 과다 계상하고 있었던 셈**이라 정정한다.
+> **잔여 2건이 실제로 남은 작업이다** — ⓐ `.claude/commands/` ⓑ e2e 시나리오 확장.
+> PR #9 로 Sentry MCP 연동과 `MONITORING.md` 가 끝나 5건 → 3건이 됐고, **2026-08-07 Jira MCP 시연으로 3건 → 2건**이 됐다.
+> ⓐ 는 지금 바로 할 수 있고, **ⓑ 는 트랜잭션 ②③ 이 붙어야 「투입 → 격리 → 확정」 흐름을 쓸 수 있으므로** P2·P3 진행에 묶여 있다.
+> 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서 실제 잔여가 가려진다. 그래서 **산출물 존재와 도구 설정을 두 열로 나눠** 둔다.
 > 이 표를 ⏳ 로 방치하면 "무엇이 남았는지"가 아니라 "아무것도 안 됐다"로 읽혀서 실제 잔여가 가려진다. 그래서 **산출물 존재와 도구 설정을 두 열로 나눠** 둔다.
 > ⓑ 는 지금 바로 할 수 있고, ⓐ 는 외부 서비스 연동이라 시연 시나리오를 먼저 정해야 한다. **ⓒ 는 `service/`·`api/` 착수에 종속**되므로 사실상 P1/P2/P3 진행에 묶여 있다.
