@@ -160,6 +160,16 @@ public class AiResponseParser {
      * <p>원문을 함께 남기는 이유는 <b>사유만으로는 못 고치기 때문</b>이다. {@code PARSE_ERROR}
      * 가 100건이어도 원문이 없으면 프롬프트의 어디를 고쳐야 할지 알 수 없다. 다만 길이를 잘라
      * 로그가 응답으로 덮이는 것을 막는다.
+     *
+     * <p><b>원문에 개인정보가 실리지 않는 근거</b> (AI 리뷰 지적). AI 는 <b>이미 가려진 본문</b>만
+     * 받는다 — {@link AiClassificationService#classify(String)} 의 인자가 마스킹본이다. 못 본 것을
+     * 응답에 쓸 수는 없으므로, 응답이 입력을 그대로 되뇌어도 나오는 것은 {@code [주문번호]} 같은
+     * 토큰이다. 게다가 이 원문은 {@code raw_response} 컬럼에 <b>어차피 저장된다</b> — 로그가 새 노출
+     * 경로를 만드는 것이 아니다.
+     *
+     * <p>⚠️ <b>단 이 근거는 부르는 쪽이 마스킹을 했다는 전제 위에 있다.</b> 마스킹을 빠뜨리면 원문이
+     * 로그에 남는 것보다 <b>가려지지 않은 본문이 외부 API 로 나가는 것</b>이 먼저 문제다. 그래서
+     * 방어를 여기 두지 않고 TRI-47(리스너) 착수 조건으로 넘긴다 — 막을 자리는 보내기 전이다.
      */
     private AiParsedClassification fail(ClassifyFailureReason reason, AiRawResponse raw,
             String detail) {

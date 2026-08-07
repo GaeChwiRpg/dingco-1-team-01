@@ -1,6 +1,7 @@
 package com.dingco.triage.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dingco.triage.domain.type.InquiryCategory;
 import java.math.BigDecimal;
@@ -58,6 +59,19 @@ class AiResponseParserTest {
 
             assertThat(result.confidence()).isEqualByComparingTo("0.931");
             assertThat(result.confidence().scale()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("딱 중간값은 올린다 (HALF_UP) — 0.9325 는 0.933")
+        void roundsHalfUpAtMidpoint() {
+            // 0.9325 를 고른 이유: 0.9315 로는 반올림 방식을 가릴 수 없다.
+            //   0.9315 → HALF_UP 0.932 / HALF_EVEN 0.932 / 버림 0.931
+            //   0.9325 → HALF_UP 0.933 / HALF_EVEN 0.932 / 버림 0.932   ← 셋이 갈린다
+            // 앞자리가 짝수일 때만 HALF_EVEN 이 내리므로, 그 자리를 골라야 방식이 고정된다
+            // (AI 리뷰가 0.9315 를 제안했는데 그 값으로는 HALF_EVEN 과 구분이 안 된다).
+            AiParsedClassification result = parse("{\"category\": \"PRODUCT\", \"confidence\": 0.9325}");
+
+            assertThat(result.confidence()).isEqualByComparingTo("0.933");
         }
 
         @ParameterizedTest(name = "경계값 {0} 은 통과한다")
@@ -250,6 +264,38 @@ class AiResponseParserTest {
             // "응답이 깨진 건"이 섞인다. 자리 자체를 비워 그 경로를 없앤다.
             assertThat(result.confidence()).isNull();
             assertThat(result.category()).isNull();
+        }
+
+        @Test
+        @DisplayName("절반만 채워진 실패는 아예 만들어지지 않는다 — 생성자가 막는다")
+        void rejectsPartiallyFilledFailure() {
+            // 앞선 판의 가드는 이 조합을 통과시켰다 (AI 리뷰 지적, 재현 확인).
+            // 통과하면 FAILED 인 건이 종류를 들고 트랜잭션 ②로 넘어가서,
+            // category 가 채워진 FAILED 행이 저장된다 — D-022 가 막으려던 바로 그 상태다.
+            assertThatThrownBy(() -> new AiParsedClassification(
+                    InquiryCategory.DELIVERY, null, ClassifyFailureReason.OUT_OF_RANGE))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            assertThatThrownBy(() -> new AiParsedClassification(
+                    null, new BigDecimal("0.9"), ClassifyFailureReason.OUT_OF_RANGE))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("셋 다 비어 있는 결과도 만들어지지 않는다 — 무엇을 저장할지 알 수 없다")
+        void rejectsEmptyResult() {
+            assertThatThrownBy(() -> new AiParsedClassification(null, null, null))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
+        @DisplayName("통과한 결과는 종류·확신도가 둘 다 있어야 한다")
+        void rejectsHalfFilledClassified() {
+            assertThatThrownBy(() -> new AiParsedClassification(InquiryCategory.DELIVERY, null, null))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            assertThatThrownBy(() -> new AiParsedClassification(null, new BigDecimal("0.9"), null))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
     }
 

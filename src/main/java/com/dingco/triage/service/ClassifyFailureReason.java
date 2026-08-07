@@ -47,7 +47,8 @@ public enum ClassifyFailureReason {
      * AI 를 부르는 것 자체가 실패했다 — 응답을 <b>받지 못했다</b>.
      *
      * <p>파서가 만들지 않는다. {@code AiCallException} 이 재시도를 소진했을 때
-     * {@code @Recover} 자리에서 쓴다.
+     * {@code @Recover} 자리에서 쓴다 — <b>TRI-54</b> 에서 이어붙인다. 그때까지 이 값은 쓰이는 곳이
+     * 없지만, 다섯을 한 자리에 모아두지 않으면 측정 2 가 <b>같은 분모로</b> 셀 수 없다.
      */
     API_ERROR
 }

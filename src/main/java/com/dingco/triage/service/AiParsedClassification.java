@@ -29,16 +29,23 @@ public record AiParsedClassification(
         ClassifyFailureReason failureReason) {
 
     public AiParsedClassification {
-        boolean classified = category != null && confidence != null;
-        boolean failed = failureReason != null;
-        if (classified == failed) {
-            // 한쪽만 채워져야 한다. 둘 다이거나 둘 다 아니면 다음 단계가 무엇을 저장할지 모른다.
+        // 실패냐 아니냐로 먼저 갈라야 한다. 앞선 판은 "종류·확신도가 둘 다 있는가"와
+        // "사유가 있는가"를 비교하는 방식이었는데, 그러면 절반만 채워진 실패
+        // (category=DELIVERY, confidence=null, failureReason=OUT_OF_RANGE) 가 통과했다 —
+        // 「둘 다 있지는 않다」와 「둘 다 없다」를 같은 것으로 셌기 때문이다 (AI 리뷰 지적, 재현 확인).
+        //
+        // 그 조합이 통과하면 FAILED 인 건이 종류를 들고 트랜잭션 ②로 넘어가고,
+        // 저장 자리에서 category 가 채워진 FAILED 행이 생긴다 — D-022 가 막으려던 바로 그 상태다.
+        if (failureReason != null) {
+            if (category != null || confidence != null) {
+                throw new IllegalArgumentException(
+                        "실패한 결과는 종류와 확신도가 둘 다 없어야 한다: category=%s, confidence=%s, failureReason=%s"
+                                .formatted(category, confidence, failureReason));
+            }
+        } else if (category == null || confidence == null) {
             throw new IllegalArgumentException(
-                    "종류·확신도와 실패 사유 중 하나만 채워야 한다: category=%s, confidence=%s, failureReason=%s"
-                            .formatted(category, confidence, failureReason));
-        }
-        if (!failed && (category == null || confidence == null)) {
-            throw new IllegalArgumentException("검증을 통과한 결과는 종류와 확신도가 둘 다 있어야 한다");
+                    "검증을 통과한 결과는 종류와 확신도가 둘 다 있어야 한다: category=%s, confidence=%s"
+                            .formatted(category, confidence));
         }
     }
 
