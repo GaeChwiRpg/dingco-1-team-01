@@ -2,15 +2,27 @@ package com.dingco.triage.api;
 
 import com.dingco.triage.api.dto.InquiryCreateRequest;
 import com.dingco.triage.api.dto.InquiryCreateResponse;
+import com.dingco.triage.api.dto.InquiryListResponse;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.Channel;
+import com.dingco.triage.domain.type.InquiryCategory;
+import com.dingco.triage.domain.type.InquiryStatus;
 import com.dingco.triage.service.InquiryIngestService;
+import com.dingco.triage.service.InquiryQueryService;
+import com.dingco.triage.service.InquiryQueryService.Criteria;
 import jakarta.validation.Valid;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -29,7 +41,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class InquiryController {
 
+    private static final String ROLE_CUSTOMER = "ROLE_CUSTOMER";
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final InquiryIngestService inquiryIngestService;
+    private final InquiryQueryService inquiryQueryService;
 
     @PostMapping("/api/inquiries")
     public ResponseEntity<InquiryCreateResponse> receive(
@@ -45,5 +61,45 @@ public class InquiryController {
         InquiryCreateResponse body = new InquiryCreateResponse(
                 inquiry.getId(), inquiry.getStatus(), inquiry.getReceivedAt());
         return ResponseEntity.accepted().body(body);
+    }
+
+    /**
+     * 문의 목록 (계약 §2). 고객은 자기 문의만, 상담원 이상은 전체 — <b>범위 좁히기는 여기서
+     * 판단만 하고 실제 강제는 {@code service/} 가 한다</b> (D-038). 컨트롤러는 인증 정보 추출과
+     * 페이징 검증까지만 하고, 조회 범위를 결정하는 값을 클라이언트가 넣지 못하게 한다.
+     *
+     * <p>{@code status} · {@code category} enum 불일치와 {@code from} · {@code to} 형식 오류는
+     * Spring 이 400 으로 잡는다. {@code size} 상한(100)은 값 범위 검증이라 여기서 직접 거절한다.
+     * 정렬 축은 {@code received_at} 하나뿐이라 {@code sort} 파라미터를 두지 않는다.
+     */
+    @GetMapping("/api/inquiries")
+    public InquiryListResponse list(
+            @RequestParam(required = false) InquiryStatus status,
+            @RequestParam(required = false) InquiryCategory category,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            Authentication authentication) {
+        if (page < 0) {
+            throw new BadRequestException("page", "page 는 0 이상이어야 합니다.");
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new BadRequestException("size", "size 는 1~" + MAX_PAGE_SIZE + " 사이여야 합니다.");
+        }
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "receivedAt"));
+        Criteria criteria = new Criteria(status, category, from, to);
+
+        if (isCustomer(authentication)) {
+            long customerId = Long.parseLong(authentication.getName());
+            return inquiryQueryService.listForCustomer(customerId, criteria, pageable);
+        }
+        return inquiryQueryService.listForAgent(criteria, pageable);
+    }
+
+    private static boolean isCustomer(Authentication authentication) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(a -> ROLE_CUSTOMER.equals(a.getAuthority()));
     }
 }
