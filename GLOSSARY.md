@@ -103,6 +103,15 @@ AI 호출을 줄이는 장치입니다. 순서대로 **① 캐시에서 찾아�
 >
 > 이름을 「워커」에서 「리스너」로 바꾼 이유는 **누가 이걸 부르는지를 이름에 담기 위해서**입니다 — 이건 다른 코드가 불러 쓰는 것이 아니라 **접수 신호(`InquiryReceivedEvent`)가 도착하면 저절로 도는 문**입니다. 직접 부르면 접수 저장과 분류 저장이 한 덩어리로 붙어 버립니다 (D-031 이 금지).
 
+> 📌 **옛 문서에서 만나는 파일 경로도 여기서 찾으세요 (D-059).** 결정 기록은 고치지 않는 규칙이라, 옛 항목에는 옛 경로가 그대로 남아 있습니다.
+>
+> | 옛 기록에 적힌 경로 | 지금 경로 | 어디에 남아 있나 |
+> | --- | --- | --- |
+> | `service/AiClassificationService` | **`service/ai/AiClassificationService`** | D-024 · D-051 · D-058 본문 |
+> | `service/AiClassifyWorker` | **`service/event/InquiryReceivedEventListener`** | D-058 본문 (변경 이력 서술) |
+>
+> `AiRawResponse` · `AiResponseParser` · `AiParsedClassification` · `ClassifyFailureReason` · `AiCallException` 도 모두 **`service/ai/`** 로 옮겨졌습니다. **AI 가 준 값을 다루는 것은 전부 거기 있습니다** — 그 밖은 우리가 판정한 값입니다 (D-059).
+
 ```text
 접수 API 스레드 : 문의 저장 → "접수됨" 신호 → 고객에게 응답      (여기서 끝)
                               ↓ 신호를 받아

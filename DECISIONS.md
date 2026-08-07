@@ -1671,8 +1671,12 @@
   | `ContentMasker` · `NormalizedKeyGenerator` | **셋 다 쓰는 공유 자산이라 어디에 넣어도 거짓말이 된다.** `ingest/` 에 넣으면 P3 의 응답 마스킹이 접수 패키지를 import 하고, `ai/` 에 넣으면 화면 마스킹이 AI 패키지를 import 한다 |
   | `InquiryIngestService` · `ClassificationService` · `ReviewService` · `StatsService` · `AuditSamplingPolicy` | **전부 트랜잭션 경계이거나 정책**이라 나란히 보이는 편이 낫다. `CLAUDE.md` 의 ①②③ 표와 파일 목록이 1:1 로 맞는다 |
   | `cache/` | **예약.** 계약 C 는 P1 이 읽고 쓰고 P2 가 ② 커밋 후, P3 가 ③ 커밋 후 쓴다 — 값 구조가 흩어지면 3자 합의가 코드에서 안 보여 나눌 진짜 이유가 있다. 다만 지금 파일이 **0개**라 빈 패키지를 만들지 않는다. 이용택(TRI-40)이 올릴 때 함께 만든다 |
-- **영향**: `service/ai/` 신설 + main 6개 · test 3개 이동(`git mv`, 이력 보존). `package-info.java` 신규. **import 변경 0건** — 밖에서 타입으로 참조하던 곳이 없었다(`AnthropicClientConfig`·`ContentMasker` 는 `{@code}` 표기라 링크가 아니다). `CLAUDE.md` 6 공통 필수 기능 매핑 · `PRD.md` §5-0 의 경로 표기. **코드 동작·스키마 변경 없음**, 테스트 88건 그대로 통과
-  - D-024·D-051·D-058 본문의 `service/AiClassificationService` 표기는 **고치지 않는다** (본문 불변 규칙). 지금 경로는 `service/ai/AiClassificationService` 다
+- **baseline**: 이동 직전 `service/` 는 평탄한 9개였다 (`ContentMasker` · `NormalizedKeyGenerator` · `InquiryIngestService` + `Ai*` 5 + `ClassifyFailureReason`, `event/` 는 별도). 기준 커밋 `4d9f163`
+- **영향**: `service/ai/` 신설 + main 6개 · test 3개 이동(`git mv`, 이력 보존). `package-info.java` 신규. **import 변경 0건.** `CLAUDE.md` 6 공통 필수 기능 매핑 · `PRD.md` §5-0 의 경로 표기. **코드 동작·스키마 변경 없음**, 테스트 88건 그대로 통과
+  - **재현**: `./gradlew test --tests "com.dingco.triage.service.*" --tests "com.dingco.triage.domain.*"` → 88건 GREEN.
+    이력 보존은 `git log --follow src/main/java/com/dingco/triage/service/ai/AiClassificationService.java`
+  - ⚠️ **「import 변경 0건」을 「밖에서 안 쓴다」로 읽지 않는다 (AI 리뷰 지적에 대한 답).** 지금 참조가 없는 것은 **소비자가 아직 없기 때문**이다 — TRI-47(리스너)이 붙으면 `AiResponseParser` 를 주입받고 `AiRawResponse` 를 들고 다닌다. 그래서 **둘을 package-private 으로 좁힐 수 없다**: 리스너는 `service/event/` 라 다른 패키지다. 이 항목이 *"강제력이 없다"* 고 적은 이유가 이것이고, **0건은 「지금 옮겨도 안 깨진다」의 근거일 뿐 「경계가 닫혀 있다」의 근거가 아니다**
+  - D-024·D-051·D-058 본문의 `service/AiClassificationService` 표기는 **고치지 않는다** (본문 불변 규칙). 지금 경로는 `service/ai/AiClassificationService` 이고, 대응은 `GLOSSARY.md` 「분류 담당」의 옛 경로 표에 넣었다 — D-058 이 「워커」를 3중 대응표로 처리한 것과 같은 방식이다
 - **재평가**: **`ai/` 안이 다시 어수선해져도 더 쪼개지 않는다** — 6~8개는 한 화면이고, 여기서 또 나누면 개수 기준으로 되돌아간다. 대신 **경계가 하나 더 생기면**(예: AI 프로바이더가 둘이 되어 "누구에게 묻는가"가 갈리면) 그때 다시 본다. 그리고 **흐름별로 나누고 싶어지는 순간이 오면 그건 `service/` 가 아니라 모듈을 나눌 때**다 — 그때는 이 항목이 아니라 새 항목으로 판단한다
 
 <!-- 다음 결정 추가 시 D-060 부터 -->
