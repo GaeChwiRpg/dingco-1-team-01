@@ -139,6 +139,34 @@ public class Inquiry {
         return inquiry;
     }
 
+    /**
+     * 판정 결과의 <b>사본</b>을 새긴다 — 트랜잭션 ②③ 전용 (D-011 · 불변 규칙 3).
+     *
+     * <p><b>진짜 판정은 {@code inquiry_classification_result} 행에 있다.</b> 여기 두 칸은 목록
+     * 조회에서 조인을 없애려고 베껴둔 것이고, {@code (status, current_category, received_at)}
+     * 인덱스가 필터와 정렬을 함께 커버하게 한다.
+     *
+     * <p><b>요약하지 않고 그대로 복사한다 (D-039).</b> 원본이 {@code null} 이면 {@code null} 을
+     * 넣는다 — {@code 0} 이나 "미분류" 같은 값으로 채우지 않는다. {@code 0} 은 비교에서 <b>가장 낮은
+     * 신뢰도로 참여</b>해 조용히 틀리고, 그러면 측정 8ⓐ 의 최하위 구간이 오염된다.
+     *
+     * <p><b>상태({@code status})는 여기서 안 바꾼다.</b> 그 전이는 조건부 UPDATE 한 문장으로
+     * 원자적으로 끝내야 하기 때문이다 (D-049) — 같은 문의에 분류 신호가 두 번 오면 검토 목록에
+     * 2건이 들어가고, 그러면 상담원이 같은 문의를 두 번 보고 감사 건수가 부풀어 <b>오분류율이
+     * 실제보다 낮게 나온다.</b> 그래서 <b>원자성이 필요한 상태 전이는 UPDATE 문이</b>,
+     * <b>의미가 필요한 사본 갱신은 이 메서드가</b> 맡는다.
+     *
+     * <p>⚠️ 이 메서드는 <b>{@code ClassificationService.verifyAndPersist} 안에서 조건부 UPDATE 가
+     * 성공한 뒤에만</b> 부른다. 단독으로 부르면 사본이 상태와 어긋난다.
+     *
+     * @param category   판정된 종류. {@code FAILED} 면 {@code null}
+     * @param confidence AI 가 매긴 확신도. {@code FAILED} 거나 사람 확정을 재사용한 건이면 {@code null}
+     */
+    public void applyClassification(InquiryCategory category, BigDecimal confidence) {
+        this.currentCategory = category;
+        this.currentConfidence = confidence;
+    }
+
     public Long getId() {
         return id;
     }
