@@ -82,19 +82,28 @@ class InquiryReviewQueueNPlusOneTest {
         return statistics;
     }
 
+    /**
+     * {@code SMALL_ITEM_COUNT}·{@code LARGE_ITEM_COUNT} 는 반드시 {@code PAGE_SIZE} 보다
+     * 작아야 한다 — Spring Data 의 Page 최적화(CLAUDE.md, 결과 건수가 페이지 크기보다 적으면
+     * {@code totalElements} 를 추론해 COUNT 쿼리를 생략) 경계에 걸치면 3건→1회, 20건→2회
+     * (COUNT 쿼리 추가)로 갈려서 N+1 여부와 페이지네이션 부가 쿼리를 못 가른다(실제 재현 확인).
+     * 이 관계를 깨고 바꾸면 {@code EXPECTED_QUERY_COUNT} 도 함께 틀리게 된다.
+     */
+    private static final int PAGE_SIZE = 20;
+    private static final int SMALL_ITEM_COUNT = 3;
+    private static final int LARGE_ITEM_COUNT = 15;
+    /** 목록 1 + EntityGraph 조인 1 = SQL 1회. COUNT 쿼리가 생략되는 조건일 때만 성립한다. */
+    private static final long EXPECTED_QUERY_COUNT = 1;
+
     @Test
     @DisplayName("EntityGraph 적용 후에는 항목 수가 늘어도 쿼리 수가 그대로다 (N+1 없음)")
     void withEntityGraphQueryCountDoesNotScaleWithItemCount() {
-        // 페이지 크기(20)와 같은 건수로 비교하면 Spring Data 의 Page 최적화(결과 건수가
-        // 페이지 크기보다 적으면 totalElements 를 추론해 COUNT 쿼리를 생략)가 경계에 걸려
-        // 3건→1회, 20건→2회(COUNT 쿼리 추가)로 갈린다(실제 재현 확인) — 이건 N+1 이 아니라
-        // 페이지네이션 부가 쿼리다. 둘 다 페이지 크기 밑으로 둬서 그 경계를 피한다.
         Statistics statistics = statistics();
 
-        seedItems(3);
+        seedItems(SMALL_ITEM_COUNT);
         statistics.clear();
         Page<InquiryReviewQueueItem> small = queueRepository.search(QueueStatus.PENDING, null, null,
-                PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt")));
+                PageRequest.of(0, PAGE_SIZE, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
         small.getContent().forEach(item -> {
             item.getInquiry().getContent();
             item.getClassificationResult().getCategory();
@@ -102,21 +111,25 @@ class InquiryReviewQueueNPlusOneTest {
         long smallCount = statistics.getPrepareStatementCount();
 
         cleanTables();
-        seedItems(15);
+        seedItems(LARGE_ITEM_COUNT);
         statistics.clear();
         Page<InquiryReviewQueueItem> big = queueRepository.search(QueueStatus.PENDING, null, null,
-                PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt")));
+                PageRequest.of(0, PAGE_SIZE, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
         big.getContent().forEach(item -> {
             item.getInquiry().getContent();
             item.getClassificationResult().getCategory();
         });
         long bigCount = statistics.getPrepareStatementCount();
 
-        System.out.println("[N+1 evidence] EntityGraph 적용, 3건 -> SQL " + smallCount
-                + "회 / 15건 -> SQL " + bigCount + "회");
+        System.out.println("[N+1 evidence] EntityGraph 적용, " + SMALL_ITEM_COUNT + "건 -> SQL " + smallCount
+                + "회 / " + LARGE_ITEM_COUNT + "건 -> SQL " + bigCount + "회");
 
+        assertThat(smallCount)
+                .as("이 값 자체가 틀어지면(둘 다 같이 커져도) 상대 비교만으로는 못 잡으므로 고정값도 함께 지킨다")
+                .isEqualTo(EXPECTED_QUERY_COUNT);
         assertThat(bigCount)
-                .as("항목이 3건에서 15건으로 늘어도 쿼리 수가 그대로여야 @EntityGraph 가 N+1 을 없앤 것이다")
+                .as("항목이 " + SMALL_ITEM_COUNT + "건에서 " + LARGE_ITEM_COUNT + "건으로 늘어도 쿼리 수가 그대로여야 "
+                        + "@EntityGraph 가 N+1 을 없앤 것이다")
                 .isEqualTo(smallCount);
     }
 }

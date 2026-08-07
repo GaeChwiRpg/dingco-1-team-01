@@ -80,7 +80,8 @@ class InquiryReviewQueueRepositoryTest {
 
     private static Page<InquiryReviewQueueItem> search(InquiryReviewQueueRepository repo, QueueStatus status,
             Instant from, Instant to) {
-        return repo.search(status, from, to, PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt")));
+        return repo.search(status, from, to,
+                PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
     }
 
     @Test
