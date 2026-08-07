@@ -1,4 +1,4 @@
-package com.dingco.triage.service;
+package com.dingco.triage.service.ai;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.errors.AnthropicException;

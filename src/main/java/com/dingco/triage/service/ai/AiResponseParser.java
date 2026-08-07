@@ -1,4 +1,4 @@
-package com.dingco.triage.service;
+package com.dingco.triage.service.ai;
 
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.fasterxml.jackson.core.JacksonException;

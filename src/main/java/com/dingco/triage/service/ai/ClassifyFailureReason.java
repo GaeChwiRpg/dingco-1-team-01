@@ -1,4 +1,4 @@
-package com.dingco.triage.service;
+package com.dingco.triage.service.ai;
 
 /**
  * 분류가 실패한 사유 5종 — <b>구조화 로그로만 남는다</b> (TRI-50 · CLAUDE.md 「AI 호출 규칙」).
