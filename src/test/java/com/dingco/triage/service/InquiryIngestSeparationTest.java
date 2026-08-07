@@ -1,6 +1,7 @@
 package com.dingco.triage.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.repository.InquiryRepository;
@@ -17,8 +18,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 트랜잭션 ①과 ②가 <b>분리</b>됐는지 고정한다 (TRI-33 · 계약 A · D-031).
@@ -45,6 +48,9 @@ class InquiryIngestSeparationTest {
 
     @Autowired
     private ThrowingListener throwingListener;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     @DisplayName("수신측이 예외를 던져도 문의는 DB 에 남는다 — ①②분리 (AFTER_COMMIT)")
@@ -78,6 +84,33 @@ class InquiryIngestSeparationTest {
         if (savedId != null) {
             assertThat(inquiryRepository.findById(savedId)).isPresent();
         }
+    }
+
+    @Test
+    @DisplayName("① 트랜잭션이 롤백되면 신호는 나가지 않고 문의도 저장되지 않는다 — AFTER_COMMIT 의 반대 방향")
+    void rollbackFiresNoEventAndPersistsNothing() {
+        throwingListener.reset();
+        String marker = "롤백테스트 " + UUID.randomUUID();
+
+        // receive() 를 감싸는 트랜잭션을 일부러 롤백시킨다. receive() 는 REQUIRED 라 이 트랜잭션에
+        // 합류하므로, 여기서 예외를 던지면 저장까지 함께 되돌아간다.
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            ingestService.receive(9002L, marker, Channel.WEB);
+            throw new IllegalStateException("강제 롤백 — ①이 커밋되지 못한 상황");
+        })).isInstanceOf(IllegalStateException.class);
+
+        // 커밋이 없었으니 AFTER_COMMIT 리스너는 호출되지 않는다 — 없던 문의를 분류하는 유령 신호 차단.
+        assertThat(throwingListener.invocations())
+                .as("롤백이면 AFTER_COMMIT 이 발생하지 않아 신호가 나가면 안 된다")
+                .isZero();
+
+        // 문의도 남지 않는다.
+        boolean persisted = inquiryRepository.findAll().stream()
+                .anyMatch(i -> marker.equals(i.getContent()));
+        assertThat(persisted)
+                .as("① 이 롤백됐으므로 문의도 저장돼 있으면 안 된다")
+                .isFalse();
     }
 
     /**
