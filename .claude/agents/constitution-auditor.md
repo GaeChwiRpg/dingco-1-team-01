@@ -46,7 +46,7 @@ git diff develop...HEAD
 | # | 규칙 | 위반 신호 |
 | --- | --- | --- |
 | 1 | `final_category` 기록 시 `category` 를 덮어쓰지 않는다 | `ReviewService.confirm` 경로에서 `category` 에 setter/할당. 덮어쓰면 오분류 증거가 사라져 **측정 8 이 불가능해진다** |
-| 2 | `UNCLASSIFIED → CLASSIFIED` 전이는 사람만 | AI 경로(`AiClassifyWorker`·`ClassificationService`·`@Recover`)에서 이 전이가 일어남. AI 에게 이 권한 없음 |
+| 2 | `UNCLASSIFIED → CLASSIFIED` 전이는 사람만 | AI 경로(`InquiryReceivedEventListener`·`ClassificationService`·`@Recover`)에서 이 전이가 일어남. AI 에게 이 권한 없음 |
 | 3 | `Inquiry.current_*` 는 판정 확정 트랜잭션(②③) 안에서만 갱신 | 접수 경로·스케줄러·이벤트 리스너 등 다른 경로에서 `current_category`/`current_confidence` 를 건드림. 역정규화 사본이 원본과 어긋난다 (D-011) |
 
 > **폐기된 규칙 1(상태는 `ErrorGroup` 이 소유)의 자리에 새 위반 신호가 생겼다 (D-031)**: `normalized_key` 가 같다는 이유로 **여러 문의의 상태를 공유·일괄 전이**시키는 코드. 그건 그룹핑의 부활이고, 개별 문의가 조용히 사라지는 경로다. 재사용해도 되는 것은 **AI 호출 결과뿐**이다.
