@@ -27,11 +27,16 @@ JPQL `(:from is null or ...)` 이 실제로 바인드하는 모양을 그대로 
 - **30건에서는 인덱스를 안 탄다** — `key=null`, `Using filesort`. 옵티마이저의 정상 판단이라
   인덱스나 쿼리 결함이 아니다.
 - **1,000건(현실적인 규모)에서는 인덱스를 탄다** — `key=idx_irq_status_created`,
-  `Using index condition`이고 **`Using filesort`가 없다**. PRD.md 표가 예상한
-  "인덱스 순서로 정렬, filesort 없음"과 일치.
+  `Using index condition`이고 **`Using filesort`가 없다**. CLAUDE.md 표(76번째 줄)가 예상한
+  `filesort` 없음은 일치하지만, **`type`은 예상한 `ref`가 아니라 `range`로 나왔다** —
+  `status='PENDING'` 등치 조건만 있으면 `ref`가 맞는데, 실제 JPQL은
+  `(:from is null or created_at >= :from) and (:to is null or created_at <= :to)`로
+  `created_at`에 부등호 조건이 함께 걸려 있어 옵티마이저가 이를 범위 스캔으로 판단했다.
+  인덱스를 실제로 쓰고 filesort가 없다는 핵심 결론에는 영향 없지만, `type` 하나는 예상표와
+  어긋난 값이라 그대로 남긴다.
 - 결론: 인덱스 설계(`(status, created_at)`)는 유효하다. 이 실행 계획 자체는 옵티마이저의
   비용 판단 결과라 매 CI마다 재증명 대상으로 삼지 않는다(1,000건 seed가 무겁고, 데이터
-  분포·MySQL 버전에 따라 결과가 달라질 수 있어 CI 게이트로는 flaky해지기 쉽다) — 대신 스키마에
+  분포·MySQL 버전에 따라 결과가 달라질 수 있어 CI 게이트로는 불안정한 테스트(flaky)가 되기 쉽다) — 대신 스키마에
   인덱스가 실제로 존재하는지만 가볍게 상시 검증한다
   (`InquiryReviewQueueRepositoryTest.statusCreatedIndexExistsOnSchema`).
 
