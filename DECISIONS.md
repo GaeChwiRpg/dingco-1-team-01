@@ -1620,8 +1620,15 @@
   - **이 클래스 자체는 코드 수정 없음.** TRI-47 이 미착수라 아직 0줄이다. **바꾸려면 지금이 유일하게 싼 시점**이고, 짜고 난 뒤면 코드 + 테스트까지 따라온다
     - 단 **PR #20(TRI-31~33)이 먼저 머지되면서 옛 이름을 참조하는 주석이 하나 생겼다** — `InquiryIngestSeparationTest` 의 "실제 소비자는 P2 의 …" javadoc. 함께 고쳤다. **아직 없는 클래스를 가리키는 주석도 낡는다**는 사례로 남긴다
   - **TRI-47 착수 조건**: 클래스 최상단 javadoc 에 ⓐ 이게 `InquiryReceivedEvent` 를 받는 자리라는 것 ⓑ **하는 일은 AI 분류 호출 + 트랜잭션 ② 위임**이라는 것 ⓒ **직접 호출 금지 — 부르면 ①②가 한 트랜잭션으로 붙는다(D-031)** 세 가지를 적는다. 이름이 잃은 정보를 여기서 되찾는다
-  - 문서 7곳: `CLAUDE.md` 6 공통 필수 기능 매핑 · `PRD.md` 5-0 표와 5-5 본문 · `GLOSSARY.md` 「분류 담당」 항목 2곳 · `.claude/agents/` 2개 파일
-  - Jira **TRI-47** 제목
+    - [ ] javadoc ⓐⓑⓒ
+    - [ ] `@TransactionalEventListener(AFTER_COMMIT)` 확인 — 평범한 `@EventListener` 면 ①②가 다시 붙는다
+    - [ ] **테스트 프로파일에서 실제 리스너를 격리**한다 (`@Profile("!test")` — D-056 에서 쓴 것과 같은 수단). 안 하면 `InquiryIngestSeparationTest` 가 문의를 저장할 때마다 **실제 AI 호출과 DB 변경이 일어난다** (AI 리뷰 지적)
+    - [ ] **실제 리스너로** 커밋 후 수신 / 롤백 시 미수신을 통합 테스트로 고정한다 — 지금은 테스트 전용 `ThrowingListener` 만 검증하고 있어 **진짜 리스너의 계약은 아무도 안 지킨다**
+    - [ ] 직접 호출 금지는 주석으로 강제되지 않으므로 **리스너 메서드를 package-private** 으로 둔다. ArchUnit 은 새 의존성이라 도입하려면 결정 항목이 먼저다
+    - 완료 확인: `grep -rn 'AiClassifyWorker' src/` 가 0건
+  - 문서 9곳 (`.claude/` 포함): `CLAUDE.md` 6 공통 필수 기능 매핑 · `PRD.md` 5-0 표와 5-5 본문 · `GLOSSARY.md` 「분류 담당」 항목 2곳 **+ 「분류」 항목 신설** · `.claude/agents/` **3개 파일**(`constitution-auditor` · `implementation-specialist` · `refactoring-specialist`) + `InquiryIngestSeparationTest` javadoc
+    - `PAAR-CARDS.md` · `API-CONTRACT.md` 는 **해당 없음** — 두 문서는 이 클래스를 애초에 언급하지 않는다
+  - Jira **TRI-47** 제목 + 본문
   - **D-031·D-036 본문의 「워커」 표기는 고치지 않는다** (본문 불변 규칙). 대신 `GLOSSARY.md` 에 **「분류 담당」 = 옛 기록의 「워커」 = 지금의 「리스너」** 3중 대응 표를 넣었다. 이 겹이 늘어난 것이 이번 변경의 대가다
     - 줄번호가 아니라 **결정 번호로 가리킨다** — 항목이 추가될 때마다 줄이 밀려 줄번호는 금방 거짓이 된다
 - **재평가**: **같은 `InquiryReceivedEvent` 를 받는 리스너가 둘 이상 생기면 이 이름으로는 구분이 안 된다.** 그때는 하는 일을 이름에 되돌린다(예: `InquiryClassifyListener`). 「나중에 할 것」 E(멈춘 문의 자동 재분류)가 붙을 때가 가장 유력한 시점이다.
