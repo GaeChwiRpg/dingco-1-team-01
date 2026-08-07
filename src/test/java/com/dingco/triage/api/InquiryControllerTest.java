@@ -127,6 +127,18 @@ class InquiryControllerTest {
     }
 
     @Test
+    @DisplayName("X-User-Id 가 숫자가 아니면 500 이 아니라 401 — 클라이언트 잘못을 서버 오류로 안 남긴다")
+    void malformedUserIdReturns401() throws Exception {
+        String body = "{\"content\":\"문의합니다\"}";
+
+        mockMvc.perform(post("/api/inquiries")
+                        .header("X-User-Id", "not-a-number").header("X-User-Role", "CUSTOMER")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
     @DisplayName("고객이 아닌 역할은 403 — 접수는 ROLE_CUSTOMER 전용")
     void nonCustomerForbidden() throws Exception {
         String body = "{\"content\":\"문의합니다\"}";
