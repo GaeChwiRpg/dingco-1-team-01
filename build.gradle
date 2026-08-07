@@ -54,6 +54,13 @@ dependencies {
     // 않고 조용히 no-op 으로 동작한다 — 키 없이도 앱은 정상 기동한다.
     implementation 'io.sentry:sentry-spring-boot-starter-jakarta:8.51.0'
 
+    // Lombok — @RequiredArgsConstructor 등 보일러플레이트 제거용. 버전은 스프링 부트가 관리.
+    // @Data·@Setter 는 lombok.config 로 컴파일 에러 처리해 금지한다 (D-057).
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     // 측정 5(EXPLAIN)·7(동시성)이 의미를 가지려면 테스트 DB 가 운영과 같은 엔진이어야 한다.

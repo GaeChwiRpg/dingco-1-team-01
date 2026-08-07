@@ -115,6 +115,12 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 - `service/` — 비즈니스 흐름 + 트랜잭션 경계
 - `domain/` — 도메인 객체 + `repository/` 저장만
 
+### Lombok 사용 규칙 (D-057)
+
+- **`@Data`·`@Setter` 금지.** `lombok.config` 가 컴파일 에러로 막는다 — 도메인 객체에 무분별한 setter 가 생기면 상태 변경이 "의미를 가진 메서드"가 아니라 필드 노출로 새어 불변 규칙(`current_*` 갱신 자리 등, D-011)이 무너진다
+- 허용: `@RequiredArgsConstructor`·`@Getter`·`@Slf4j`·`@AllArgsConstructor`·`@Builder`·`@Value` 등. 빈은 명시적 생성자 대신 `@RequiredArgsConstructor` 를 써도 된다
+- 새 Lombok 애노테이션이 문제를 일으키면 `flagUsage` 로 개별 차단하고 이 항목에 남긴다
+
 ### `@Transactional` 위치
 
 - Controller 절대 X
