@@ -52,9 +52,30 @@ inquiries-50.csv  : DELIVERY ×5 → RETURN_REFUND ×5 → PAYMENT ×5 → …
 
 | 파일 | 무엇 | 누가 본다 |
 | --- | --- | --- |
-| `inquiries-50.csv` | 본문 + **1차 정답** + `is_boundary` · `rationale` · `dup_group` | 1차 작성자만 |
-| **`inquiries-50-blind.csv`** | **`ref` · `content` · `channel` · 빈 `label` 칸** | **2차 작성자** |
-| `inquiries-50-blind-map.csv` | `ref` → 원본 `id` 대조표 | 1차 작성자만 (대조할 때) |
+| `inquiries-50.csv` | 본문 + **AI 초안 라벨** + `is_boundary` · `rationale` · `dup_group` | 아무도 (레이블 중에는 열지 않는다) |
+| **`inquiries-50-blind.csv`** | **`ref` · `content` · `channel` · 빈 `label` 칸** — **빈 서식. 채우지 않는다** | 서식 원본 |
+| `inquiries-50-label-1st-junhyun.csv` | 위 서식의 복사본 — **김준현이 여기에만 적는다** | 김준현 |
+| `inquiries-50-label-2nd-yongtaek.csv` | 위 서식의 복사본 — **이용택이 여기에만 적는다** | 이용택 |
+| `inquiries-50-blind-map.csv` | `ref` → 원본 `id` 대조표 | 대조할 때만 |
+
+#### 두 사람이 각자 자기 파일에 적는다
+
+```text
+inquiries-50-blind.csv                    ← 빈 서식. 그대로 둔다
+   ├─ 복사본 → inquiries-50-label-1st-junhyun.csv    (김준현이 채움)
+   └─ 복사본 → inquiries-50-label-2nd-yongtaek.csv   (이용택이 채움)
+                          ↓
+                  ref 로 두 파일을 대조 → 일치율
+```
+
+- **자기 이름이 붙은 파일에만 적고, 상대 파일은 열지 않는다.** 한 파일에 둘이 적으면 나중 사람이 앞사람 답을 그대로 본다
+- `label` 칸에는 10종 중 하나를 그대로 쓴다 — `DELIVERY` · `RETURN_REFUND` · `PAYMENT` · `PRODUCT` · `ACCOUNT` · `ORDER_CHANGE` · `PROMOTION` · `SERVICE_USAGE` · `COMPLAINT` · `ETC`
+- 판단이 갈리면 `PRD.md` §7 경계표를 본다. 그 표가 원래 판정 근거다
+- **종류별 5건에 억지로 맞추지 않는다.** 안 맞으면 그건 오류가 아니라 **§7 경계가 흔들린다는 신호**다. 맞추면 그 신호가 지워진다
+
+> 🚫 **채우는 중에는 커밋하지 않는다.** 먼저 끝낸 사람이 커밋하면 나중 사람이 그 답을 보게 되어 독립이 깨진다. **두 사람 다 끝난 것을 확인한 뒤 두 파일을 한 번에 커밋**한다.
+
+> ⚠️ **`inquiries-50.csv` 의 `expected_category` 는 AI 가 붙인 것이다** (`evidence/seed-draft-provenance.md`). 「꼭 지킬 것」 1번 위반 상태라 두 사람이 다시 붙이는 중이고, **1차 작성자는 그 AI 답을 이미 본 상태**라 앵커링이 남는다. 이 한계는 `evidence/seed-label-agreement.md` 에 함께 적는다.
 
 - `is_boundary` 도 뺐다 — **"이건 헷갈리는 건"이라고 알려주면 그 건만 더 신중해져서** 경계 9건의 일치율이 부풀려진다. 결론이 갈리는 자리가 정확히 거기다
 - `dup_group` 도 뺐다 — 어느 것끼리 같은 뜻인지 알려주면 같은 답을 붙이게 된다
@@ -86,7 +107,7 @@ grep -c -E 'DELIVERY|RETURN_REFUND|PAYMENT|PRODUCT|ACCOUNT|ORDER_CHANGE|PROMOTIO
   src/test/resources/seed/inquiries-50-blind.csv
 ```
 
-**`label` 칸을 다 채우면 그 파일 그대로 넘긴다.** 1차와 대조해 일치율을 내는 것은 1차 작성자(김준현)가 한다 — 2차 작성자가 직접 맞춰보면 **갈린 걸 발견한 순간 자기 답을 고치고 싶어진다.** 대조는 `ref` 로 원본 `id` 를 찾아 붙인다.
+**두 파일이 다 채워지면 `ref` 로 맞춰 일치율을 낸다.** 대조는 김준현이 한다 — 2차 작성자가 직접 맞춰보면 **갈린 걸 발견한 순간 자기 답을 고치고 싶어진다.** 원본 `id` 가 필요하면 `inquiries-50-blind-map.csv` 로 찾는다.
 
 > **이걸 왜 두 사람이 하는지**는 `GLOSSARY.md` 의 「2인 독립 레이블」에 있다. 한 사람만 붙이면 오분류율에 *"AI 가 틀린 것"* 과 *"사람끼리 갈린 것"* 이 섞여서 결론을 읽을 수 없다.
 
