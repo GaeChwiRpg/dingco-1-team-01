@@ -28,16 +28,18 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 문의 접수 endpoint (계약 §1, {@code ROLE_CUSTOMER}).
+ * 문의 endpoint — 접수(§1) · 목록(§2) · 상세(§3).
  *
- * <p><b>AI 분류를 기다리지 않고 즉시 반환한다</b> — 그래서 201 이 아니라 <b>202 Accepted</b>다.
+ * <p><b>접수는 AI 분류를 기다리지 않고 즉시 반환한다</b> — 그래서 201 이 아니라 <b>202 Accepted</b>다.
  * 저장과 신호 발행은 서비스(트랜잭션 ①)가 하고, 실제 분류는 그 신호를 받은 P2 가 뒤에서 한다.
+ * 조회(목록·상세)는 {@link InquiryQueryService} 가 범위 강제·마스킹·역할별 표기를 맡고, 컨트롤러는
+ * 인증 정보 추출과 페이징 검증까지만 한다 (D-038).
  *
  * <p><b>트랜잭션 경계를 이 클래스에 두지 않는다.</b> 경계는 서비스의 몫이다 (3계층 분리).
  * 컨트롤러는 HTTP 입출력과 DTO 변환까지만 하고 도메인 객체를 그대로 반환하지 않는다.
  *
- * <p>검증 실패(400)·인증 누락(401)은 여기서 try-catch 하지 않는다 — 공용 예외 처리 지점
- * ({@code GlobalExceptionHandler}) 한 곳에서 공통 형식으로 내보낸다.
+ * <p>검증 실패(400)·인증 누락(401)·권한 부족·남의 문의(403)·없는 문의(404)는 여기서 try-catch 하지
+ * 않는다 — 공용 예외 처리 지점({@code GlobalExceptionHandler}) 한 곳에서 공통 형식으로 내보낸다.
  */
 @RestController
 @RequiredArgsConstructor

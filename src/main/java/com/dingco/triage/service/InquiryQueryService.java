@@ -24,7 +24,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 /**
- * 문의 목록 조회 (계약 §2).
+ * 문의 목록·상세 조회 (계약 §2 · §3).
  *
  * <p><b>왜 조회 응답을 {@code service/} 에서 만드는가</b> — 이 경로의 응답 조립은 단순 DTO 변환이
  * 아니라 보안 규칙이다. ⑴ 고객의 조회 범위를 서버가 강제하고(D-038), ⑵ 본문을 마스킹하며(D-040),
