@@ -165,7 +165,7 @@ US-1~9는 팀이 합의한 번호 그대로다. 10~13은 설계하면서 추가�
 | 핵심 트랜잭션 | `@Transactional` **세 곳뿐**. 저장 뒤 신호는 `@TransactionalEventListener(AFTER_COMMIT)` | ① `service/InquiryIngestService.receive`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` | 큐 삽입을 일부러 실패 → 분류 결과만 되돌아감 (측정 3) |
 | 검색·필터 | 조건부 조회 + 페이징. 항목마다 추가 쿼리가 안 나가게 `@EntityGraph` | `domain/repository/InquiryReviewQueueRepository.search` | `EXPLAIN` 전후 비교 (측정 5), 쿼리 개수 세기 (속도 b) |
 | 캐시 | Redis. **1단은 직접 넣고 빼고**(조건부라 `@Cacheable` 로 안 됨), 통계 요약만 `@Cacheable` + `@CacheEvict` | ① `service/ClassificationCache`<br>② `service/StatsService.summary` | AI 호출 횟수 (측정 6), 캐시 적중률 (측정 11) |
-| 비동기·이벤트 | `@Async` + 스레드풀 직접 지정, `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` | 오류 주입 → 재시도 3회 + 큐 삽입 (측정 4) |
+| 비동기·이벤트 | `@Async` + 스레드풀 직접 지정, `@Retryable(3)` + `@Recover` | `service/event/InquiryReceivedEventListener`, `service/event/` | 오류 주입 → 재시도 3회 + 큐 삽입 (측정 4) |
 | AI 보조 | Anthropic 호출 + 값 검증 4가지 + 기준값 비교 + 감사 5% 뽑기 | `service/AiClassificationService`, `service/AuditSamplingPolicy` | 정답 대조 (측정 1), 오분류율 (측정 8ⓐ-1) |
 
 **시작 전에 넣어야 할 것 2개** — 지금 `build.gradle` 에 없어서, 없는 채로 코드를 쓰면 컴파일부터 막힌다.
@@ -379,11 +379,11 @@ AI 호출은 몇 초가 걸린다. 접수 API가 그걸 기다리면 고객도 �
 
 **「분류 담당」이 무엇인지 — 별도 프로그램이 아니다**
 
-문서와 그림에 나오는 **분류 담당**은 **따로 띄우는 프로그램도, 정해진 시각에 도는 작업도 아니다.** 같은 애플리케이션 안에 있는 **함수 하나가 다른 스레드에서 도는 것**이 전부다 (`service/AiClassifyWorker`).
+문서와 그림에 나오는 **분류 담당**은 **따로 띄우는 프로그램도, 정해진 시각에 도는 작업도 아니다.** 같은 애플리케이션 안에 있는 **함수 하나가 다른 스레드에서 도는 것**이 전부다 (`service/event/InquiryReceivedEventListener`).
 
 "담당"은 **역할**을 가리키는 말이다 — 들어온 일을 받아서 처리하는 쪽. 어떻게 만들었는지를 가리키는 말이 아니다.
 
-> 영어로는 **worker(워커)** 라고 부른다. 클래스 이름과 이전에 쓴 결정 기록에는 「워커」로 적혀 있는데 같은 것이다.
+> 클래스 이름은 **`InquiryReceivedEventListener`(이벤트 리스너)** 다. 예전에는 「워커」라고 불렀고 결정 기록 D-031·D-036 본문에는 그 표기가 남아 있는데 **같은 것이다** (D-058). 대응 표는 `GLOSSARY.md` 「분류 담당」 항목에 있다.
 
 ```text
 접수 API 스레드 : 문의 저장 → "접수됨" 신호 → 고객에게 응답      (여기서 끝)

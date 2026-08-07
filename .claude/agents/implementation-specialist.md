@@ -31,7 +31,7 @@ grep -n "키워드" CLAUDE.md DECISIONS.md API-CONTRACT.md
 | | 범위 | 주요 산출물 |
 | --- | --- | --- |
 | P1 | 접수·절감 경로 | `InquiryIngestService`, `NormalizedKeyGenerator`(마스킹 포함), 계약 A 발행, **2단 절감 경로 + 캐시** |
-| P2 | 분류·검증 | `AiClassifyWorker`, `ClassificationService`, `AuditSamplingPolicy`, 판정 확정 후 캐시 put |
+| P2 | 분류·검증 | `InquiryReceivedEventListener`, `ClassificationService`, `AuditSamplingPolicy`, 판정 확정 후 캐시 put |
 | P3 | 검토·관측 | `ReviewService`, 큐 검색, `StatsService`, Actuator gauge |
 
 **공유 파일**(`domain/` 엔티티, `domain/repository/`, `config/`)은 셋 다 손대므로 **더하기만 하고 남의 것을 고치지 않는다.** 리포지토리에 쿼리를 추가하는 것은 정상, 남이 쓰는 시그니처를 바꾸는 것은 충돌이다.

@@ -104,7 +104,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | 핵심 트랜잭션 | ① 문의 저장 (즉시 응답, AI 대기 없음)<br>② 분류 결과 저장 + 문의 전이 + 조건부 큐 삽입 (**감사 표본 삽입 포함** — D-012)<br>③ 큐 확정 + `final_category` 기록 + 문의 전이 | ① `service/InquiryIngestService.receive`<br>② `service/ClassificationService.verifyAndPersist`<br>③ `service/ReviewService.confirm` |
 | 검색·필터 | 큐 복합 필터 + 페이징 | `domain/repository/InquiryReviewQueueRepository.search` |
 | 캐시 | ① `normalized_key → 분류 결과` (AI 호출 절감 경로의 1단)<br>② 적체·감사 요약 통계 (TTL 10s) | ① `service/ClassificationCache`<br>② `service/StatsService.summary` |
-| 비동기·이벤트 | `InquiryReceivedEvent` → `@Async` 분류 담당 + `@Retryable(3)` + `@Recover` | `service/AiClassifyWorker`, `service/event/` |
+| 비동기·이벤트 | `InquiryReceivedEvent` → `@Async` 분류 담당 + `@Retryable(3)` + `@Recover` | `service/event/InquiryReceivedEventListener`, `service/event/` |
 | AI 보조 | 분류 + **임계값 검증** + **감사 샘플링** | `service/AiClassificationService`, `service/AuditSamplingPolicy` |
 
 ## 코딩 규칙

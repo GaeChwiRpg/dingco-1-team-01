@@ -53,7 +53,7 @@ grep -n "관련키워드" DECISIONS.md CLAUDE.md
 
 ### 4. `AFTER_COMMIT` 리스너를 직접 호출로 단순화하지 않는다
 
-캐시 put·evict, 이벤트 발행이 `@TransactionalEventListener(AFTER_COMMIT)` 으로 되어 있다. 인라인 호출로 바꾸면 **롤백된 판정이 캐시에 남고**, 워커가 아직 커밋되지 않은 그룹을 조회한다.
+캐시 put·evict, 이벤트 발행이 `@TransactionalEventListener(AFTER_COMMIT)` 으로 되어 있다. 인라인 호출로 바꾸면 **롤백된 판정이 캐시에 남고**, 리스너가 아직 커밋되지 않은 문의를 조회한다.
 
 ### 5. `current_*` 역정규화를 "중복이니 제거"하지 않는다 (D-011)
 

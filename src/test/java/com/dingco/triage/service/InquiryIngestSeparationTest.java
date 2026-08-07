@@ -116,7 +116,7 @@ class InquiryIngestSeparationTest {
     /**
      * 수신측(②)이 실패하는 상황을 흉내내는 <b>테스트 전용</b> 리스너.
      *
-     * <p>실제 소비자는 P2 의 {@code AiClassifyWorker}(TRI-47)이고, 그쪽도 반드시
+     * <p>실제 소비자는 P2 의 {@code InquiryReceivedEventListener}(TRI-47, D-058)이고, 그쪽도 반드시
      * {@code @TransactionalEventListener(AFTER_COMMIT)} 로 받아야 이 분리가 성립한다. 여기서는
      * 그 계약이 지켜졌을 때 ①이 안전한지만 못박는다 — 일부러 예외를 던진다.
      */
