@@ -64,7 +64,8 @@ class InquiryControllerTest {
 
         InquiryCreateResponse response = objectMapper.readValue(
                 result.getResponse().getContentAsString(), InquiryCreateResponse.class);
-        Inquiry saved = inquiryRepository.findById(response.inquiryId()).orElseThrow();
+        // owner-less findById 는 저장소에서 제거됐다 (TRI-88). 검증은 권한 조회로 한다.
+        Inquiry saved = inquiryRepository.findByIdForAgent(response.inquiryId()).orElseThrow();
         assertThat(saved.getStatus()).isEqualTo(InquiryStatus.RECEIVED);
         assertThat(saved.getCustomerId()).isEqualTo(5001L);
         // 저장되는 것은 원문이다 — 마스킹본이 아니다 (D-040). 주문번호가 원문 그대로 남는다.
@@ -85,7 +86,8 @@ class InquiryControllerTest {
 
         InquiryCreateResponse response = objectMapper.readValue(
                 result.getResponse().getContentAsString(), InquiryCreateResponse.class);
-        Inquiry saved = inquiryRepository.findById(response.inquiryId()).orElseThrow();
+        // owner-less findById 는 저장소에서 제거됐다 (TRI-88). 검증은 권한 조회로 한다.
+        Inquiry saved = inquiryRepository.findByIdForAgent(response.inquiryId()).orElseThrow();
         assertThat(saved.getChannel()).isEqualTo(Channel.WEB);
     }
 
