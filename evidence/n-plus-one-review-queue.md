@@ -21,11 +21,21 @@
 
 ## 실측 값 (2026-08-07)
 
+> 측정 환경: Java 21, Hibernate ORM 6.5.3.Final(Spring Boot 3.3.13), MySQL 8.0(Testcontainers
+> `mysql:8.0` 이미지). 버전이 바뀌면 지연 로딩 배치 전략 등이 달라져 수치가 달라질 수 있다.
+
 | 조건 | 항목 수 | SQL 문 개수 |
 | --- | --- | --- |
 | `@EntityGraph` 없음 | 5건 | **11회** (목록 1 + 항목 5건 × 2(inquiry, result)) |
 | `@EntityGraph` 적용 | 3건 | **1회** |
 | `@EntityGraph` 적용 | 15건 | **1회** |
+
+**미적용(11회) 재현 절차** — 커밋된 테스트가 아니므로 아래 순서를 그대로 따라야 같은 값이 나온다.
+
+1. `InquiryReviewQueueRepository.search`에서 `@EntityGraph(attributePaths = {"inquiry", "classificationResult"})` 를 제거한다
+2. `Statistics` 를 켜고 `entityManager.clear()` 로 1차 캐시를 비운 뒤, `repository.search(...)` 결과의 각 항목에서 `getInquiry().getContent()` / `getClassificationResult().getCategory()` 를 호출해 지연 로딩을 실제로 유발시킨다
+3. `Statistics.getPrepareStatementCount()` 로 실행된 SQL 문 개수를 읽는다
+4. 확인 후 1번에서 지운 `@EntityGraph` 를 즉시 복원한다 — 커밋에 남기지 않는다
 
 ## 판정
 

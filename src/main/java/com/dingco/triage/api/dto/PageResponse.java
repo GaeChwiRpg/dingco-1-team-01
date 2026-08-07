@@ -6,7 +6,11 @@ import org.springframework.data.domain.Page;
 /** 페이징 응답 공통 모양 — {@code {content, page, size, totalElements}} (API-CONTRACT §2·§4). */
 public record PageResponse<T>(List<T> content, int page, int size, long totalElements) {
 
-    public static <T> PageResponse<T> of(Page<T> page) {
-        return new PageResponse<>(page.getContent(), page.getNumber(), page.getSize(), page.getTotalElements());
+    public static <T> PageResponse<T> of(Page<T> source) {
+        return new PageResponse<>(
+                source.getContent(),
+                source.getNumber(),
+                source.getSize(),
+                source.getTotalElements());
     }
 }

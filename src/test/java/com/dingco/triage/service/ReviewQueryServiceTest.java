@@ -39,8 +39,10 @@ class ReviewQueryServiceTest {
         verify(repository).search(eq(QueueStatus.PENDING), eq(from), eq(to), captor.capture());
         Pageable pageable = captor.getValue();
         assertThat(pageable.getSort())
-                .as("적체 방지가 목적이라 상담원이 오래된 항목부터 본다 — 정렬 축은 협상 대상이 아니다")
-                .isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt"));
+                .as("적체 방지가 목적이라 상담원이 오래된 항목부터 본다 — 정렬 축은 협상 대상이 아니다. "
+                        + "id 를 보조 키로 두는 이유는 같은 시각(createdAt 동률)에 여러 건이 들어와도 "
+                        + "페이지 경계에서 순서가 흔들리지 않게 하기 위해서다")
+                .isEqualTo(Sort.by(Sort.Direction.ASC, "createdAt", "id"));
         assertThat(pageable.getPageNumber()).isEqualTo(2);
         assertThat(pageable.getPageSize()).isEqualTo(30);
     }

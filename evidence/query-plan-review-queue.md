@@ -24,12 +24,15 @@ JPQL `(:from is null or ...)` 이 실제로 바인드하는 모양을 그대로 
 
 ## 판정
 
-- **30건에서는 인덱스를 안 탄다** — `key=null`, `Using filesort`. 옵티마이저의 정상 판단이라
+- **30건에서는 인덱스를 안 탄다** — `key=null`, `Using filesort`(전체 데이터를 메모리에서
+  정렬하는 방식 — 인덱스 순서를 못 써서 따로 정렬해야 한다는 뜻). 옵티마이저의 정상 판단이라
   인덱스나 쿼리 결함이 아니다.
 - **1,000건(현실적인 규모)에서는 인덱스를 탄다** — `key=idx_irq_status_created`,
-  `Using index condition`이고 **`Using filesort`가 없다**. CLAUDE.md 표(76번째 줄)가 예상한
-  `filesort` 없음은 일치하지만, **`type`은 예상한 `ref`가 아니라 `range`로 나왔다** —
-  `status='PENDING'` 등치 조건만 있으면 `ref`가 맞는데, 실제 JPQL은
+  `Using index condition`(조건 일부를 인덱스 단계에서 먼저 걸러 스토리지 접근을 줄이는 방식)이고
+  **`Using filesort`가 없다**(따로 정렬 안 하고 인덱스 순서를 그대로 씀).
+  CLAUDE.md 표(76번째 줄)가 예상한 `filesort` 없음은 일치하지만, **`type`은 예상한
+  `ref`(등치 조건으로 인덱스를 정확히 찾는 방식)가 아니라 `range`(인덱스의 일정 구간을 훑는
+  방식)로 나왔다** — `status='PENDING'` 등치 조건만 있으면 `ref`가 맞는데, 실제 JPQL은
   `(:from is null or created_at >= :from) and (:to is null or created_at <= :to)`로
   `created_at`에 부등호 조건이 함께 걸려 있어 옵티마이저가 이를 범위 스캔으로 판단했다.
   인덱스를 실제로 쓰고 filesort가 없다는 핵심 결론에는 영향 없지만, `type` 하나는 예상표와

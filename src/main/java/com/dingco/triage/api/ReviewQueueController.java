@@ -42,8 +42,11 @@ public class ReviewQueueController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        if (size > MAX_SIZE) {
-            throw new InvalidRequestException("size 는 " + MAX_SIZE + " 이하여야 합니다.");
+        if (page < 0) {
+            throw new InvalidRequestException("page 는 0 이상이어야 합니다.");
+        }
+        if (size < 1 || size > MAX_SIZE) {
+            throw new InvalidRequestException("size 는 1 이상 " + MAX_SIZE + " 이하여야 합니다.");
         }
         Page<ReviewQueueItemResponse> result = reviewQueryService.search(status, from, to, page, size)
                 .map(item -> ReviewQueueItemResponse.from(item, contentMasker));

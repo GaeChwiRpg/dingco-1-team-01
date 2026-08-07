@@ -11,6 +11,7 @@ import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.support.MySqlTestContainer;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -135,21 +136,25 @@ class InquiryReviewQueueRepositoryTest {
     }
 
     @Test
-    @DisplayName("(status, created_at) 인덱스가 스키마에 존재한다")
+    @DisplayName("(status, created_at) 인덱스가 이 순서·이 열 그대로 스키마에 존재한다")
     void statusCreatedIndexExistsOnSchema() {
         // 인덱스를 "실제로 타는지"는 데이터 규모·통계에 좌우되는 옵티마이저의 판단이라
         // CI 게이트로 부적합하다 — 1,000건 규모 실측은 evidence/query-plan-review-queue.md 에
         // 기록했다(30건 미사용 → 1,000건 idx_irq_status_created 사용, Using filesort 없음).
-        // 여기서는 회귀가 실제로 위험한 것 — 인덱스 자체가 스키마에서 사라지는 것 — 만 가볍게 지킨다
-        // (BaselineSmokeTest.normalizedKeyIsNotUnique 와 같은 패턴).
-        Integer count = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*) FROM information_schema.statistics
+        // 여기서는 회귀가 실제로 위험한 것 — 인덱스 자체가 스키마에서 사라지거나, 열 순서가
+        // 바뀌어 복합 인덱스의 선행 컬럼 이점(등치 status → 정렬 created_at)이 깨지는 것 — 만
+        // 가볍게 지킨다 (COUNT(*) > 0 만으로는 단일 열 인덱스나 (created_at, status) 처럼
+        // 순서가 뒤집힌 인덱스도 통과시켜버린다).
+        List<String> columnsInIndexOrder = jdbcTemplate.queryForList("""
+                SELECT column_name FROM information_schema.statistics
                 WHERE table_schema = DATABASE() AND table_name = 'inquiry_review_queue'
                   AND index_name = 'idx_irq_status_created'
-                """, Integer.class);
+                ORDER BY seq_in_index
+                """, String.class);
 
-        assertThat(count)
-                .as("인덱스가 없으면 상담원이 많아질수록 이 목록 조회가 테이블 전체를 훑는다")
-                .isPositive();
+        assertThat(columnsInIndexOrder)
+                .as("status 가 선행 컬럼이어야 등치 조건으로 좁히고 created_at 정렬을 커버한다 — "
+                        + "순서가 뒤집히면 이 이점이 사라진다")
+                .containsExactly("status", "created_at");
     }
 }

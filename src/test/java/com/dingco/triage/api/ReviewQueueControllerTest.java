@@ -144,6 +144,28 @@ class ReviewQueueControllerTest {
     }
 
     @Test
+    @DisplayName("size 가 0 이하면 400 VALIDATION_FAILED — PageRequest.of 의 IllegalArgumentException 이 500 으로 새지 않는다")
+    void rejectsSizeUnderOne() throws Exception {
+        mockMvc.perform(get("/api/inquiry-review-queue").param("size", "0")
+                        .header("X-User-Id", "1").header("X-User-Role", "AGENT"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        org.mockito.Mockito.verifyNoInteractions(reviewQueryService);
+    }
+
+    @Test
+    @DisplayName("page 가 음수면 400 VALIDATION_FAILED — PageRequest.of 의 IllegalArgumentException 이 500 으로 새지 않는다")
+    void rejectsNegativePage() throws Exception {
+        mockMvc.perform(get("/api/inquiry-review-queue").param("page", "-1")
+                        .header("X-User-Id", "1").header("X-User-Role", "AGENT"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        org.mockito.Mockito.verifyNoInteractions(reviewQueryService);
+    }
+
+    @Test
     @DisplayName("category·reason·confidence·threshold 파라미터는 애초에 컨트롤러가 받지 않는다 (blind, D-010)")
     void doesNotAcceptBlindQueryParameters() throws Exception {
         // 알 수 없는 쿼리 파라미터는 Spring MVC 가 조용히 무시한다 — 여기서 검증하는 건 그 값이
@@ -155,6 +177,7 @@ class ReviewQueueControllerTest {
                         .param("category", "RETURN_REFUND")
                         .param("reason", "AUDIT_SAMPLE")
                         .param("confidence", "0.9")
+                        .param("threshold", "0.8")
                         .header("X-User-Id", "1").header("X-User-Role", "AGENT"))
                 .andExpect(status().isOk());
 
