@@ -73,7 +73,14 @@ class AsyncConfigTest {
                 "classification.async.max-size=" + maxSize,
                 "classification.async.queue-capacity=50",
                 "classification.async.await-termination=" + awaitTermination,
-                "spring.lifecycle.timeout-per-shutdown-phase=" + lifecycleTimeout);
+                "spring.lifecycle.timeout-per-shutdown-phase=" + lifecycleTimeout,
+                // 재시도 설정도 같은 @Configuration 이 올린다 (TRI-54). 여기서 보는 것은
+                // 스레드·종료 대기 관계라 값 자체는 무엇이든 되지만, 없으면 바인딩 단계에서
+                // 먼저 실패해 이 테스트가 확인하려던 것과 다른 이유로 빨간불이 된다.
+                "classification.retry.max-attempts=3",
+                "classification.retry.initial-backoff-millis=1",
+                "classification.retry.multiplier=1.0",
+                "classification.retry.max-backoff-millis=1");
     }
 
     @Nested
@@ -176,7 +183,11 @@ class AsyncConfigTest {
                             "classification.async.max-size=4",
                             "classification.async.queue-capacity=50",
                             "classification.async.await-termination=30s",
-                            "spring.lifecycle.timeout-per-shutdown-phase=40s")
+                            "spring.lifecycle.timeout-per-shutdown-phase=40s",
+                            "classification.retry.max-attempts=3",
+                            "classification.retry.initial-backoff-millis=1",
+                            "classification.retry.multiplier=1.0",
+                            "classification.retry.max-backoff-millis=1")
                     // 설정 바인딩 실패는 예외가 한 겹 더 감싸여서 최상위 메시지에 안 남는다.
                     .run(context -> assertThat(context).hasFailed()
                             .getFailure()

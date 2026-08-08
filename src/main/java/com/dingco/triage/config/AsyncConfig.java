@@ -65,7 +65,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Slf4j
 @Configuration(proxyBeanMethods = false)
 @EnableAsync
-@EnableConfigurationProperties(ClassifyAsyncProperties.class)
+@EnableConfigurationProperties({ClassifyAsyncProperties.class, ClassifyRetryProperties.class})
 public class AsyncConfig implements AsyncConfigurer {
 
     /** {@code @Async} 에 적을 이름. 문자열을 양쪽에 손으로 적지 않게 한 자리에 둔다. */
@@ -74,14 +74,20 @@ public class AsyncConfig implements AsyncConfigurer {
     /** {@code spring.lifecycle.timeout-per-shutdown-phase} 를 안 적었을 때 스프링이 쓰는 값. */
     private static final Duration DEFAULT_SHUTDOWN_PHASE_TIMEOUT = Duration.ofSeconds(30);
 
+    /** {@code anthropic.timeout} 을 못 읽었을 때 최악 소요 계산에 쓰는 값. SDK 기본값이 아니라 우리 설정값이다. */
+    private static final Duration DEFAULT_CALL_TIMEOUT = Duration.ofSeconds(30);
+
     private final ClassifyAsyncProperties properties;
+    private final ClassifyRetryProperties retryProperties;
     private final ObjectProvider<DataSource> dataSourceProvider;
     private final Environment environment;
 
     public AsyncConfig(ClassifyAsyncProperties properties,
+                       ClassifyRetryProperties retryProperties,
                        ObjectProvider<DataSource> dataSourceProvider,
                        Environment environment) {
         this.properties = properties;
+        this.retryProperties = retryProperties;
         this.dataSourceProvider = dataSourceProvider;
         this.environment = environment;
     }
@@ -96,6 +102,7 @@ public class AsyncConfig implements AsyncConfigurer {
     public ThreadPoolTaskExecutor classifyExecutor() {
         verifyThreadsFitConnections();
         logShutdownBudget();
+        logRetryBudget();
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(properties.coreSize());
@@ -206,6 +213,35 @@ public class AsyncConfig implements AsyncConfigurer {
                         + "— 배포 도구의 종료 유예 시간이 worstCaseTotal 보다 길어야 진행 중이던 분류를 끝까지 기다린다",
                 lifecycleTimeout, properties.awaitTermination(),
                 lifecycleTimeout.plus(properties.awaitTermination()));
+    }
+
+    /**
+     * 재시도가 분류 1건을 <b>얼마나 오래 붙잡는지</b> 남긴다 (TRI-54 · D-047 ⓔ).
+     *
+     * <p>백오프 값은 <b>혼자 정할 수 없다.</b> 기다리는 동안 분류 담당의 스레드가 묶이므로,
+     * AI 가 죽어 있으면 스레드 수만큼만 밀려도 <b>정상 문의까지 멈춘다.</b> 그래서 최악 소요를
+     * 스레드 수·종료 대기와 <b>같은 줄에</b> 찍어 셋을 나란히 볼 수 있게 한다.
+     *
+     * <p><b>안 맞으면 경고만 하고 기동은 막지 않는다.</b> 이건 정확성이 깨지는 문제가 아니라
+     * <b>배포 중에 재시도가 잘릴 수 있다</b>는 운영 신호이고, 진짜 판단 근거(배포 도구의 종료
+     * 유예 시간)는 앱이 읽을 수 없다. 근거 없는 검사로 기동을 막는 실수를 한 번 했으므로
+     * ({@link #logShutdownBudget}) 같은 실수를 반복하지 않는다.
+     */
+    private void logRetryBudget() {
+        Duration callTimeout = environment.getProperty("anthropic.timeout", Duration.class, DEFAULT_CALL_TIMEOUT);
+        Duration worstCase = retryProperties.worstCaseDuration(callTimeout);
+
+        log.info("classify_retry_ready maxAttempts={} initialBackoff={} multiplier={} maxBackoff={} "
+                        + "callTimeout={} worstCasePerInquiry={} threads={} awaitTermination={}",
+                retryProperties.maxAttempts(), retryProperties.initialBackoff(),
+                retryProperties.multiplier(), retryProperties.maxBackoff(),
+                callTimeout, worstCase, properties.maxSize(), properties.awaitTermination());
+
+        if (worstCase.compareTo(properties.awaitTermination()) > 0) {
+            log.warn("classify_retry_budget_exceeds_shutdown_wait worstCasePerInquiry={} awaitTermination={} "
+                            + "— 배포할 때 재시도 중이던 분류가 잘릴 수 있다. 그 유실은 stuckReceived 에만 보인다 (D-017)",
+                    worstCase, properties.awaitTermination());
+        }
     }
 
     /**
