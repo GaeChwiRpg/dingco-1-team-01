@@ -7,6 +7,22 @@ spring:
     username: ${DB_USER:triage}
     password: ${DB_PASSWORD:triage}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 기본값은 10이다. 명시하는 이유는 값을 바꾸려는 게 아니라 관계를 보이게 하려는 것이다 —
+      # 분류 담당의 최대 스레드 수(classification.async.max-size)가 이 값보다 작아야 한다 (D-047 ⓑ).
+      # 같거나 크면 분류가 트랜잭션 ②로 커넥션을 전부 점유해 접수 API(①)가 커넥션을 못 얻는다.
+      # 증상은 "접수가 느리다"로 나타나는데 원인은 AI 가 아니라 커넥션이라 오진하기 쉽다.
+      #
+      # ⚠️ 이 값을 줄이려면 max-size 를 함께 본다. AsyncConfig 가 기동 시 검사해서 어긋나면 안 뜬다.
+      maximum-pool-size: 20
+
+  # 끌 때 진행 중인 작업을 기다릴 시간 (D-047 ⓒ).
+  #
+  # classification.async.await-termination(30s) 보다 길어야 한다 — 짧으면 스프링이 먼저 포기해서
+  # "기다린다"고 적어둔 설정이 무의미해진다. 설정은 있는데 동작은 안 하는 상태가 되고,
+  # 그건 설정이 없는 것보다 나쁘다. 있으니까 됐다고 믿게 되기 때문이다.
+  lifecycle:
+    timeout-per-shutdown-phase: 40s
 
   jpa:
     hibernate:
@@ -37,6 +53,14 @@ spring:
 
   cache:
     type: redis
+
+server:
+  # 끌 때 처리 중인 요청을 마저 끝낸다 (D-047 ⓒ).
+  #
+  # 위 timeout-per-shutdown-phase 는 이것이 graceful 일 때만 의미가 있다. 기본값(immediate)이면
+  # 톰캣이 즉시 끊는데, 이 프로젝트에서는 그게 두 가지를 함께 죽인다 — 접수 요청 자체와,
+  # 대기줄이 차서 접수 스레드가 대신 처리 중이던 분류(CallerRunsPolicy)다.
+  shutdown: graceful
 
 management:
   endpoints:
@@ -105,6 +129,28 @@ classification:
   # Phase 2 에서 런타임 변경 API 를 두지 않는다 (D-028) — 판정 기준이 실행 중에 바뀌면
   # 측정 1·8 의 결과가 어느 기준에서 나온 것인지 사후에 구분되지 않는다.
   threshold: 0.8
+  # 분류 담당(InquiryReceivedEventListener)이 쓸 자원 (TRI-83 · D-047).
+  #
+  # ⚠️ 여기 숫자는 전부 초기값이고 측정 a(접수 p95)에서 조정한다. 재보지 않은 값을 근거로 쓰지 않는다.
+  #    조정할 때 읽어야 할 관계 두 가지는 AsyncConfig 가 기동 시 검사한다 — 어긋나면 앱이 안 뜬다.
+  async:
+    # 평소 유지할 스레드 수.
+    core-size: 4
+
+    # 최대 스레드 수. spring.datasource.hikari.maximum-pool-size(20) 보다 작아야 한다 (D-047 ⓑ).
+    # 트랜잭션 ②가 스레드마다 커넥션을 1개씩 쓰므로, 이 값이 커넥션 수에 가까워지면
+    # 접수 API(①)가 쓸 커넥션이 남지 않는다.
+    max-size: 8
+
+    # 대기줄 길이. 여기가 차면 버리지 않고 접수한 쪽이 대신 처리한다 (CallerRunsPolicy, D-045 ⑤).
+    # 그때 접수 API 가 같이 느려지는 것은 의도한 대가다 — 느려지는 건 보이지만 사라지는 건 안 보인다.
+    # 이 값을 키우면 유실은 더 안 나지만 밀린 문의가 메모리에 쌓이고, 줄이면 접수가 더 자주 느려진다.
+    queue-capacity: 50
+
+    # 끌 때 진행 중인 분류를 기다릴 시간. spring.lifecycle.timeout-per-shutdown-phase(40s) 보다
+    # 짧아야 한다 — 길면 스프링이 먼저 포기해서 이 설정이 아무 일도 하지 않는다 (D-047 ⓒ).
+    await-termination: 30s
+
   audit:
     # 자동 확정 건 중 감사 표본으로 뽑을 비율 (D-005).
     # 실측 비율은 GET /api/stats 의 actualSampleRate 로 대조한다 — 설정값과 벌어지면
