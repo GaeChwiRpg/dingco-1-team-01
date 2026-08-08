@@ -88,7 +88,7 @@ public class ClassificationService {
         }
 
         // ── 2) 역정규화 사본 (D-011). 위 UPDATE 가 컨텍스트를 비웠으므로 여기서 읽는 것은 갱신본이다
-        Inquiry inquiry = inquiryRepository.findById(inquiryId)
+        Inquiry inquiry = inquiryRepository.findByIdForClassification(inquiryId)
                 .orElseThrow(() -> new IllegalStateException(
                         "방금 갱신한 문의를 못 찾는다: inquiryId=" + inquiryId));
         inquiry.applyClassification(parsed.category(), parsed.confidence());

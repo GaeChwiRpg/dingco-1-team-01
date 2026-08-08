@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dingco.triage.domain.Inquiry;
-import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.service.event.InquiryReceivedEvent;
 import com.dingco.triage.support.MySqlTestContainer;
@@ -17,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.event.TransactionPhase;
@@ -43,8 +43,9 @@ class InquiryIngestSeparationTest {
     @Autowired
     private InquiryIngestService ingestService;
 
+    // owner-less findAll/findById 는 저장소에서 제거됐다 (TRI-88). 잔존 검증은 SQL 로 직접 센다.
     @Autowired
-    private InquiryRepository inquiryRepository;
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private ThrowingListener throwingListener;
@@ -74,15 +75,13 @@ class InquiryIngestSeparationTest {
                 .isEqualTo(1);
 
         // 2) 그럼에도 문의는 남아 있다 — 커밋 전 전달이었다면 함께 롤백돼 사라졌을 것이다.
-        boolean persisted = inquiryRepository.findAll().stream()
-                .anyMatch(i -> marker.equals(i.getContent()));
-        assertThat(persisted)
+        assertThat(countByContent(marker))
                 .as("②가 실패해도 ①은 살아남아야 한다 (D-031). 롤백되면 접수 확인이 거짓말이 된다")
-                .isTrue();
+                .isEqualTo(1);
 
         // savedId 는 예외가 전파되지 않은 경우에만 채워진다 — 채워졌다면 그 id 로도 조회된다.
         if (savedId != null) {
-            assertThat(inquiryRepository.findById(savedId)).isPresent();
+            assertThat(countById(savedId)).isEqualTo(1);
         }
     }
 
@@ -106,11 +105,21 @@ class InquiryIngestSeparationTest {
                 .isZero();
 
         // 문의도 남지 않는다.
-        boolean persisted = inquiryRepository.findAll().stream()
-                .anyMatch(i -> marker.equals(i.getContent()));
-        assertThat(persisted)
+        assertThat(countByContent(marker))
                 .as("① 이 롤백됐으므로 문의도 저장돼 있으면 안 된다")
-                .isFalse();
+                .isZero();
+    }
+
+    private int countByContent(String content) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM inquiries WHERE content = ?", Integer.class, content);
+        return count == null ? 0 : count;
+    }
+
+    private int countById(long id) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM inquiries WHERE id = ?", Integer.class, id);
+        return count == null ? 0 : count;
     }
 
     /**

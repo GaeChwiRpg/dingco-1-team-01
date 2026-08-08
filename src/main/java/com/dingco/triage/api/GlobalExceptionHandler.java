@@ -59,6 +59,13 @@ public class GlobalExceptionHandler {
         return ErrorResponse.validation(ErrorCode.VALIDATION_FAILED.name(), "입력값이 올바르지 않습니다.", List.of(fieldError));
     }
 
+    @ExceptionHandler(BadRequestException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    ErrorResponse handleBadRequest(BadRequestException ex) {
+        FieldError fieldError = new FieldError(ex.getField(), ex.getMessage());
+        return ErrorResponse.validation(ErrorCode.VALIDATION_FAILED.name(), "입력값이 올바르지 않습니다.", List.of(fieldError));
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     ErrorResponse handleUnreadableBody(HttpMessageNotReadableException ex) {

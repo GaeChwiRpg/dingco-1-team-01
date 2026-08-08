@@ -133,7 +133,7 @@ class ClassificationServiceTest {
 
             assertThat(persisted).isTrue();
 
-            Inquiry reloaded = inquiryRepository.findById(inquiry.getId()).orElseThrow();
+            Inquiry reloaded = inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow();
             assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.CLASSIFIED);
             assertThat(reloaded.getCurrentCategory()).isEqualTo(InquiryCategory.DELIVERY);
             assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo(aboveThreshold());
@@ -156,7 +156,7 @@ class ClassificationServiceTest {
                     AiParsedClassification.classified(InquiryCategory.PAYMENT, properties.threshold()),
                     raw(), 1);
 
-            assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
+            assertThat(inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.CLASSIFIED);
         }
     }
@@ -174,7 +174,7 @@ class ClassificationServiceTest {
                     AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, belowThreshold()),
                     raw(), 1);
 
-            assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
+            assertThat(inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.UNCLASSIFIED);
 
             // 건수를 먼저 본다 — 큐가 비었을 때 getFirst() 가 먼저 터지면 실패 원인이
@@ -217,7 +217,7 @@ class ClassificationServiceTest {
             classificationService.verifyAndPersist(inquiry.getId(),
                     AiParsedClassification.failed(ClassifyFailureReason.OUT_OF_RANGE), raw(), 3);
 
-            Inquiry reloaded = inquiryRepository.findById(inquiry.getId()).orElseThrow();
+            Inquiry reloaded = inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow();
             assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.UNCLASSIFIED);
             // D-022 — 실패에 confidence 0 을 쓰지 않는다. 사본도 원본을 그대로 따른다 (D-039)
             assertThat(reloaded.getCurrentCategory()).isNull();
@@ -264,13 +264,13 @@ class ClassificationServiceTest {
             // 지금은 전이 UPDATE 가 시각을 직접 쓰므로 세 판정이 같은 방식으로 찍힌다.
             Inquiry inquiry = givenReceivedInquiry();
             Instant beforeVerdict =
-                    inquiryRepository.findById(inquiry.getId()).orElseThrow().getUpdatedAt();
+                    inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getUpdatedAt();
 
             classificationService.verifyAndPersist(inquiry.getId(),
                     AiParsedClassification.failed(ClassifyFailureReason.PARSE_ERROR), raw(), 3);
 
             Instant afterVerdict =
-                    inquiryRepository.findById(inquiry.getId()).orElseThrow().getUpdatedAt();
+                    inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getUpdatedAt();
             assertThat(afterVerdict)
                     .as("실패 판정에도 판정 시각이 찍혀야 한다")
                     .isAfter(beforeVerdict);
@@ -313,7 +313,7 @@ class ClassificationServiceTest {
                     raw(), 1);
 
             assertThat(second).isFalse();
-            Inquiry reloaded = inquiryRepository.findById(inquiry.getId()).orElseThrow();
+            Inquiry reloaded = inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow();
             assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.CLASSIFIED);
             assertThat(reloaded.getCurrentCategory()).isEqualTo(InquiryCategory.DELIVERY);
             assertThat(reloaded.getCurrentConfidence()).isEqualByComparingTo(aboveThreshold());
@@ -326,7 +326,7 @@ class ClassificationServiceTest {
             classificationService.verifyAndPersist(inquiry.getId(),
                     AiParsedClassification.classified(InquiryCategory.DELIVERY, belowThreshold()),
                     raw(), 1);
-            assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
+            assertThat(inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.UNCLASSIFIED);
 
             // 높은 확신도로 다시 와도 격리된 문의를 확정시킬 수 없다
@@ -335,7 +335,7 @@ class ClassificationServiceTest {
                     raw(), 1);
 
             assertThat(second).isFalse();
-            assertThat(inquiryRepository.findById(inquiry.getId()).orElseThrow().getStatus())
+            assertThat(inquiryRepository.findByIdForClassification(inquiry.getId()).orElseThrow().getStatus())
                     .isEqualTo(InquiryStatus.UNCLASSIFIED);
         }
     }
