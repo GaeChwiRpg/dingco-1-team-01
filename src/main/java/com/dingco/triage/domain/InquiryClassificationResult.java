@@ -245,4 +245,12 @@ public class InquiryClassificationResult {
     public Instant getCreatedAt() {
         return createdAt;
     }
+
+    /**
+     * 사람 확정 (트랜잭션 ③, 불변 규칙 1). {@code category}(AI 제안)는 절대 건드리지 않고
+     * {@code final_category} 만 새로 적는다 — 덮어쓰면 오분류 증거가 사라진다.
+     */
+    public void recordFinalCategory(InquiryCategory finalCategory) {
+        this.finalCategory = Objects.requireNonNull(finalCategory, "finalCategory");
+    }
 }
