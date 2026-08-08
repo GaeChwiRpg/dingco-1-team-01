@@ -4,21 +4,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.dingco.triage.config.SecurityConfig;
+import com.dingco.triage.domain.ConflictException;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.type.Channel;
+import com.dingco.triage.domain.type.ConflictCode;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ReviewQueryService;
+import com.dingco.triage.service.ReviewService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -51,6 +57,9 @@ class ReviewQueueControllerTest {
     @MockBean
     private ReviewQueryService reviewQueryService;
 
+    @MockBean
+    private ReviewService reviewService;
+
     private InquiryReviewQueueItem queueItem(String content, Long inquiryId, Long itemId,
             InquiryCategory suggestedCategory) {
         Inquiry inquiry = Inquiry.receive(5001L, content, Channel.WEB, "nk-1", NOW);
@@ -62,6 +71,16 @@ class ReviewQueueControllerTest {
         InquiryReviewQueueItem item = InquiryReviewQueueItem.from(result);
         ReflectionTestUtils.setField(item, "id", itemId);
         ReflectionTestUtils.setField(item, "createdAt", NOW);
+        return item;
+    }
+
+    /** {@code ReviewService.confirm} 이 돌려주는, 이미 확정 처리된 항목을 흉내낸다. */
+    private InquiryReviewQueueItem resolvedQueueItem(InquiryCategory suggestedCategory,
+            InquiryCategory finalCategory, Long agentId) {
+        InquiryReviewQueueItem item = queueItem("환불해주세요", 4471L, 902L, suggestedCategory);
+        item.getClassificationResult().recordFinalCategory(finalCategory);
+        item.resolve(agentId, NOW);
+        item.getInquiry().confirmByAgent(finalCategory);
         return item;
     }
 
@@ -183,5 +202,96 @@ class ReviewQueueControllerTest {
 
         verify(reviewQueryService).search(org.mockito.ArgumentMatchers.eq(QueueStatus.PENDING),
                 any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    @DisplayName("확정 — AI 제안과 사람 확정이 같으면 matched: true (TRI-60)")
+    void confirmReturnsMatchedTrueWhenSameCategory() throws Exception {
+        given(reviewService.confirm(eq(902L), anyLong(), eq(InquiryCategory.DELIVERY)))
+                .willReturn(resolvedQueueItem(InquiryCategory.DELIVERY, InquiryCategory.DELIVERY, 7L));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"DELIVERY\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(902))
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.inquiryId").value(4471))
+                .andExpect(jsonPath("$.inquiryStatus").value("CLASSIFIED"))
+                .andExpect(jsonPath("$.suggestedCategory").value("DELIVERY"))
+                .andExpect(jsonPath("$.finalCategory").value("DELIVERY"))
+                .andExpect(jsonPath("$.matched").value(true))
+                .andExpect(jsonPath("$.agentId").value(7));
+    }
+
+    @Test
+    @DisplayName("확정 — AI 제안과 사람 확정이 다르면 matched: false (TRI-60)")
+    void confirmReturnsMatchedFalseWhenDifferentCategory() throws Exception {
+        given(reviewService.confirm(eq(902L), anyLong(), eq(InquiryCategory.RETURN_REFUND)))
+                .willReturn(resolvedQueueItem(InquiryCategory.DELIVERY, InquiryCategory.RETURN_REFUND, 7L));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"RETURN_REFUND\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.matched").value(false));
+    }
+
+    @Test
+    @DisplayName("확정 — AI 제안이 없으면(CLASSIFY_FAILED) matched 는 null 이지 false 가 아니다 (D-022)")
+    void confirmReturnsMatchedNullWhenNoSuggestion() throws Exception {
+        given(reviewService.confirm(eq(902L), anyLong(), eq(InquiryCategory.DELIVERY)))
+                .willReturn(resolvedQueueItem(null, InquiryCategory.DELIVERY, 7L));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"DELIVERY\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.suggestedCategory").value(nullValue()))
+                .andExpect(jsonPath("$.matched").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("확정 — finalCategory 가 없으면 400 VALIDATION_FAILED, 서비스는 호출되지 않는다")
+    void confirmRejectsMissingFinalCategory() throws Exception {
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        org.mockito.Mockito.verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    @DisplayName("확정 — finalCategory 가 enum 10종 밖이면 400 VALIDATION_FAILED")
+    void confirmRejectsUnknownCategory() throws Exception {
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"REFUND_XYZ\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        org.mockito.Mockito.verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    @DisplayName("확정 — 이미 처리된 항목이면 409 ALREADY_RESOLVED 가 그대로 응답으로 나간다 (배선 확인)")
+    void confirmPropagatesConflictFromService() throws Exception {
+        given(reviewService.confirm(eq(902L), anyLong(), any()))
+                .willThrow(new ConflictException(ConflictCode.ALREADY_RESOLVED, 902L, "이미 처리된 항목입니다."));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"DELIVERY\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_RESOLVED"))
+                .andExpect(jsonPath("$.reviewQueueItemId").value(902));
     }
 }

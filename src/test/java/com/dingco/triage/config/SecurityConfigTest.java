@@ -2,6 +2,7 @@ package com.dingco.triage.config;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -10,8 +11,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.dingco.triage.api.ReviewQueueController;
+import com.dingco.triage.domain.Inquiry;
+import com.dingco.triage.domain.InquiryClassificationResult;
+import com.dingco.triage.domain.InquiryReviewQueueItem;
+import com.dingco.triage.domain.type.Channel;
+import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ReviewQueryService;
+import com.dingco.triage.service.ReviewService;
+import java.math.BigDecimal;
+import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -20,6 +29,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
+import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -33,8 +44,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  *
  * <p>{@code GET /api/inquiry-review-queue} 만 TRI-56 으로 실제 컨트롤러({@link ReviewQueueController})
  * 가 생겨 더미에서 빠졌다 — 그래서 이 슬라이스에 그 컨트롤러를 함께 태우고, DB 를 쓰는
- * {@link ReviewQueryService} 는 {@code @MockBean} 으로 대신한다. {@link ContentMasker} 는
- * 의존성 없는 순수 컴포넌트라 목킹하지 않고 그대로 가져다 쓴다.
+ * {@link ReviewQueryService} 와 {@link ReviewService} 는 {@code @MockBean} 으로 대신한다.
+ * {@link ContentMasker} 는 의존성 없는 순수 컴포넌트라 목킹하지 않고 그대로 가져다 쓴다.
  */
 @WebMvcTest(controllers = {ProbeController.class, ReviewQueueController.class})
 @Import({SecurityConfig.class, ContentMasker.class})
@@ -46,10 +57,22 @@ class SecurityConfigTest {
     @MockBean
     private ReviewQueryService reviewQueryService;
 
+    @MockBean
+    private ReviewService reviewService;
+
     @BeforeEach
     void stubReviewQueue() {
         // 이 테스트가 재는 건 역할 필터링이지 조회 결과가 아니다 — 빈 페이지로 충분하다.
         given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt())).willReturn(Page.empty());
+        // PATCH 매핑표 케이스(role=AGENT → 200)도 역할 필터링만 잰다 — 응답 바디는 검증 대상이 아니다.
+        Inquiry inquiry = Inquiry.receive(1L, "문의합니다", Channel.WEB, "nk-1", Instant.now());
+        ReflectionTestUtils.setField(inquiry, "id", 1L);
+        InquiryClassificationResult result = InquiryClassificationResult.autoAccepted(
+                inquiry, InquiryCategory.ETC, new BigDecimal("0.950"), "claude-sonnet-5", "{}", 1);
+        InquiryReviewQueueItem item = InquiryReviewQueueItem.from(result);
+        ReflectionTestUtils.setField(item, "id", 1L);
+        item.resolve(1L, Instant.now());
+        given(reviewService.confirm(any(), anyLong(), any())).willReturn(item);
     }
 
     @ParameterizedTest(name = "{0} {1} — role={2} → {3}")
@@ -78,7 +101,10 @@ class SecurityConfigTest {
         MockHttpServletRequestBuilder request = switch (method) {
             case "GET" -> get(path);
             case "POST" -> post(path);
-            case "PATCH" -> patch(path);
+            // 이 슬라이스가 재는 건 역할 필터링이지 바디 검증이 아니다 — 유효한 finalCategory 를 채워
+            // @Valid 단계에서 걸러지지 않게 한다.
+            case "PATCH" -> patch(path).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"finalCategory\":\"ETC\"}");
             default -> throw new IllegalArgumentException(method);
         };
         if (!"NONE".equals(role)) {

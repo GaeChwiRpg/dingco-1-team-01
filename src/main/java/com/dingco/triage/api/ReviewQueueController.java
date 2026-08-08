@@ -1,14 +1,23 @@
 package com.dingco.triage.api;
 
 import com.dingco.triage.api.dto.PageResponse;
+import com.dingco.triage.api.dto.ReviewConfirmRequest;
+import com.dingco.triage.api.dto.ReviewConfirmResponse;
 import com.dingco.triage.api.dto.ReviewQueueItemResponse;
+import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ReviewQueryService;
+import com.dingco.triage.service.ReviewService;
+import jakarta.validation.Valid;
 import java.time.Instant;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,10 +37,13 @@ public class ReviewQueueController {
     private static final int MAX_SIZE = 100;
 
     private final ReviewQueryService reviewQueryService;
+    private final ReviewService reviewService;
     private final ContentMasker contentMasker;
 
-    ReviewQueueController(ReviewQueryService reviewQueryService, ContentMasker contentMasker) {
+    ReviewQueueController(ReviewQueryService reviewQueryService, ReviewService reviewService,
+            ContentMasker contentMasker) {
         this.reviewQueryService = reviewQueryService;
+        this.reviewService = reviewService;
         this.contentMasker = contentMasker;
     }
 
@@ -51,5 +63,22 @@ public class ReviewQueueController {
         Page<ReviewQueueItemResponse> result = reviewQueryService.search(status, from, to, page, size)
                 .map(item -> ReviewQueueItemResponse.from(item, contentMasker));
         return PageResponse.of(result);
+    }
+
+    /**
+     * {@code PATCH /api/inquiry-review-queue/{id}} (TRI-60, API-CONTRACT §5). 확정 자체(4단계
+     * 원자성·동시성 두 겹)는 {@link ReviewService#confirm} 이 다 하고, 여기는 인증 정보 추출과
+     * DTO 변환까지만 한다.
+     *
+     * <p>404(없는 항목)·409(확정 충돌 2종)는 여기서 try-catch 하지 않는다 — {@code ReviewService}
+     * 가 던진 예외를 공용 예외 처리 지점이 공통 형식으로 내보낸다. {@code finalCategory} 가
+     * enum 10종 밖이면 요청 바디 역직렬화 단계에서 이미 400 으로 걸린다.
+     */
+    @PatchMapping("/{id}")
+    ReviewConfirmResponse confirm(@PathVariable Long id, @Valid @RequestBody ReviewConfirmRequest request,
+            Authentication authentication) {
+        Long agentId = Long.parseLong(authentication.getName());
+        InquiryReviewQueueItem item = reviewService.confirm(id, agentId, request.finalCategory());
+        return ReviewConfirmResponse.from(item);
     }
 }
