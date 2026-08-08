@@ -158,6 +158,36 @@ class InquiryDetailControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    @Test
+    @DisplayName("상담원 상세는 raw_response(프롬프트·PII)를 응답에 노출하지 않는다 (계약 §3, TRI-35 코멘트 주장 고정)")
+    void agentDetailDoesNotLeakRawResponse() throws Exception {
+        long id = insertInquiry(CUSTOMER_A, "raw 노출 점검용 문의", InquiryStatus.CLASSIFIED,
+                InquiryCategory.DELIVERY, "0.910");
+        // raw_response 에 프롬프트 원문·개인정보가 담길 수 있다. 어떤 형태로도 응답에 실리면 안 된다.
+        String secret = "PROMPT_SECRET_9f3c7_010-2345-6789";
+        jdbcTemplate.update("""
+                INSERT INTO inquiry_classification_result
+                    (inquiry_id, category, confidence, model, raw_response, verdict,
+                     final_category, attempt_count, created_at)
+                VALUES (?, 'DELIVERY', '0.910', 'claude-sonnet-5', ?, 'AUTO_ACCEPTED', NULL, 1, ?)
+                """,
+                id,
+                "{\"category\":\"DELIVERY\",\"confidence\":0.91,\"note\":\"" + secret + "\"}",
+                java.sql.Timestamp.from(Instant.parse("2026-08-05T02:00:00Z")));
+
+        MvcResult result = mockMvc.perform(get("/api/inquiries/{id}", id)
+                        .header("X-User-Id", "9001").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(body).doesNotContain(secret);
+        JsonNode c0 = objectMapper.readTree(body).path("classifications").path(0);
+        // 필드 자체가 없어야 한다 — 어떤 네이밍 전략으로 직렬화되더라도 새면 안 된다.
+        assertThat(c0.has("rawResponse")).isFalse();
+        assertThat(c0.has("raw_response")).isFalse();
+    }
+
     /** 문의 행을 심고 생성된 id 를 돌려준다. content 는 seed 마다 유일해 id 조회 키로 쓴다. */
     private long insertInquiry(long customerId, String content, InquiryStatus status,
             InquiryCategory category, String confidence) {
