@@ -56,5 +56,16 @@ public record ClassifyAsyncProperties(
                     "classification.async.max-size 는 core-size 이상이어야 한다: core=%d, max=%d"
                             .formatted(coreSize, maxSize));
         }
+        // @NotNull 만으로는 0s 나 음수가 통과한다 (AI 리뷰 지적). 그 값은 "기다린다"고 적어두고
+        // 실제로는 안 기다리는 상태라, 설정이 아예 없는 것보다 나쁘다 — 있으니까 됐다고 믿게 된다.
+        // 0 을 허용해야 할 이유가 생기면 그건 "기다리지 않겠다"는 결정이므로 여기가 아니라
+        // 결정 기록에 남길 일이다.
+        if (awaitTermination != null && !awaitTermination.isPositive()) {
+            throw new IllegalArgumentException(
+                    ("classification.async.await-termination 은 0 보다 커야 한다: %s. "
+                            + "0 이하면 종료할 때 진행 중이던 분류를 기다리지 않는다 — "
+                            + "배포할 때마다 유실이 생기고 그 유실은 stuckReceived 에만 보인다.")
+                            .formatted(awaitTermination));
+        }
     }
 }

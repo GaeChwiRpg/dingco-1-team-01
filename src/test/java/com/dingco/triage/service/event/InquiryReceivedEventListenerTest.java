@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,6 +15,7 @@ import com.dingco.triage.config.AsyncConfig;
 import com.dingco.triage.service.ClassificationService;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ai.AiCallException;
+import io.sentry.Sentry;
 import com.dingco.triage.service.ai.AiClassificationService;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -152,6 +155,22 @@ class InquiryReceivedEventListenerTest {
             // FAILED 는 종류와 확신도가 둘 다 없다 (D-022).
             assertThat(parsed.getValue().category()).isNull();
             assertThat(parsed.getValue().confidence()).isNull();
+        }
+
+        @Test
+        @DisplayName("최종 실패라 Sentry 로 보낸다 — 로그만 찍고 끝내면 영구히 모른다 (D-030)")
+        void reportsToSentry() {
+            // catch 해서 로그만 찍고 끝내면 자동 캡처도 수동 캡처도 아니라서 Sentry 가
+            // 영구히 모른다 (SENTRY-GUIDE.md 2-3, 실측 확인된 사례).
+            //
+            // ⚠️ 재시도(TRI-54)가 붙으면 이 호출 자리가 @Recover 로 옮겨간다. 그때
+            // 「옮기다가 빠뜨리는 것」을 이 테스트가 막는다 — 옮기고 나면 여기가 아니라
+            // @Recover 를 검증하도록 고치되, 캡처가 사라지면 어느 쪽이든 빨간불이 뜬다.
+            try (MockedStatic<Sentry> sentry = mockStatic(Sentry.class)) {
+                listener.onInquiryReceived(event());
+
+                sentry.verify(() -> Sentry.captureException(any(AiCallException.class)));
+            }
         }
 
         @Test

@@ -23,9 +23,11 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 한다는 것을 모른다. 검사가 없으면 그 관계는 주석일 뿐이고, 어긋난 뒤에 나타나는 증상은
  * <b>"접수가 느리다"</b> 라서 원인을 AI 에서 찾게 된다.
  *
- * <p><b>종료 대기도 마찬가지다.</b> 실행기가 60초를 기다리겠다고 해도 스프링이 30초에 포기하면
- * 기다리라고 적어둔 설정이 아무 일도 하지 않는다 — <b>설정이 없는 것보다 나쁘다.</b> 있으니까
- * 됐다고 믿게 되기 때문이다.
+ * <p><b>종료 대기는 검사하지 않는다 — 검사할 관계가 없기 때문이다.</b> 앞선 판은
+ * 「종료 대기 &lt; 스프링의 종료 단계 제한」을 강제했는데, 두 값은 경쟁하는 예산이 아니라
+ * <b>순서대로 적용되는 서로 다른 예산</b>이다 (AI 리뷰 지적 → Spring 6.1.21 바이트코드로 확인).
+ * 그래서 그 검사는 <b>멀쩡한 설정의 기동을 막고 있었다</b> — 아래 {@code allowsLongShutdownWait}
+ * 가 그 회귀를 고정한다. 자세한 내용은 {@code AsyncConfig.logShutdownBudget} 참조.
  *
  * <p><b>재현</b>: {@code ./gradlew test --tests '*AsyncConfigTest'} (DB 를 띄우지 않는다 —
  * 커넥션 풀 <b>크기</b>만 읽으므로 실제 연결이 필요 없다).
@@ -34,6 +36,16 @@ class AsyncConfigTest {
 
     /** 실제 값은 {@code application.yml} 에 있고, 여기서는 관계만 본다. */
     private static final int CONNECTIONS = 20;
+
+    /**
+     * 스프링 내부 필드 이름 ({@code ExecutorConfigurationSupport}).
+     *
+     * <p><b>공개 getter 가 없어서 리플렉션으로 읽는다.</b> 스프링을 올릴 때 이름이 바뀌면 이
+     * 테스트가 깨지는데, 그건 <b>깨지는 편이 낫다</b> — 조용히 통과하면 "끌 때 기다린다"가
+     * 설정만 있고 동작은 안 하는 상태로 넘어간다. 깨지면 여기 두 상수만 고치면 된다.
+     */
+    private static final String FIELD_WAIT_FOR_TASKS = "waitForTasksToCompleteOnShutdown";
+    private static final String FIELD_AWAIT_MILLIS = "awaitTerminationMillis";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(AsyncConfig.class)
@@ -103,10 +115,25 @@ class AsyncConfigTest {
                 ThreadPoolTaskExecutor executor =
                         context.getBean(AsyncConfig.CLASSIFY_EXECUTOR, ThreadPoolTaskExecutor.class);
 
-                assertThat(ReflectionTestUtils.getField(executor, "waitForTasksToCompleteOnShutdown"))
+                assertThat(ReflectionTestUtils.getField(executor, FIELD_WAIT_FOR_TASKS))
                         .isEqualTo(true);
-                assertThat(ReflectionTestUtils.getField(executor, "awaitTerminationMillis"))
+                assertThat(ReflectionTestUtils.getField(executor, FIELD_AWAIT_MILLIS))
                         .isEqualTo(30_000L);
+            });
+        }
+
+        @Test
+        @DisplayName("종료 대기가 스프링의 종료 단계 제한보다 길어도 뜬다 — 둘은 경쟁하는 예산이 아니다")
+        void allowsLongShutdownWait() {
+            // 앞선 판은 이 조합을 기동 실패로 막았다. 그런데 두 값은 순서대로 적용되는 서로
+            // 다른 예산이라(stop 단계 → destroy 단계) 한쪽이 짧아야 할 이유가 없었고,
+            // 재시도(TRI-54)가 붙으면 분류 1건이 「AI 타임아웃 × 3 + 백오프」만큼 걸려서
+            // 종료 대기를 길게 잡는 것이 오히려 정상이다.
+            withValues(8, "120s", "30s").run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(ReflectionTestUtils.getField(
+                        context.getBean(AsyncConfig.CLASSIFY_EXECUTOR, ThreadPoolTaskExecutor.class),
+                        FIELD_AWAIT_MILLIS)).isEqualTo(120_000L);
             });
         }
     }
@@ -133,14 +160,6 @@ class AsyncConfigTest {
                             .hasMessageContaining("커넥션 풀 크기보다 작아야 한다"));
         }
 
-        @Test
-        @DisplayName("종료 대기가 스프링의 제한과 같거나 길면 안 뜬다 — 기다린다는 설정이 무의미해진다")
-        void failsWhenShutdownWaitOutlastsLifecycleTimeout() {
-            withValues(8, "40s", "40s").run(context ->
-                    assertThat(context).hasFailed()
-                            .getFailure()
-                            .hasMessageContaining("종료 단계 제한보다 짧아야 한다"));
-        }
     }
 
     @Nested
@@ -162,6 +181,17 @@ class AsyncConfigTest {
                     .run(context -> assertThat(context).hasFailed()
                             .getFailure()
                             .hasStackTraceContaining("core-size 이상이어야 한다"));
+        }
+
+        @Test
+        @DisplayName("종료 대기가 0 이면 안 뜬다 — 기다린다고 적어두고 안 기다리는 상태")
+        void failsWhenAwaitTerminationIsNotPositive() {
+            // @NotNull 만으로는 0s 가 통과한다 (AI 리뷰 지적). 통과하면 설정 파일에는
+            // 기다린다고 적혀 있는데 실제로는 안 기다리는 상태가 되고, 그건 설정이 아예
+            // 없는 것보다 나쁘다 — 있으니까 됐다고 믿게 된다.
+            withValues(8, "0s", "30s").run(context -> assertThat(context).hasFailed()
+                    .getFailure()
+                    .hasStackTraceContaining("0 보다 커야 한다"));
         }
     }
 }

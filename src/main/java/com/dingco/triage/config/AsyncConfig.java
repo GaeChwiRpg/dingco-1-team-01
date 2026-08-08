@@ -40,6 +40,21 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  * <b>느려지는 건 보이지만 사라지는 건 안 보인다.</b> 이 선택의 대가는 측정 a 에 그대로 나타나므로
  * 잴 때 대기줄 상태를 함께 기록한다.
  *
+ * <p>⚠️ <b>단 「버리지 않는다」에는 예외가 하나 있고, 감추지 않는다</b> (AI 리뷰 지적 → JDK
+ * 바이트코드로 확인). {@code CallerRunsPolicy} 는 실행기가 <b>이미 내려가는 중</b>이면
+ * 작업을 실행하지 않고 <b>조용히 버린다</b> — 구현이 {@code if (!e.isShutdown()) r.run();} 이라
+ * 종료 중에는 아무 일도 하지 않고 반환한다. 예외도 로그도 없다.
+ *
+ * <pre>
+ * 평상시   대기줄 참 → 접수 스레드가 대신 실행       (안 버림 ✅)
+ * 종료 중  대기줄 참 → <b>아무 일도 안 하고 반환</b>       (버림 ❌)
+ * </pre>
+ *
+ * <p>그래서 「종료 중 + 대기줄 포화」가 겹치는 짧은 창에서는 유실이 가능하다. 이 창을 없애려면
+ * 정책을 직접 만들어 종료 중에는 <b>거부 예외를 던져 호출부가 알게</b> 해야 하는데, 지금은
+ * <b>범위 밖으로 두고 드러내는 쪽</b>을 택했다 — 그 유실은 문의가 {@code RECEIVED} 로 남아
+ * {@code stuckReceived} 에 나타난다 (D-017). 「나중에 할 것」 E 가 실제로 없애는 항목이다.
+ *
  * <p><b>{@code @Async} 는 반드시 이름을 지정해서 쓴다</b> — {@code @Async("classifyExecutor")}.
  * 이름을 빠뜨리면 스프링이 자기 기본 실행기로 보내는데, 그쪽에는 여기서 정한 종료 대기도
  * 포화 정책도 없다. <b>이건 컴파일러가 못 막는다</b>({@code service/ai} 패키지 경계가 그랬듯이) —
@@ -80,7 +95,7 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = CLASSIFY_EXECUTOR)
     public ThreadPoolTaskExecutor classifyExecutor() {
         verifyThreadsFitConnections();
-        verifyShutdownWaitFitsLifecycle();
+        logShutdownBudget();
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(properties.coreSize());
@@ -123,6 +138,16 @@ public class AsyncConfig implements AsyncConfigurer {
      *
      * <p><b>실제 값을 읽는다.</b> 설정 파일의 문자열을 읽으면 값을 안 적었을 때 검사가 조용히
      * 빠지는데, 그건 이 검사가 막으려는 것과 같은 종류의 실패다.
+     *
+     * <p>⚠️ <b>이 검사가 전부를 덮지는 않는다</b> (AI 리뷰 지적). 대기줄이 차면
+     * {@code CallerRunsPolicy} 때문에 <b>접수 스레드도 트랜잭션 ②를 돌린다</b> — 그때 커넥션을
+     * 쓰는 주체는 「분류 스레드 {@code maxSize} 개」가 아니라 「그 + 동시에 대신 처리 중인 접수
+     * 스레드 몇 개」다. 즉 포화 상태에서는 이 부등식이 실제 사용량을 <b>과소평가</b>한다.
+     *
+     * <p>그래도 <b>여유분을 숫자로 더하지 않는다.</b> 몇 개를 더할지는 재보기 전에는 모르고,
+     * 재보지 않은 숫자를 근거로 쓰지 않는 것이 이 프로젝트의 규칙이다. 대신 <b>측정 a 에서
+     * 대기줄 상태와 커넥션 대기를 함께 기록</b>해 실제 최대 동시 사용량을 확인하고, 그 값이
+     * 나오면 그때 이 식을 고친다 (D-047 재평가 조항이 가리키는 자리다).
      */
     private void verifyThreadsFitConnections() {
         DataSource dataSource = dataSourceProvider.getIfAvailable();
@@ -149,24 +174,38 @@ public class AsyncConfig implements AsyncConfigurer {
     }
 
     /**
-     * <b>실행기의 종료 대기 &lt; 스프링의 종료 단계 제한</b> (D-047 ⓒ).
+     * 종료할 때 <b>얼마나 기다리는지를 로그로 남긴다</b> — 검사가 아니라 기록이다 (D-047 ⓒ).
      *
-     * <p>실행기가 60초를 기다리겠다고 해도 스프링이 30초에 포기하면 <b>기다리라고 적어둔 설정이
-     * 무의미해진다.</b> "설정은 있는데 동작은 안 하는" 상태가 되고, 그건 설정이 없는 것보다
-     * 나쁘다 — 있으니까 됐다고 믿게 된다.
+     * <p><b>앞선 판은 여기서 「종료 대기 &lt; 스프링의 종료 단계 제한」을 강제했는데, 그런 관계는
+     * 존재하지 않는다</b> (AI 리뷰 지적 → Spring 6.1.21 바이트코드로 확인). 두 값은 <b>경쟁하는
+     * 예산이 아니라 순서대로 적용되는 서로 다른 예산</b>이다.
+     *
+     * <pre>
+     * ① stop()    ← spring.lifecycle.timeout-per-shutdown-phase 가 제한
+     *              ThreadPoolTaskExecutor 는 SmartLifecycle 이라 이 단계를 탄다.
+     *              새 작업 받기를 멈추고 <b>지금 돌고 있는</b> 것이 끝나기를 기다린다
+     * ② destroy() ← classification.async.await-termination 이 제한
+     *              executor 를 내리고 <b>완전히 끝날 때까지</b> 기다린다.
+     *              waitForTasksToCompleteOnShutdown=true 라 대기줄에 남은 것도 포함된다
+     * </pre>
+     *
+     * <p>즉 최악의 종료 대기는 <b>둘의 합</b>이고, 한쪽이 다른 쪽보다 짧아야 할 이유가 없다.
+     * 옛 검사는 <b>멀쩡한 설정을 기동 단계에서 막았다</b> — 재시도(TRI-54)가 붙으면 분류 1건이
+     * 최악 「AI 타임아웃 × 3회 + 백오프」만큼 걸려서 종료 대기를 30초보다 길게 잡는 것이
+     * 정상인데, 그 설정이 부팅을 실패시켰다.
+     *
+     * <p><b>진짜 제약은 앱 밖에 있다</b> — 배포 도구가 SIGKILL 을 보내기까지의 유예 시간
+     * (쿠버네티스 {@code terminationGracePeriodSeconds}, {@code docker stop -t}). 그 값은 앱이
+     * 읽을 수 없으므로 검사하지 않고, 대신 <b>합계를 로그로 내보내</b> 배포 설정과 맞춰볼 수 있게 한다.
      */
-    private void verifyShutdownWaitFitsLifecycle() {
+    private void logShutdownBudget() {
         Duration lifecycleTimeout = environment.getProperty(
                 "spring.lifecycle.timeout-per-shutdown-phase", Duration.class, DEFAULT_SHUTDOWN_PHASE_TIMEOUT);
 
-        if (properties.awaitTermination().compareTo(lifecycleTimeout) >= 0) {
-            throw new IllegalStateException(("실행기의 종료 대기는 스프링의 종료 단계 제한보다 짧아야 한다 (D-047 ⓒ): "
-                    + "classification.async.await-termination=%s, spring.lifecycle.timeout-per-shutdown-phase=%s. "
-                    + "길면 스프링이 먼저 포기해서 진행 중이던 분류를 기다리지 못한다.")
-                    .formatted(properties.awaitTermination(), lifecycleTimeout));
-        }
-        log.info("classify_executor_check ok awaitTermination={} lifecycleTimeout={}",
-                properties.awaitTermination(), lifecycleTimeout);
+        log.info("classify_executor_shutdown_budget phase={} awaitTermination={} worstCaseTotal={} "
+                        + "— 배포 도구의 종료 유예 시간이 worstCaseTotal 보다 길어야 진행 중이던 분류를 끝까지 기다린다",
+                lifecycleTimeout, properties.awaitTermination(),
+                lifecycleTimeout.plus(properties.awaitTermination()));
     }
 
     /**
