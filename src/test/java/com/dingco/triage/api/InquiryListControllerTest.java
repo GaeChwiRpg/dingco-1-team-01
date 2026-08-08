@@ -135,29 +135,40 @@ class InquiryListControllerTest {
     @DisplayName("상담원 응답에는 confidence 가 있고, 값이 없으면 null 이 그대로 나간다 (D-039)")
     void agentResponseKeepsConfidenceEvenWhenNull() throws Exception {
         // 자동확정: confidence 값 있음.
-        insert(CUSTOMER_A, "자동 확정", InquiryStatus.CLASSIFIED, InquiryCategory.PAYMENT, "0.930",
+        insert(CUSTOMER_A, "AGENT표기-자동확정", InquiryStatus.CLASSIFIED, InquiryCategory.PAYMENT, "0.930",
                 Instant.parse("2026-08-05T02:00:00Z"));
         // 사람 확정을 재사용(REUSED): 카테고리는 있고 confidence 는 null (사람은 확신도를 안 매긴다).
-        insert(CUSTOMER_B, "재사용 확정", InquiryStatus.CLASSIFIED, InquiryCategory.PAYMENT, null,
+        insert(CUSTOMER_B, "AGENT표기-재사용", InquiryStatus.CLASSIFIED, InquiryCategory.PAYMENT, null,
                 Instant.parse("2026-08-05T01:00:00Z"));
 
         MvcResult result = mockMvc.perform(get("/api/inquiries")
                         .header("X-User-Id", "9001").header("X-User-Role", "AGENT")
-                        .param("category", "PAYMENT"))
+                        .param("category", "PAYMENT").param("size", "100"))
                 .andExpect(status().isOk())
-                // 상담원은 전체를 본다 — 두 고객의 PAYMENT 건이 함께 나온다.
-                .andExpect(jsonPath("$.totalElements").value(2))
                 .andReturn();
 
+        // 상담원 목록(searchAll)은 전 고객을 보므로 전역 count·위치에 단정하지 않는다 — 다른 테스트가
+        // 남긴 PAYMENT 행이 섞일 수 있어서다. 심은 두 건을 본문으로 집어 확신도 표기만 검증한다
+        // (본문에 PII 가 없어 마스킹돼도 그대로다).
         JsonNode content = objectMapper.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8)).path("content");
-        // received_at DESC 라 [0] = 자동확정(값 있음), [1] = 재사용(null).
-        JsonNode auto = content.path(0);
-        JsonNode reused = content.path(1);
+        JsonNode auto = findByContent(content, "AGENT표기-자동확정");
+        JsonNode reused = findByContent(content, "AGENT표기-재사용");
+        // 자동확정: confidence 필드 있고 값 그대로.
         assertThat(auto.has("confidence")).isTrue();
         assertThat(auto.path("confidence").decimalValue()).isEqualByComparingTo("0.930");
-        // 필드는 있고 값만 null — 0 이나 "-" 로 치환하지 않는다.
+        // 재사용(사람 확정): 필드는 있고 값만 null — 0 이나 "-" 로 치환하지 않는다.
         assertThat(reused.has("confidence")).isTrue();
         assertThat(reused.path("confidence").isNull()).isTrue();
+    }
+
+    /** 상담원 목록은 전역이라 전역 count·위치 대신 심은 항목을 본문으로 집어 격리한다. */
+    private static JsonNode findByContent(JsonNode content, String needle) {
+        for (JsonNode item : content) {
+            if (needle.equals(item.path("content").asText())) {
+                return item;
+            }
+        }
+        throw new AssertionError("심은 항목을 응답에서 찾지 못했다: " + needle);
     }
 
     @Test

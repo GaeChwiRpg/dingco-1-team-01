@@ -206,8 +206,11 @@ class InquiryDetailControllerTest {
                 java.sql.Timestamp.from(Instant.parse("2026-08-05T00:00:00Z")),
                 java.sql.Timestamp.from(Instant.now()),
                 java.sql.Timestamp.from(Instant.now()));
+        // content 만으로 찾으면 다른 테스트가 같은 본문을 다른 고객으로 남겼을 때 2행이 잡혀
+        // IncorrectResultSizeDataAccessException 이 난다 (병렬/누적 대비). 소유자까지 함께 건다.
         return jdbcTemplate.queryForObject(
-                "SELECT id FROM inquiries WHERE content = ?", Long.class, content);
+                "SELECT id FROM inquiries WHERE customer_id = ? AND content = ?",
+                Long.class, customerId, content);
     }
 
     /** 분류 시도 1건을 심는다. verdict 별 null 조합은 이미 확정된 규격(D-022·D-033)대로 넣는다. */
