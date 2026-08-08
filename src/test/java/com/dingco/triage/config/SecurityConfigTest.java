@@ -1,33 +1,56 @@
 package com.dingco.triage.config;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.dingco.triage.api.ReviewQueueController;
+import com.dingco.triage.service.ContentMasker;
+import com.dingco.triage.service.ReviewQueryService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * API-CONTRACT.md 공통 규약의 endpoint 별 역할 매핑표(TRI-26)를 그대로 검증한다.
  *
- * <p>실제 컨트롤러가 아직 없어(P1/P2 담당 endpoint 미착수) 이 테스트만을 위한 더미
+ * <p>대부분은 아직 실제 컨트롤러가 없어(P1/P2 담당 endpoint 미착수) 이 테스트만을 위한 더미
  * 컨트롤러({@link ProbeController})를 붙인다 — 검증 대상은 컨트롤러 로직이 아니라
  * <b>그 앞에서 역할이 걸러지는지</b>다. DB 를 안 쓰므로 {@code @WebMvcTest} 슬라이스로 충분하고,
  * Docker 없는 환경에서도 돈다.
+ *
+ * <p>{@code GET /api/inquiry-review-queue} 만 TRI-56 으로 실제 컨트롤러({@link ReviewQueueController})
+ * 가 생겨 더미에서 빠졌다 — 그래서 이 슬라이스에 그 컨트롤러를 함께 태우고, DB 를 쓰는
+ * {@link ReviewQueryService} 는 {@code @MockBean} 으로 대신한다. {@link ContentMasker} 는
+ * 의존성 없는 순수 컴포넌트라 목킹하지 않고 그대로 가져다 쓴다.
  */
-@WebMvcTest(controllers = ProbeController.class)
-@Import(SecurityConfig.class)
+@WebMvcTest(controllers = {ProbeController.class, ReviewQueueController.class})
+@Import({SecurityConfig.class, ContentMasker.class})
 class SecurityConfigTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private ReviewQueryService reviewQueryService;
+
+    @BeforeEach
+    void stubReviewQueue() {
+        // 이 테스트가 재는 건 역할 필터링이지 조회 결과가 아니다 — 빈 페이지로 충분하다.
+        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt())).willReturn(Page.empty());
+    }
 
     @ParameterizedTest(name = "{0} {1} — role={2} → {3}")
     @CsvSource({
