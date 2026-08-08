@@ -46,6 +46,22 @@ public record AiParsedClassification(
             throw new IllegalArgumentException(
                     "검증을 통과한 결과는 종류와 확신도가 둘 다 있어야 한다: category=%s, confidence=%s"
                             .formatted(category, confidence));
+        } else if (confidence.compareTo(BigDecimal.ZERO) < 0
+                || confidence.compareTo(BigDecimal.ONE) > 0) {
+            // 「통과했다」고 말하면서 범위 밖 값을 들고 있을 수는 없다 (AI 리뷰 지적).
+            //
+            // 범위 검사 자체는 AiResponseParser 가 하고, 걸리면 failed(OUT_OF_RANGE) 를 만든다 —
+            // 그러니 정상 경로에서는 여기까지 1.5 가 오지 않는다. 그런데도 막는 이유는
+            // 이 팩토리가 파서 밖에서도 불릴 수 있기 때문이다. 실제로 트랜잭션 ② 테스트가
+            // classified(...) 를 직접 만들어 쓰므로, 여기가 열려 있으면 confidence 1.5 짜리가
+            // 파서를 건너뛰고 기준값 비교로 들어가 자동 확정된다 — D-034 가 막으려던 상황이
+            // 검증을 우회해 그대로 재현된다.
+            //
+            // clamp 하지 않고 던진다. 1.5 를 1.0 으로 자르면 측정 8ⓐ 의 최상위 구간에
+            // "AI 가 1.0 이라 신고한 건"과 "잘라낸 건"이 섞인다 (D-022 와 같은 논리).
+            throw new IllegalArgumentException(
+                    "검증을 통과한 확신도는 0.0~1.0 이어야 한다 — 범위 밖이면 failed(OUT_OF_RANGE) 다: confidence=%s"
+                            .formatted(confidence));
         }
     }
 

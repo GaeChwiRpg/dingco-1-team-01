@@ -53,6 +53,7 @@ class InquiryRepositoryGuardTest {
                 "searchForCustomer",       // 소유자 필수
                 "findByIdAndCustomerId",   // 소유자 필수
                 "searchAll",               // 권한 전용 (이름에 드러남)
-                "findByIdForAgent");       // 권한 전용 (이름에 드러남)
+                "findByIdForAgent",        // 권한 전용 (이름에 드러남)
+                "findByIdForClassification"); // 분류 ② 전용 owner-less 로드 (이름에 드러남, PR #30 findById 대체)
     }
 }

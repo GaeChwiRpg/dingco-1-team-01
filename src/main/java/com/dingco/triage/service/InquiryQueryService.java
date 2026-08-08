@@ -104,7 +104,7 @@ public class InquiryQueryService {
         Inquiry inquiry = inquiryRepository.findByIdForAgent(inquiryId)
                 .orElseThrow(() -> new NoSuchElementException("문의를 찾을 수 없습니다: " + inquiryId));
         List<Classification> classifications =
-                classificationResultRepository.findByInquiry_IdOrderByCreatedAtDesc(inquiryId).stream()
+                classificationResultRepository.findByInquiryIdOrderByCreatedAtDesc(inquiryId).stream()
                         .map(InquiryQueryService::toClassification)
                         .toList();
         return new AgentDetail(

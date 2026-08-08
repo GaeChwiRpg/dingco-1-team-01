@@ -77,6 +77,12 @@ public class GlobalExceptionHandler {
         return ErrorResponse.validation(ErrorCode.VALIDATION_FAILED.name(), "입력값이 올바르지 않습니다.", List.of(fieldError));
     }
 
+    @ExceptionHandler(InvalidRequestException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    ErrorResponse handleInvalidRequest(InvalidRequestException ex) {
+        return ErrorResponse.of(ErrorCode.VALIDATION_FAILED.name(), ex.getMessage());
+    }
+
     @ExceptionHandler(AuthenticationException.class)
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     ErrorResponse handleAuthentication(AuthenticationException ex) {
