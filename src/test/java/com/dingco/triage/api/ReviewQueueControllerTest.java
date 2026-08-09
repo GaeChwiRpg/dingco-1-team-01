@@ -294,4 +294,19 @@ class ReviewQueueControllerTest {
                 .andExpect(jsonPath("$.code").value("ALREADY_RESOLVED"))
                 .andExpect(jsonPath("$.reviewQueueItemId").value(902));
     }
+
+    @Test
+    @DisplayName("확정 — 동시 충돌이면 409 CONCURRENT_UPDATE 가 그대로 응답으로 나간다 (배선 확인)")
+    void confirmPropagatesConcurrentUpdateFromService() throws Exception {
+        given(reviewService.confirm(eq(902L), anyLong(), any()))
+                .willThrow(new ConflictException(ConflictCode.CONCURRENT_UPDATE, 902L, "동시 업데이트입니다."));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902")
+                        .contentType("application/json")
+                        .content("{\"finalCategory\":\"DELIVERY\"}")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONCURRENT_UPDATE"))
+                .andExpect(jsonPath("$.reviewQueueItemId").value(902));
+    }
 }
