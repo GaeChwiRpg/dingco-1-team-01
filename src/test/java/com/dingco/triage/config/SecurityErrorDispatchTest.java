@@ -25,6 +25,11 @@ import org.springframework.test.context.ActiveProfiles;
  * {@code /error} 가 매핑표에 없으면 이 재디스패치가 {@code anyRequest().authenticated()} 에
  * 걸려 익명 처리되고, 원래 나가야 할 404 가 401 로 가려진다. 그래서 여기서는 실제 내장 톰캣을
  * 띄우는 {@code webEnvironment = RANDOM_PORT} 로 검증한다.
+ *
+ * <p><b>검증에 쓰는 경로는 "MANAGER 허용 + 아직 컨트롤러 없음" 이면 무엇이든 된다.</b> 예전엔
+ * {@code /api/stats} 를 썼지만 TRI-72 로 컨트롤러가 생겨 200 을 반환하게 됐으므로, 아직 미착수인
+ * {@code /api/policies}(GET, {@code ROLE_MANAGER} — 계약 §6, 컨트롤러 없음) 로 옮겼다. 이 경로도
+ * 착수되면 같은 이유로 다른 미착수 MANAGER 경로로 옮긴다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -42,7 +47,7 @@ class SecurityErrorDispatchTest {
         headers.add("X-User-Role", "MANAGER");
 
         ResponseEntity<String> response = restTemplate.exchange(
-                "/api/stats", HttpMethod.GET, new HttpEntity<>(headers), String.class);
+                "/api/policies", HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
         assertThat(response.getStatusCode())
                 .as("권한은 통과했으니 401(인증 안 됨)이 아니라 404(핸들러 없음)여야 한다")

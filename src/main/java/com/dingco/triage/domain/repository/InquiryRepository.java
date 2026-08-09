@@ -198,4 +198,32 @@ public interface InquiryRepository extends Repository<Inquiry, Long> {
             """)
     int transitionFromReceived(@Param("id") Long id, @Param("status") InquiryStatus status,
             @Param("now") Instant now);
+
+    /**
+     * {@code stuckReceived} — 접수 후 임계 시간을 넘겨 {@code RECEIVED} 에 머문 문의 수 (D-017 · TRI-72).
+     *
+     * <p><b>이 값이 0 이 아니면 분류 파이프라인이 조용히 실패 중이다.</b> ②트랜잭션이 롤백되면
+     * 문의는 {@code RECEIVED} 로 남는데 아무도 다시 분류하지 않는다 — 이 시스템이 막으려는 "조용히
+     * 유실된 건"을 스스로 만드는 구멍이라, 고치지는 못해도({@code 나중에 할 것} E) 관찰은 한다.
+     *
+     * <p><b>경계는 호출부가 계산해 넘긴다.</b> 이 쿼리는 {@code now - 임계시간}(cutoff)을 받아
+     * "그보다 이전에 접수됐는데 아직 {@code RECEIVED}" 인 행만 센다. 시각 계산을 쿼리 안에서 하지
+     * 않는 이유는 {@link StatsService} 가 {@code Clock} 을 주입받아야 테스트에서 시각을 고정하고
+     * 임계값을 초 단위로 낮춰 D-017 을 검증할 수 있기 때문이다 (엔티티가 {@code Instant.now()} 를
+     * 직접 부르지 않는 것과 같은 이유).
+     *
+     * <p><b>가드레일(D-045(1)) 대상이 아니다.</b> 여기서 돌려주는 것은 문의 내용이 아니라 개수(long)라
+     * 소유자 없는 조회에 해당하지 않는다 — {@code existsById} 가 boolean 만 주는 것과 같은 층위다.
+     * 이 지표는 전체 문의를 가로지르는 운영 관측용이고 노출은 {@code ROLE_MANAGER} 로 이미 막혀 있다
+     * (계약 §7 · {@code SecurityConfig}).
+     *
+     * @param cutoff {@code now - stuckReceivedThreshold}. {@code receivedAt} 이 이 시각 <b>이하</b>인
+     *     행만 센다 — 경계(정확히 임계시간 경과)를 포함해 "임계 이상 머물렀다"를 그대로 옮긴다
+     */
+    @Query("""
+            SELECT COUNT(i) FROM Inquiry i
+             WHERE i.status = com.dingco.triage.domain.type.InquiryStatus.RECEIVED
+               AND i.receivedAt <= :cutoff
+            """)
+    long countStuckReceived(@Param("cutoff") Instant cutoff);
 }
