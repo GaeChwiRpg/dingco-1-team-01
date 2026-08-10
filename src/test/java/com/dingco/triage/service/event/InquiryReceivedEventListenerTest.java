@@ -16,11 +16,11 @@ import com.dingco.triage.service.ClassificationService;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ai.AiCallException;
 import io.sentry.Sentry;
-import com.dingco.triage.service.ai.AiClassificationService;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
-import com.dingco.triage.service.ai.AiResponseParser;
+import com.dingco.triage.service.ai.ClassifyAttempt;
 import com.dingco.triage.service.ai.ClassifyFailureReason;
+import com.dingco.triage.service.ai.RetryingAiClassifier;
 import com.dingco.triage.domain.type.InquiryCategory;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -63,21 +63,27 @@ class InquiryReceivedEventListenerTest {
     private static final String MASKED_CONTENT = "주문번호 [ORDER] 환불해주세요";
 
     private ContentMasker contentMasker;
-    private AiClassificationService aiClassificationService;
-    private AiResponseParser aiResponseParser;
+    private RetryingAiClassifier retryingAiClassifier;
     private ClassificationService classificationService;
     private InquiryReceivedEventListener listener;
 
     @BeforeEach
     void setUp() {
         contentMasker = mock(ContentMasker.class);
-        aiClassificationService = mock(AiClassificationService.class);
-        aiResponseParser = mock(AiResponseParser.class);
+        retryingAiClassifier = mock(RetryingAiClassifier.class);
         classificationService = mock(ClassificationService.class);
         listener = new InquiryReceivedEventListener(
-                contentMasker, aiClassificationService, aiResponseParser, classificationService);
+                contentMasker, retryingAiClassifier, classificationService);
 
         when(contentMasker.mask(RAW_CONTENT)).thenReturn(MASKED_CONTENT);
+    }
+
+    /** 한 번에 성공한 결과. 재시도·검증은 RetryingAiClassifierTest 가 본다. */
+    private static ClassifyAttempt succeeded() {
+        return new ClassifyAttempt(
+                AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.910")),
+                new AiRawResponse("claude-sonnet-5", "{\"category\":\"RETURN_REFUND\",\"confidence\":0.91}"),
+                1);
     }
 
     private InquiryReceivedEvent event() {
@@ -85,115 +91,68 @@ class InquiryReceivedEventListenerTest {
     }
 
     @Test
-    @DisplayName("AI 에 넘기는 것은 가린 본문이다 — 원문이 프롬프트로 나가지 않는다")
-    void sendsMaskedContentToAi() {
-        AiRawResponse raw = new AiRawResponse("claude-sonnet-5", "{\"category\":\"RETURN_REFUND\",\"confidence\":0.91}");
-        when(aiClassificationService.classify(any())).thenReturn(raw);
-        when(aiResponseParser.parse(raw)).thenReturn(
-                AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.910")));
+    @DisplayName("AI 쪽에 넘기는 것은 가린 본문이다 — 원문이 프롬프트로 나가지 않는다")
+    void sendsMaskedContentToClassifier() {
+        when(retryingAiClassifier.classify(eq(INQUIRY_ID), any())).thenReturn(succeeded());
 
         listener.onInquiryReceived(event());
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(aiClassificationService).classify(sent.capture());
+        verify(retryingAiClassifier).classify(eq(INQUIRY_ID), sent.capture());
         assertThat(sent.getValue()).isEqualTo(MASKED_CONTENT);
         assertThat(sent.getValue()).doesNotContain("20260808-1234");
     }
 
     @Test
-    @DisplayName("파싱 결과를 그대로 트랜잭션 ②에 넘긴다 — 리스너가 판정하지 않는다")
-    void delegatesParsedResultToTransactionTwo() {
-        AiRawResponse raw = new AiRawResponse("claude-sonnet-5", "{\"category\":\"DELIVERY\",\"confidence\":0.42}");
-        AiParsedClassification parsed =
-                AiParsedClassification.classified(InquiryCategory.DELIVERY, new BigDecimal("0.420"));
-        when(aiClassificationService.classify(any())).thenReturn(raw);
-        when(aiResponseParser.parse(raw)).thenReturn(parsed);
+    @DisplayName("결과를 그대로 트랜잭션 ②에 넘긴다 — 리스너가 판정하지 않는다")
+    void handsResultToTransactionTwo() {
+        ClassifyAttempt attempt = succeeded();
+        when(retryingAiClassifier.classify(eq(INQUIRY_ID), any())).thenReturn(attempt);
 
         listener.onInquiryReceived(event());
 
-        // 확신도 0.42 는 기준값(0.8) 미만이지만 여기서 거르지 않는다 — 그 판단은 ②가 한다.
-        verify(classificationService).verifyAndPersist(INQUIRY_ID, parsed, raw, 1);
+        verify(classificationService).verifyAndPersist(
+                INQUIRY_ID, attempt.parsed(), attempt.raw(), attempt.attemptCount());
     }
 
     @Test
-    @DisplayName("값 검증에 걸린 결과도 거르지 않고 ②로 넘긴다")
-    void delegatesFailedValidationResultToo() {
-        AiRawResponse raw = new AiRawResponse("claude-sonnet-5", "{\"category\":\"DELIVERY\",\"confidence\":1.5}");
-        AiParsedClassification parsed =
-                AiParsedClassification.failed(ClassifyFailureReason.OUT_OF_RANGE);
-        when(aiClassificationService.classify(any())).thenReturn(raw);
-        when(aiResponseParser.parse(raw)).thenReturn(parsed);
+    @DisplayName("실패한 결과도 거르지 않고 ②로 넘긴다 — 실패도 판정의 하나로 기록한다")
+    void handsFailureToTransactionTwo() {
+        AiRawResponse broken = new AiRawResponse("claude-sonnet-5", "{\"confidence\": 1.5}");
+        ClassifyAttempt attempt = new ClassifyAttempt(
+                AiParsedClassification.failed(ClassifyFailureReason.OUT_OF_RANGE), broken, 3);
+        when(retryingAiClassifier.classify(eq(INQUIRY_ID), any())).thenReturn(attempt);
 
         listener.onInquiryReceived(event());
 
-        // 원문은 남긴다 — raw_response 가 있어야 나중에 무엇이 왜 걸렸는지 확인할 수 있다.
-        verify(classificationService).verifyAndPersist(INQUIRY_ID, parsed, raw, 1);
+        verify(classificationService).verifyAndPersist(
+                INQUIRY_ID, attempt.parsed(), broken, 3);
     }
 
-    @Nested
-    @DisplayName("AI 를 부르지 못했을 때")
-    class WhenAiCallFails {
+    @Test
+    @DisplayName("시도 횟수를 그대로 넘긴다 — 여기서 만들어내지 않는다")
+    void passesAttemptCountThrough() {
+        // 앞선 판은 리스너가 상수 1 을 넣었다. 재시도가 붙은 지금 그 값을 만들어내면
+        // 측정 4(재시도가 실제로 회수하고 있나)가 영영 1 만 보게 된다.
+        when(retryingAiClassifier.classify(eq(INQUIRY_ID), any()))
+                .thenReturn(new ClassifyAttempt(
+                        AiParsedClassification.failed(ClassifyFailureReason.API_ERROR), null, 3));
 
-        @BeforeEach
-        void aiIsDown() {
-            when(aiClassificationService.classify(any()))
-                    .thenThrow(new AiCallException("ANTHROPIC_API_KEY 가 비어 있어 AI 를 부를 수 없다."));
-        }
+        listener.onInquiryReceived(event());
 
-        @Test
-        @DisplayName("API_ERROR 로 ②에 넘긴다 — 응답을 못 받은 것과 값이 이상한 것을 나눈다")
-        void reportsApiError() {
-            listener.onInquiryReceived(event());
+        verify(classificationService).verifyAndPersist(eq(INQUIRY_ID), any(), eq(null), eq(3));
+    }
 
-            ArgumentCaptor<AiParsedClassification> parsed =
-                    ArgumentCaptor.forClass(AiParsedClassification.class);
-            verify(classificationService)
-                    .verifyAndPersist(eq(INQUIRY_ID), parsed.capture(), eq(null), anyInt());
+    @Test
+    @DisplayName("응답을 못 받은 건(raw=null)도 그대로 넘긴다")
+    void passesNullRawThrough() {
+        when(retryingAiClassifier.classify(eq(INQUIRY_ID), any()))
+                .thenReturn(new ClassifyAttempt(
+                        AiParsedClassification.failed(ClassifyFailureReason.API_ERROR), null, 3));
 
-            assertThat(parsed.getValue().isFailed()).isTrue();
-            assertThat(parsed.getValue().failureReason()).isEqualTo(ClassifyFailureReason.API_ERROR);
-            // FAILED 는 종류와 확신도가 둘 다 없다 (D-022).
-            assertThat(parsed.getValue().category()).isNull();
-            assertThat(parsed.getValue().confidence()).isNull();
-        }
+        listener.onInquiryReceived(event());
 
-        @Test
-        @DisplayName("최종 실패라 Sentry 로 보낸다 — 로그만 찍고 끝내면 영구히 모른다 (D-030)")
-        void reportsToSentry() {
-            // catch 해서 로그만 찍고 끝내면 자동 캡처도 수동 캡처도 아니라서 Sentry 가
-            // 영구히 모른다 (SENTRY-GUIDE.md 2-3, 실측 확인된 사례).
-            //
-            // ⚠️ 재시도(TRI-54)가 붙으면 이 호출 자리가 @Recover 로 옮겨간다. 그때
-            // 「옮기다가 빠뜨리는 것」을 이 테스트가 막는다 — 옮기고 나면 여기가 아니라
-            // @Recover 를 검증하도록 고치되, 캡처가 사라지면 어느 쪽이든 빨간불이 뜬다.
-            try (MockedStatic<Sentry> sentry = mockStatic(Sentry.class)) {
-                listener.onInquiryReceived(event());
-
-                sentry.verify(() -> Sentry.captureException(any(AiCallException.class)));
-            }
-        }
-
-        @Test
-        @DisplayName("응답이 없으니 파서를 부르지 않는다")
-        void doesNotParseWhenNothingReceived() {
-            listener.onInquiryReceived(event());
-
-            verify(aiResponseParser, never()).parse(any());
-        }
-
-        @Test
-        @DisplayName("예외를 밖으로 던지지 않는다 — 던지면 문의가 RECEIVED 인 채로 사라진다")
-        void doesNotPropagateException() {
-            assertThatCode(() -> listener.onInquiryReceived(event())).doesNotThrowAnyException();
-        }
-
-        @Test
-        @DisplayName("시도 횟수는 1이다 — 한 번은 불렀으므로 0 이 아니다")
-        void recordsOneAttempt() {
-            listener.onInquiryReceived(event());
-
-            verify(classificationService).verifyAndPersist(eq(INQUIRY_ID), any(), eq(null), eq(1));
-        }
+        verify(classificationService).verifyAndPersist(eq(INQUIRY_ID), any(), eq(null), anyInt());
     }
 
     /**

@@ -3,13 +3,8 @@ package com.dingco.triage.service.event;
 import com.dingco.triage.config.AsyncConfig;
 import com.dingco.triage.service.ClassificationService;
 import com.dingco.triage.service.ContentMasker;
-import com.dingco.triage.service.ai.AiCallException;
-import com.dingco.triage.service.ai.AiClassificationService;
-import com.dingco.triage.service.ai.AiParsedClassification;
-import com.dingco.triage.service.ai.AiRawResponse;
-import com.dingco.triage.service.ai.AiResponseParser;
-import com.dingco.triage.service.ai.ClassifyFailureReason;
-import io.sentry.Sentry;
+import com.dingco.triage.service.ai.ClassifyAttempt;
+import com.dingco.triage.service.ai.RetryingAiClassifier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -43,18 +38,14 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 class InquiryReceivedEventListener {
 
-    /**
-     * 지금은 재시도가 없어서 항상 1이다.
-     *
-     * <p>이 값은 {@code @Retryable} 이 실제로 회수하고 있는지의 근거라(D-022 재평가), TRI-54 가
-     * 붙으면 실제 시도 횟수로 바뀐다. <b>그때까지 0 이나 null 을 넣지 않는다</b> — 한 번은
-     * 불렀으니 1이 사실이고, 0 을 넣으면 "안 불렀다"와 구분되지 않는다.
-     */
-    private static final int ATTEMPT_COUNT_WITHOUT_RETRY = 1;
-
     private final ContentMasker contentMasker;
-    private final AiClassificationService aiClassificationService;
-    private final AiResponseParser aiResponseParser;
+
+    /**
+     * <b>별도 빈이어야 재시도가 걸린다.</b> {@code @Retryable} 은 스프링이 그 클래스를 대신
+     * 감싸주는 방식이라, 같은 클래스 안에서 자기 메서드를 부르면 통째로 무시된다.
+     */
+    private final RetryingAiClassifier retryingAiClassifier;
+
     private final ClassificationService classificationService;
 
     /**
@@ -77,28 +68,18 @@ class InquiryReceivedEventListener {
         // 두 벌이면 한쪽만 조여져서 화면에는 가려지는데 프롬프트에는 남는다.
         String maskedContent = contentMasker.mask(event.content());
 
-        AiRawResponse raw = null;
-        AiParsedClassification parsed;
-        try {
-            raw = aiClassificationService.classify(maskedContent);
-            // 값 검증 4가지가 여기서 끝난다. 기준값 비교는 아래 ② 안에 있다 —
-            // 순서가 뒤집히면 확신도 1.5 짜리가 자동 확정을 통과한 뒤에 걸러진다 (D-034).
-            parsed = aiResponseParser.parse(raw);
-        } catch (AiCallException e) {
-            // 응답을 「받지 못한」 경우다. 값이 이상한 것(파서가 거르는 것)과 사유를 나눠야
-            // 측정 2 의 사유별 분포를 읽을 수 있다 — 그래서 API_ERROR 는 파서가 만들지 않는다.
-            //
-            // 재시도가 붙기 전까지는 여기가 최종 실패 지점이라 Sentry 로 명시적으로 보낸다
-            // (D-030). TRI-54 가 붙으면 이 자리는 @Recover 로 옮겨간다.
-            log.warn("classify_failed reason={} inquiryId={}",
-                    ClassifyFailureReason.API_ERROR, event.inquiryId(), e);
-            Sentry.captureException(e);
-            parsed = AiParsedClassification.failed(ClassifyFailureReason.API_ERROR);
-        }
+        // 호출·검증·재시도가 전부 저 안에서 끝난다 (TRI-54). 여기서 try-catch 를 하지 않는
+        // 이유는, 실패도 「판정 결과의 하나」로 돌아오기 때문이다 — 재시도를 다 쓴 건은
+        // @Recover 가 FAILED 로 만들어 보낸다.
+        //
+        // ⚠️ 다른 빈을 통해 부르는 것이 재시도가 걸리는 조건이다. 이 클래스 안으로 옮겨
+        // 자기 메서드를 부르면 프록시를 안 타서 @Retryable 이 통째로 무시된다 —
+        // 예외도 로그도 없이 한 번만 호출된다.
+        ClassifyAttempt attempt = retryingAiClassifier.classify(event.inquiryId(), maskedContent);
 
         // 판정·저장·큐 삽입은 전부 저 안에서 한 덩어리로 일어난다 (트랜잭션 ②).
         // raw 가 null 일 수 있다 — 응답을 못 받았으면 남길 원문이 없다.
         classificationService.verifyAndPersist(
-                event.inquiryId(), parsed, raw, ATTEMPT_COUNT_WITHOUT_RETRY);
+                event.inquiryId(), attempt.parsed(), attempt.raw(), attempt.attemptCount());
     }
 }
