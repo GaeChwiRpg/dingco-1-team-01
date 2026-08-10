@@ -1,8 +1,13 @@
 package com.dingco.triage.service.cache;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 /**
@@ -50,7 +55,40 @@ public class ClassificationCache {
      */
     static final String RULE_VERSION = "v1";
 
+    /**
+     * ②의 조건부 넣기 — <b>보기와 쓰기를 한 덩어리(원자적)로</b> 한다 (D-048).
+     *
+     * <p>기존 값이 사람 답({@code source=HUMAN})이면 덮지 않고, 아니면 덮는다. 이걸 GET→판단→SET
+     * 으로 쪼개면 그 사이에 ③이 넣은 사람 답을 ②가 덮어버려 "덮어쓰기는 한 방향"(D-036) 규칙이
+     * 그대로 뚫린다. Lua 스크립트 하나로 원자적으로 처리해 그 창을 없앤다.
+     *
+     * <p>기존 값은 JSON 이라 {@code cjson} 으로 {@code source} 만 본다. 깨져서 파싱이 안 되면
+     * ({@code pcall} 실패) 사람 답이 아닌 것으로 보고 덮는다 — 깨진 값은 새 AI 값으로 자가 치유된다.
+     * 반환: 썼으면 {@code 1}, 사람 답이라 안 썼으면 {@code 0}.
+     */
+    private static final RedisScript<Long> PUT_IF_NOT_HUMAN = RedisScript.of("""
+            local cur = redis.call('GET', KEYS[1])
+            if cur then
+              local ok, decoded = pcall(cjson.decode, cur)
+              if ok and decoded.source == 'HUMAN' then
+                return 0
+              end
+            end
+            redis.call('SET', KEYS[1], ARGV[1])
+            return 1
+            """, Long.class);
+
     private final RedisTemplate<String, CachedClassification> classificationCacheTemplate;
+
+    /**
+     * Lua 스크립트 실행용. 결과가 {@code Long}(0/1)이라 값 타입 템플릿의 값 직렬화기와 섞으면
+     * 결과 역직렬화가 깨진다 — 키·인자·결과가 전부 단순 문자열/정수인 이 템플릿으로 분리한다.
+     * 인자로 넘기는 JSON 은 {@link #classificationCacheTemplate} 이 쓰는 것과 같은 {@code ObjectMapper}
+     * 로 만들어, {@link #get} 이 그대로 읽을 수 있다.
+     */
+    private final StringRedisTemplate stringRedisTemplate;
+
+    private final ObjectMapper objectMapper;
 
     /**
      * 같은 키의 지난 결과를 찾는다.
@@ -70,6 +108,28 @@ public class ClassificationCache {
      */
     public void put(String normalizedKey, CachedClassification value) {
         classificationCacheTemplate.opsForValue().set(redisKey(normalizedKey), value);
+    }
+
+    /**
+     * 값을 넣되 <b>기존이 사람 답({@code source=HUMAN})이면 덮지 않는다</b>. 보기와 쓰기를 원자적으로
+     * 한 덩어리로 처리한다 (D-048). ②(AI 자동 확정, TRI-53)의 넣기가 이것이다.
+     *
+     * @return 실제로 썼으면 {@code true}, 기존 사람 답을 지키느라 안 썼으면 {@code false}
+     */
+    public boolean putIfNotHuman(String normalizedKey, CachedClassification value) {
+        Long wrote = stringRedisTemplate.execute(
+                PUT_IF_NOT_HUMAN, List.of(redisKey(normalizedKey)), writeJson(value));
+        return wrote != null && wrote == 1L;
+    }
+
+    private String writeJson(CachedClassification value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            // 계약 C 값 구조는 JSON 직렬화가 항상 되는 단순 record 라, 여기 오면 매퍼 설정이
+            // 깨진 것이다 — 조용히 삼키지 않는다.
+            throw new IllegalStateException("캐시 값 직렬화 실패: " + value, e);
+        }
     }
 
     /** 이름공간 + 규칙 번호를 붙인 실제 Redis 키. */

@@ -32,6 +32,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    # 1단 캐시는 evict 규칙이 없어 키가 무한히 쌓인다 (TRI-84 · D-048). 상한을 넘길 때만
+    # 오래 안 쓴 것부터 밀어낸다(allkeys-lru). TTL 로 상한을 대신하지 않는다 — 캐시가 비는
+    # 시점이 시계에 달리면 측정 6·11 이 실행마다 다른 값을 낸다. maxmemory 값은 초기값이고
+    # 측정 11(evicted_keys·메모리)에서 조정한다.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
