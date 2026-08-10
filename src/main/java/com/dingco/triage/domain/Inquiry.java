@@ -210,4 +210,17 @@ public class Inquiry {
     public Instant getUpdatedAt() {
         return updatedAt;
     }
+
+    /**
+     * 상담원 확정 (트랜잭션 ③, 불변 규칙 2). {@code UNCLASSIFIED → CLASSIFIED} 전이는
+     * 사람만 일으킬 수 있어 AI 경로({@link #applyClassification})와 메서드를 분리한다.
+     *
+     * <p>{@code currentConfidence} 는 null 로 둔다 — 사람은 확신도를 매기지 않는다 (D-033).
+     * 사람 답을 재사용한 {@code REUSED} 가 confidence 를 null 로 남기는 것과 같은 규칙이다.
+     */
+    public void confirmByAgent(InquiryCategory finalCategory) {
+        this.status = InquiryStatus.CLASSIFIED;
+        this.currentCategory = Objects.requireNonNull(finalCategory, "finalCategory");
+        this.currentConfidence = null;
+    }
 }

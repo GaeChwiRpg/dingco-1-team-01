@@ -150,6 +150,31 @@ class InquiryDetailControllerTest {
     }
 
     @Test
+    @DisplayName("상담원 확정 후에는 category(AI 제안)와 finalCategory(사람 확정)가 둘 다 나온다 — 불변 규칙 1 (TRI-61)")
+    void agentSeesBothCategoryAndFinalCategoryAfterConfirm() throws Exception {
+        long id = insertInquiry(CUSTOMER_A, "AI는 배송으로 봤지만 상담원이 환불로 정정한 문의",
+                InquiryStatus.CLASSIFIED, InquiryCategory.RETURN_REFUND, null);
+        // AI 제안(DELIVERY)과 사람 확정(RETURN_REFUND)이 다른 상황 — 확정 트랜잭션 ③
+        // (ReviewService.confirm)이 category 를 덮지 않고 final_category 만 채운다는 불변 규칙 1의
+        // 결과를 흉내낸다. 상태 전이·결과 생성 자체는 P1/P2 소관이라 이 파일의 관례대로 JdbcTemplate
+        // 로 직접 심는다.
+        insertClassification(id, InquiryCategory.DELIVERY, "0.550", "claude-sonnet-5", Verdict.NEEDS_REVIEW,
+                Instant.parse("2026-08-05T02:00:00Z"), InquiryCategory.RETURN_REFUND);
+
+        MvcResult result = mockMvc.perform(get("/api/inquiries/{id}", id)
+                        .header("X-User-Id", "9001").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode c0 = objectMapper.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .path("classifications").path(0);
+        // AI 원안은 안 지워진다.
+        assertThat(c0.path("category").asText()).isEqualTo("DELIVERY");
+        // 사람이 최종 확정한 값도 같은 행에서 함께 나온다.
+        assertThat(c0.path("finalCategory").asText()).isEqualTo("RETURN_REFUND");
+    }
+
+    @Test
     @DisplayName("상담원이 조회하는 없는 문의도 404")
     void agentMissingInquiryReturns404() throws Exception {
         mockMvc.perform(get("/api/inquiries/{id}", MISSING_ID)
@@ -216,17 +241,24 @@ class InquiryDetailControllerTest {
     /** 분류 시도 1건을 심는다. verdict 별 null 조합은 이미 확정된 규격(D-022·D-033)대로 넣는다. */
     private void insertClassification(long inquiryId, InquiryCategory category, String confidence,
             String model, Verdict verdict, Instant createdAt) {
+        insertClassification(inquiryId, category, confidence, model, verdict, createdAt, null);
+    }
+
+    /** 위와 같지만 {@code final_category} 도 심는다 — 상담원 확정 후 상태를 흉내낼 때 쓴다 (TRI-61). */
+    private void insertClassification(long inquiryId, InquiryCategory category, String confidence,
+            String model, Verdict verdict, Instant createdAt, InquiryCategory finalCategory) {
         jdbcTemplate.update("""
                 INSERT INTO inquiry_classification_result
                     (inquiry_id, category, confidence, model, raw_response, verdict,
                      final_category, attempt_count, created_at)
-                VALUES (?, ?, ?, ?, NULL, ?, NULL, 1, ?)
+                VALUES (?, ?, ?, ?, NULL, ?, ?, 1, ?)
                 """,
                 inquiryId,
                 category == null ? null : category.name(),
                 confidence,
                 model,
                 verdict.name(),
+                finalCategory == null ? null : finalCategory.name(),
                 java.sql.Timestamp.from(createdAt));
     }
 }

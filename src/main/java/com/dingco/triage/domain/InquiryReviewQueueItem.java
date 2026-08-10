@@ -150,4 +150,15 @@ public class InquiryReviewQueueItem {
     public long getVersion() {
         return version;
     }
+
+    /**
+     * 확정 (트랜잭션 ③, D-021). 호출 전에 상태 검사({@code status == PENDING})는
+     * {@code ReviewService} 가 이미 마쳤다고 가정한다 — 여기서 다시 검사하지 않는다.
+     * 동시성 방어의 나머지 절반({@code @Version} 불일치 검출)은 커밋 시점에 자동으로 일어난다.
+     */
+    public void resolve(Long agentId, Instant resolvedAt) {
+        this.status = QueueStatus.RESOLVED;
+        this.agentId = Objects.requireNonNull(agentId, "agentId");
+        this.resolvedAt = Objects.requireNonNull(resolvedAt, "resolvedAt");
+    }
 }
