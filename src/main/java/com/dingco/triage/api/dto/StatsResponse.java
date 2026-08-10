@@ -16,12 +16,11 @@ import java.util.Map;
 public record StatsResponse(Classification classification, Backlog backlog) {
 
     /**
-     * 문의 분류 관련 통계.
-     *
-     * 현재는 RECEIVED 상태에서 오래 머물러 있는
-     * 문의 개수를 제공한다.
+     * 계약 §7 의 {@code classification} 블록 (TRI-68 · TRI-72). {@code autoAccepted} 는
+     * {@code AUTO_ACCEPTED} 와 {@code REUSED} 를 합친 값이다.
      */
-    public record Classification(long stuckReceived) {
+    public record Classification(long inquiriesTotal, long autoAccepted, long needsReview,
+            long failed, double autoAcceptRate, long stuckReceived) {
     }
 
     /**
@@ -40,22 +39,23 @@ public record StatsResponse(Classification classification, Backlog backlog) {
     }
 
     /**
-     * 서비스에서 조회한 통계 데이터를
-     * API 응답 형태로 변환한다.
+     * 서비스에서 조회한 통계 데이터를 API 응답 형태로 변환한다.
      *
      * @param stuckReceived 오래 처리되지 않은 문의 수
      * @param backlog 검토 큐 적체 정보
+     * @param classification 판정 집계 정보
      * @return API에서 반환할 통계 응답
      */
     public static StatsResponse of(
-            long stuckReceived,
-            StatsService.Backlog backlog) {
-
+            long stuckReceived, StatsService.Backlog backlog, StatsService.Classification classification) {
         return new StatsResponse(
-                new Classification(stuckReceived),
-                new Backlog(
-                        backlog.total(),
-                        backlog.byReason(),
-                        backlog.oldestPendingAt()));
+                new Classification(
+                        classification.inquiriesTotal(),
+                        classification.autoAccepted(),
+                        classification.needsReview(),
+                        classification.failed(),
+                        classification.autoAcceptRate(),
+                        stuckReceived),
+                new Backlog(backlog.total(), backlog.byReason(), backlog.oldestPendingAt()));
     }
 }

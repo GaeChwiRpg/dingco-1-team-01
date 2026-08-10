@@ -1,10 +1,13 @@
 package com.dingco.triage.service;
 
 import com.dingco.triage.config.MonitoringProperties;
+import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
+import com.dingco.triage.domain.repository.InquiryClassificationResultRepository.VerdictCount;
 import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository.ReasonCount;
 import com.dingco.triage.domain.type.QueueReason;
+import com.dingco.triage.domain.type.Verdict;
 import io.sentry.Sentry;
 import java.time.Clock;
 import java.time.Instant;
@@ -41,6 +44,7 @@ public class StatsService {
 
     private final InquiryRepository inquiryRepository;
     private final InquiryReviewQueueRepository queueRepository;
+    private final InquiryClassificationResultRepository resultRepository;
     private final MonitoringProperties monitoringProperties;
     private final CacheManager cacheManager;
     private final Clock clock;
@@ -69,7 +73,7 @@ public class StatsService {
      * 행동의 결과를 바로 확인하는 경로라 10초도 체감된다. 재사용 자동 확정에는 이 evict 를
      * 걸지 않는다(D-042) — 접수 경로마다 일어나 빈도가 너무 높아 걸면 캐시가 상시 비게 된다.
      */
-    @Cacheable(STATS_SUMMARY_CACHE)
+    @Cacheable(value = STATS_SUMMARY_CACHE, key = "'backlog'")
     public Backlog backlog() {
         Map<QueueReason, Long> byReason = new EnumMap<>(QueueReason.class);
         for (ReasonCount count : queueRepository.countPendingByReason()) {
@@ -78,6 +82,28 @@ public class StatsService {
         long total = byReason.values().stream().mapToLong(Long::longValue).sum();
         Instant oldestPendingAt = queueRepository.findOldestPendingCreatedAt().orElse(null);
         return new Backlog(total, byReason, oldestPendingAt);
+    }
+
+    /**
+     * 판정 집계 요약 — 계약 §7 {@code classification} 블록 (TRI-68).
+     *
+     * <p>같은 {@code stats:summary} 캐시를 {@link #backlog()} 와 나눠 쓰므로, 둘 다 인자가 없는
+     * 메서드라 <b>{@code key} 를 명시하지 않으면 스프링 기본 키({@code SimpleKey.EMPTY}) 가 겹쳐
+     * 서로의 캐시 값을 덮어쓴다.</b> 그래서 각자 고정 문자열 키를 준다.
+     */
+    @Cacheable(value = STATS_SUMMARY_CACHE, key = "'classification'")
+    public Classification classification() {
+        Map<Verdict, Long> byVerdict = new EnumMap<>(Verdict.class);
+        for (VerdictCount count : resultRepository.countByVerdict()) {
+            byVerdict.put(count.getVerdict(), count.getCount());
+        }
+        long autoAccepted = byVerdict.getOrDefault(Verdict.AUTO_ACCEPTED, 0L)
+                + byVerdict.getOrDefault(Verdict.REUSED, 0L);
+        long needsReview = byVerdict.getOrDefault(Verdict.NEEDS_REVIEW, 0L);
+        long failed = byVerdict.getOrDefault(Verdict.FAILED, 0L);
+        long total = byVerdict.values().stream().mapToLong(Long::longValue).sum();
+        double autoAcceptRate = total == 0 ? 0.0 : (double) autoAccepted / total;
+        return new Classification(total, autoAccepted, needsReview, failed, autoAcceptRate);
     }
 
     /**
@@ -121,5 +147,14 @@ public class StatsService {
      * 여기서는 "일어나지 않은 것을 일어난 것처럼 채우지 않는다").
      */
     public record Backlog(long total, Map<QueueReason, Long> byReason, Instant oldestPendingAt) {
+    }
+
+    /**
+     * 계약 §7 {@code classification} 블록의 값 구조. {@code autoAccepted} 는
+     * {@code AUTO_ACCEPTED} 와 {@code REUSED} 를 합친 값이다 — 둘 다 사람 손을 안 거치고
+     * 자동으로 확정된 판정이라 "자동 확정" 이라는 계약상 의미로는 같은 부류다.
+     */
+    public record Classification(
+            long inquiriesTotal, long autoAccepted, long needsReview, long failed, double autoAcceptRate) {
     }
 }

@@ -1,6 +1,7 @@
 package com.dingco.triage.domain.repository;
 
 import com.dingco.triage.domain.InquiryClassificationResult;
+import com.dingco.triage.domain.type.Verdict;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
@@ -105,5 +106,25 @@ public interface InquiryClassificationResultRepository
     default Optional<InquiryClassificationResult> findLatestAutoAccepted(String normalizedKey) {
         return findAutoAcceptedByNormalizedKey(normalizedKey, PageRequest.of(0, 1))
                 .stream().findFirst();
+    }
+
+    /**
+     * 판정별 건수 (계약 §7 {@code classification} 블록, TRI-68).
+     *
+     * <p>이 저장소 헤더에 P3 소유로 명시된 "감사 집계"의 일부다. 판정 행 하나가 분류 시도 1건과
+     * 대응하므로, 여기서 세는 것이 {@code classification.inquiriesTotal} 의 모집단이 된다.
+     */
+    @Query("""
+            select r.verdict as verdict, count(r) as count
+            from InquiryClassificationResult r
+            group by r.verdict
+            """)
+    List<VerdictCount> countByVerdict();
+
+    /** 판정별 집계 프로젝션. */
+    interface VerdictCount {
+        Verdict getVerdict();
+
+        long getCount();
     }
 }
