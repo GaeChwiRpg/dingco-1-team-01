@@ -13,7 +13,6 @@ import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
-import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.domain.type.QueueReason;
@@ -92,9 +91,6 @@ class ClassifyRetryMeasureIT {
     private InquiryIngestService inquiryIngestService;
 
     @Autowired
-    private InquiryRepository inquiryRepository;
-
-    @Autowired
     private InquiryClassificationResultRepository resultRepository;
 
     @Autowired
@@ -148,9 +144,7 @@ class ClassifyRetryMeasureIT {
         assertThat(result.getRawResponse()).isNull();
 
         // ② 검토 목록에 들어갔나 — 사유는 CLASSIFY_FAILED
-        List<InquiryReviewQueueItem> queued = queueRepository.findAll().stream()
-                .filter(item -> item.getInquiry().getId().equals(inquiry.getId()))
-                .toList();
+        List<InquiryReviewQueueItem> queued = queueRepository.findByInquiryId(inquiry.getId());
         assertThat(queued).hasSize(1);
         assertThat(queued.get(0).getReason()).isEqualTo(QueueReason.CLASSIFY_FAILED);
         assertThat(queued.get(0).getClassificationResult()).isNotNull();
@@ -205,10 +199,7 @@ class ClassifyRetryMeasureIT {
         assertThat(result.getVerdict()).isNotEqualTo(Verdict.FAILED);
 
         // 회수된 건은 큐에 들어가지 않는다 — 사람에게 떠넘기지 않는 것이 재시도의 목적이다
-        List<InquiryReviewQueueItem> queued = queueRepository.findAll().stream()
-                .filter(item -> item.getInquiry().getId().equals(inquiry.getId()))
-                .toList();
-        assertThat(queued).isEmpty();
+        assertThat(queueRepository.findByInquiryId(inquiry.getId())).isEmpty();
 
         // 회수 사실이 로그에 남는가 — 측정 4 가 "재시도가 실제로 회수하고 있나"를 읽는 자리
         assertThat(messages()).anyMatch(line -> line.contains("classify_recovered_by_retry"));
