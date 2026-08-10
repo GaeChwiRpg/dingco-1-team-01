@@ -1,17 +1,24 @@
 package com.dingco.triage.service.event;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.service.ClassificationService;
 import com.dingco.triage.service.ContentMasker;
-import com.dingco.triage.service.ai.AiClassificationService;
-import com.dingco.triage.service.ai.AiResponseParser;
+import com.dingco.triage.service.ai.AiParsedClassification;
+import com.dingco.triage.service.ai.AiRawResponse;
+import com.dingco.triage.service.ai.ClassifyAttempt;
+import com.dingco.triage.service.ai.RetryingAiClassifier;
 import com.dingco.triage.support.MySqlTestContainer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
@@ -42,8 +49,13 @@ import org.springframework.test.web.servlet.MvcResult;
  *
  * <p>① 경로는 리스너를 <b>동기로 직접 호출</b>해 {@code classify(...)} 로 나가는 문자열을 캡처한다
  * — {@code @Async} 프록시를 타지 않아 별도 대기 없이 결정론적이다. AI 는 실제로 부를 수 없으므로
- * 협력자(호출·파싱·저장)는 모의로 두되, <b>가리기만은 실제 빈</b>을 써서 "리스너가 실제로 가려
+ * 협력자(분류 호출·저장)는 모의로 두되, <b>가리기만은 실제 빈</b>을 써서 "리스너가 실제로 가려
  * 보내는가"를 검증한다. ①과 ②는 id 가 아니라 <b>같은 원문</b>을 공유할 뿐인 독립 경로다.
+ *
+ * <p><b>캡처하는 자리가 {@link com.dingco.triage.service.ai.RetryingAiClassifier} 인 이유</b> —
+ * 재시도가 붙으면서(TRI-54) AI 호출·파싱이 그 클래스 안으로 들어갔다. 리스너는 이제 AI 를 직접
+ * 부르지 않으므로, <b>가려진 본문이 리스너 밖으로 나가는 자리</b>도 여기 하나다. 검증하는 것은
+ * 그대로다 — 리스너가 원문이 아니라 가린 문자열을 넘기는가.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -80,18 +92,24 @@ class MaskingConsistencyIT {
     @Test
     @DisplayName("AI 로 가는 문자열과 응답 본문이 같은 가리기를 거친다 — 한쪽만 조여지지 않는다 (D-040)")
     void bothPathsMaskIdentically() throws Exception {
-        // ── ① AI 전송 경로: 리스너가 classify() 로 무엇을 보내는지 캡처 (동기·직접 구성) ──
-        //     가리기만 실제 빈을 쓰고, AI 호출·파싱·저장은 이 테스트의 관심 밖이라 모의로 둔다.
-        AiClassificationService aiService = mock(AiClassificationService.class);
-        AiResponseParser parser = mock(AiResponseParser.class);
+        // ── ① AI 전송 경로: 리스너가 무엇을 보내는지 캡처 (동기·직접 구성) ──
+        //     가리기만 실제 빈을 쓰고, AI 호출·저장은 이 테스트의 관심 밖이라 모의로 둔다.
+        //
+        //     ⚠️ 리스너는 AI 를 직접 부르지 않는다 (TRI-54). 호출·파싱·재시도가 전부
+        //     RetryingAiClassifier 안으로 들어갔으므로, 가려진 본문이 나가는 자리도 거기다.
+        //     반환값을 채워두지 않으면 리스너가 그 결과를 ②로 넘기다 NPE 로 끊긴다.
+        RetryingAiClassifier retryingAiClassifier = mock(RetryingAiClassifier.class);
         ClassificationService classificationService = mock(ClassificationService.class);
+        given(retryingAiClassifier.classify(anyLong(), anyString())).willReturn(new ClassifyAttempt(
+                AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.900")),
+                new AiRawResponse("stub-model", "{}"), 1));
         InquiryReceivedEventListener listener =
-                new InquiryReceivedEventListener(contentMasker, aiService, parser, classificationService);
+                new InquiryReceivedEventListener(contentMasker, retryingAiClassifier, classificationService);
 
         listener.onInquiryReceived(new InquiryReceivedEvent(9_999L, "k-consistency", ORIGINAL));
 
         ArgumentCaptor<String> sentToAi = ArgumentCaptor.forClass(String.class);
-        verify(aiService).classify(sentToAi.capture());
+        verify(retryingAiClassifier).classify(anyLong(), sentToAi.capture());
         String aiPath = sentToAi.getValue();
 
         // ── ② 응답 경로: 같은 원문을 저장하고 GET(상담원)으로 응답 본문 content 를 받는다 ──
