@@ -14,7 +14,7 @@
 | 단계 | 책임자 | 핵심 도구 | 산출물 | 상태 |
 | --- | --- | --- | --- | --- |
 | 1. 기획 | 김준현 | Jira MCP, AI PRD | `PRD.md`, `DECISIONS.md` | ✅ Phase 2 완료 (D-001~**D-059**) — **D-031 으로 도메인 전환, PRD 전면 재작성** / **D-043·D-044 로 PRD 를 PAAR 골격에 맞춤** / **D-054 로 CodeRabbit 병행 리뷰 도입** / **D-051·D-055~059 는 코드를 짜다가 정해야 했던 것들** — 성격이 앞과 다르다. ✅ **Jira MCP 시연 완료(2026-08-07)** — 상태 전이·기한 재배치·코멘트 |
-| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). **`config/` 완료(TRI-25/26)** — 헤더 인증 필터 + endpoint 별 역할 매핑. **`api/` 착수(TRI-27~30, TRI-32)** — 공용 예외 처리 지점 + 오류 DTO + Sentry 500 배선, 응답 6종 전수 실측 / `POST /api/inquiries`. **`service/` 착수(2026-08-06~07)** — P1 `ContentMasker`·`NormalizedKeyGenerator`·트랜잭션 ①(TRI-31·33·37~39) / P2 `service/ai` AI 호출·응답 파싱·값 검증 4종(TRI-46·48·49·50). **Lombok 도입 — `@Data`·`@Setter` 는 컴파일 에러로 차단**(D-057). 테스트 **88건** 통과. **잔여: 트랜잭션 ②③·캐시·큐 조회·통계, `.claude/commands/` 미작성** |
+| 2. 코딩 | 팀 전원 | claude.md, Commands, Hooks, gh CLI | `CLAUDE.md`, `API-CONTRACT.md`, `src/`, `.claude/` | 🔄 baseline **재작성** (D-031) — 엔티티 3종·enum·Flyway V1/V2·정적 팩토리. Hooks 완료 (PR #7), 서브에이전트 5종 완료 (PR #8). **`config/` 완료(TRI-25/26)** — 헤더 인증 필터 + endpoint 별 역할 매핑. **`api/` 착수(TRI-27~30, TRI-32)** — 공용 예외 처리 지점 + 오류 DTO + Sentry 500 배선, 응답 6종 전수 실측 / `POST /api/inquiries`. **`service/` 착수(2026-08-06~07)** — P1 `ContentMasker`·`NormalizedKeyGenerator`·트랜잭션 ①(TRI-31·33·37~39) / P2 `service/ai` AI 호출·응답 파싱·값 검증 4종(TRI-46·48·49·50). **Lombok 도입 — `@Data`·`@Setter` 는 컴파일 에러로 차단**(D-057). 테스트 **88건** 통과. **잔여: 캐시·통계, `.claude/commands/` 미작성** |
 | 3. 테스트 | 이용택 | Playwright MCP | `tests/e2e/`, `.github/workflows/e2e.yml` | 🔄 `e2e.yml` + Testcontainers 8건 + 순수 단위 8건 동작. e2e 는 health 1건만 실행, 핵심 흐름은 `test.skip` |
 | 4. 리뷰 | 김은빈 | Claude GitHub Actions, CodeRabbit | `.github/workflows/ai-review.yml`, `evidence/failure-cases.md`, `.coderabbit.yaml` | ✅ PR #1~#24 전원 AI 리뷰 수령·반영 (PR #1 은 5회 / 지적 21건). **리뷰가 틀린 사례 4건 기록** — 사례 16(잘린 diff 를 보고 "없다") · 사례 17(검증값 오산) · 사례 18(`/ticket` 규칙 — 도구 층) · **사례 19**(두 봇이 존재하지 않는 `[이메일]` 토큰을 지어냄, 2026-08-08). ✅ CodeRabbit 은 D-054 로 병행 도입, `.coderabbit.yaml` 은 Inquiry 도메인 용어로 작성 완료, **GitHub App 설치 완료 — 현재 PR 마다 실제로 동작 중** |
 | 5. 배포·운영 | 이용택 | Sentry MCP, Docker | `MONITORING.md`, `docker-compose.yml`, `Dockerfile` | 🔄 Sentry SDK + Source Context + MCP 연동 실측 완료(`SENTRY-GUIDE.md`, PR #9). `MONITORING.md`·`SENTRY-GUIDE.md` 실측 기록 완료. 실제 `api/`·`service/` 트래픽 검증은 남음 |
@@ -150,7 +150,7 @@
 - 도구: Playwright MCP (`request` fixture 기반 API 레벨). 브라우저를 띄우지 않으므로 CI 에서 chromium 설치를 제거했다 — 검토자 화면이 생겨 `page` fixture 를 쓰게 되면 되살린다
 - **e2e.yml 이 실제로 검증하는 것**: "앱이 기동한다" 한 줄에 세 가지가 함께 들어 있다 — Flyway `V1` → `V2__domain_switch.sql` 이 깨끗이 적용됨 / `ddl-auto=validate` 아래에서 엔티티 3종이 **전환 후 스키마**와 일치함(어긋나면 부팅 실패) / MySQL·Redis 연결이 실제로 성립함. **이 workflow 가 red 면 P1·P2·P3 전부의 착수 전제가 깨진 것**이다. 도메인 전환 후 이 검증이 특히 중요하다 — 스키마와 엔티티를 **동시에** 갈아엎었기 때문이다
 - 한계:
-  - **시나리오가 health 1건뿐이다.** `service/`·`api/` 는 착수했지만, 핵심 흐름(투입 → 격리 → 확정)을 쓰려면 **트랜잭션 ②(TRI-51)와 ③(TRI-59)이 붙어야** 한다 — 지금은 접수까지만 되고 판정·확정이 없어 시나리오가 중간에서 끊긴다. **잔여 2건 중 1건**
+  - **시나리오가 health 1건뿐이다.** `service/`·`api/` 는 착수했고, 핵심 흐름(투입 → 격리 → 확정)에 필요한 **트랜잭션 ②(TRI-51)·③(TRI-59)도 이제 둘 다 완료**됐다 — 다만 이 e2e 시나리오 자체가 아직 그걸 쓰도록 새로 작성되진 않았다. **잔여 2건 중 1건**
   - 로컬 Testcontainers 는 Docker Desktop 버전에 의존한다 (D-026). CI 는 `docker compose` 를 직접 쓰므로 이 제약의 영향을 받지 않는다 — **로컬만 깨지고 CI 는 green 인 상태가 가능**하다는 뜻이라, 로컬 실패를 CI 로 덮지 않는다
 
 ### 4. 리뷰

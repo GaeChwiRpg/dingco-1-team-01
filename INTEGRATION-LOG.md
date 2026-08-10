@@ -526,6 +526,33 @@ PR #36 에서 Claude 리뷰와 데브캠프 봇이 **함께** *"`contains("[이�
 
 ---
 
+## 2026-08-10 (월) — 확정 트랜잭션 마무리 + 동시성 실측 (P3, TRI-59~63 완료)
+
+### 개인 — 김은빈 (P3)
+
+- **PR #41** — `ReviewService.confirm`(TRI-59) + `PATCH /api/inquiry-review-queue/{id}`(TRI-60) + 불변 규칙 1 테스트(TRI-61) + 409 두 종류(TRI-62) + 동시 확정 경합 실측(TRI-63)
+  - **TRI-59** — 큐 상태 검사 + `final_category` 기록(`category` 는 안 덮음) + 큐 `RESOLVED` 전이 + `Inquiry` `CLASSIFIED` 전이를 한 트랜잭션으로. 불변 규칙 1·2 를 도메인 메서드(`resolve`·`recordFinalCategory`·`confirmByAgent`)로 강제
+  - **TRI-60** — 컨트롤러는 인증 정보 추출 + 위임 + DTO 변환까지만. blind 규칙(D-010) 준수, `matched` 는 `suggestedCategory` 가 없으면 `false` 가 아니라 `null`(D-022)
+  - **TRI-61** — `InquiryDetailControllerTest`(TRI-35, 이용택 소유 파일)에 케이스 1개 추가해 상세 조회에서 `category`·`finalCategory` 가 함께 노출되는지 실제 응답 로그로 확인
+  - **TRI-62** — 별도 코드 없이 TRI-59 코드 + TRI-63 테스트로 충족. 컨트롤러 레벨에서도 두 코드(`ALREADY_RESOLVED`/`CONCURRENT_UPDATE`) 배선을 각각 테스트로 고정
+  - **TRI-63(측정 7ⓑ)** — `CyclicBarrier(2)` 로 두 상담원 스레드를 `confirm()` 호출 직전까지 동기화, 매 트라이얼 새 `PENDING` 항목으로 40회 반복. **실측: Windows 3회 + WSL2 Ubuntu(Linux 커널) 1회, 총 4회 실행 모두 `CONCURRENT_UPDATE` 40/40 재현**, `ALREADY_RESOLVED`·예상 밖 결과 0건. `CONCURRENT_UPDATE` 가 0건이면 그 자체로 테스트가 실패하도록 assertion 을 걸어 무효 재현을 차단. `evidence/concurrent-review-confirm.md`
+
+### 리뷰 반영 (직접 리뷰 + CodeRabbit, 9건 검증)
+
+- **반영 6건**: `attemptConfirm` 의 `InterruptedException` 처리 분리(인터럽트 상태 복원) · 깨진 `{@link #TRIALS}` javadoc 참조 수정 · `SUCCESS+CONCURRENT_UPDATE==trials*2` 과도한 assertion 제거(TRI-63 완료 조건인 "0 이 아니다"보다 더 엄격했음) · `ReviewQueueControllerTest` 에 `CONCURRENT_UPDATE` 컨트롤러 전파 테스트 추가 · `ReviewQueueConfirmIT` 신규(목 없이 실제 DB로 PATCH 를 끝까지 태워 `ReviewConfirmResponse.from()` 의 LAZY 로딩 안전성 주장을 실증 — 작성 중 이 테스트 자체의 버그(`LazyInitializationException`)를 발견해 수정) · evidence 에 `Inquiry` 가 `@Version` 없이도 지금은 안전한 이유 + TRI-64·65 이후 전제가 깨질 수 있다는 한계 기록
+- **오탐 3건(미반영)**: `ReviewQueueController` 의 `Long.parseLong` 방어 제안 — `HeaderAuthenticationFilter` 가 이미 숫자 검증을 하고 있어 `InquiryController` 와 같은 기존 관례에 부합. API-CONTRACT.md 갱신 요청 2건 — §5 에 PATCH 계약(요청·응답·`matched` nullable·404·409 두 종류)이 이미 문서화돼 있었고 이번 PR 은 그 파일을 안 건드렸을 뿐
+
+### Jira 반영 (MCP)
+
+- 상태 전이: **TRI-60·61·62·63** 각각 `진행 중`/`할 일` → `검토 중`(PR 머지 전) → PR #41 머지 확인 후 **완료**로 재전이. 각 티켓에 구현·테스트 근거 코멘트
+
+### 다음
+
+- **TRI-67(`StatsService.summary`)** — #39 머지로 `StatsService.java` 가 이미 확장 가능한 형태로 develop 에 있어, 새 파일이 아니라 기존 파일에 메서드를 추가하는 형태로 착수
+- **TRI-44(확정 커밋 후 캐시 덮어쓰기, D-036)** — PR #42(TRI-40·41·84, 1단 캐시)가 머지돼야 착수 가능. 아직 미머지
+
+---
+
 ## 다음 액션
 
 | 우선순위 | 액션 | 담당 | 근거 |
@@ -535,7 +562,7 @@ PR #36 에서 Claude 리뷰와 데브캠프 봇이 **함께** *"`contains("[이�
 | 3 | ~~정규화 규칙 확정~~ → **PR #18 로 완료** (D-052·D-053). **과도/과소 병합 테스트(TRI-43)는 잔여** | 이용택 | D-031 최대 리스크. 측정 6 의 전제 |
 | 4 | ~~`service/`·`api/` 착수~~ → **2026-08-06~07 로 해소.** 셋 다 코드가 올라왔다 | — | 8/4·8/5 blocker 였다 |
 | 5 | ~~측정 3 (**② 롤백 + ① 생존** + `stuckReceived` 증가)~~ → **PR #39 로 완료** (`ClassificationRollbackIT` · evidence). 감사 삽입 `REQUIRES_NEW` 대조(D-045②)는 감사 경로(TRI-64·65) 착수 후 잔여 | 이용택 | **필수 체크포인트**, D-017, D-031 |
-| 6 | 측정 7ⓑ (동시 PATCH 409 2종) | 김은빈 | D-021. **7ⓐ 는 D-031 으로 삭제** |
+| 6 | ~~측정 7ⓑ (동시 PATCH 409 2종)~~ → **2026-08-10 완료** — `CONCURRENT_UPDATE` 40/40 재현(`evidence/concurrent-review-confirm.md`) | 김은빈 | D-021. **7ⓐ 는 D-031 으로 삭제** |
 | 7 | e2e 시나리오를 핵심 흐름으로 교체 | 이용택 | 현재 health 1건뿐. **잔여 2건 중 1건** — 트랜잭션 ②③ 이 붙어야 「투입 → 격리 → 확정」을 쓸 수 있다 |
 | 8 | `.claude/commands/` 작성 | 전원 | 코딩 단계 유일 잔여 도구. **잔여 2건 중 1건** |
 | 9 | ~~Jira MCP dry-run~~ → **2026-08-07 시연 완료** | 김준현 | 상태 전이·기한 재배치·코멘트를 MCP 로 실제 수행 (TRI-15·49·50 등). **잔여 3건 → 2건** |
