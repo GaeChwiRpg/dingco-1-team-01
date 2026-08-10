@@ -1,5 +1,6 @@
 package com.dingco.triage.config;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
@@ -37,6 +38,7 @@ import org.springframework.validation.annotation.Validated;
  *                  미만이면 격리한다. <b>{@code double} 이 아니라 {@link BigDecimal} 인 이유</b>:
  *                  이 값이 자동 확정과 격리를 가르는 경계라, {@code 0.8} 을 부동소수로 받으면
  *                  {@code 0.8000000000000000444…} 가 되어 경계에서 판정이 뒤집힐 수 있다
+ * @param audit     감사 표본 설정 (D-005 · D-012)
  */
 @Validated
 @ConfigurationProperties(prefix = "classification")
@@ -44,5 +46,29 @@ public record ClassificationProperties(
         @NotNull(message = "classification.threshold 가 없다 — 이 값이 없으면 자동 확정과 격리를 가를 수 없다")
         @DecimalMin(value = "0.0", message = "classification.threshold 는 0.0 이상이어야 한다")
         @DecimalMax(value = "1.0", message = "classification.threshold 는 1.0 이하여야 한다 — 넘으면 전건이 격리된다")
-        BigDecimal threshold) {
+        BigDecimal threshold,
+
+        @NotNull(message = "classification.audit 가 없다 — 감사 표본 비율을 모르면 자동 확정된 건을 아무도 다시 보지 않는다")
+        @Valid
+        Audit audit) {
+
+    /**
+     * 자동 확정된 건 중 몇 %를 다시 볼지 (D-005).
+     *
+     * <p><b>기동 시 고정이고 실행 중에 못 바꾼다.</b> {@link #threshold} 와 같은 이유다 —
+     * 비율이 도중에 바뀌면 측정 8ⓐ-2 의 결과가 <b>어느 비율에서 나온 것인지 사후에 구분되지
+     * 않는다.</b>
+     *
+     * @param sampleRate 뽑을 비율. {@code 0.05} 면 20건에 1건.
+     *                   <b>{@code threshold} 와 달리 경계에서 판정이 뒤집히는 값이 아니다</b> —
+     *                   확률이라 0.05 가 0.050000000000000003 이어도 뽑히는 건수는 사실상 같다.
+     *                   그래도 {@link BigDecimal} 로 받는 이유는 설정 파싱을 threshold 와 같은
+     *                   방식으로 두기 위해서이고, 실제 비교는 {@code double} 로 한다
+     */
+    public record Audit(
+            @NotNull(message = "classification.audit.sample-rate 가 없다 — 없으면 감사 표본이 하나도 안 뽑힌다")
+            @DecimalMin(value = "0.0", message = "classification.audit.sample-rate 는 0.0 이상이어야 한다")
+            @DecimalMax(value = "1.0", message = "classification.audit.sample-rate 는 1.0 이하여야 한다 — 넘어도 전건 감사일 뿐이라 설정 실수를 감춘다")
+            BigDecimal sampleRate) {
+    }
 }
