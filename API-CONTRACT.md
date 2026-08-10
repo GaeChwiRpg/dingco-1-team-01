@@ -386,7 +386,14 @@ X-User-Role: AGENT
 
 > 운영 통계 (`ROLE_MANAGER`). 적체 · 분류 성공률 · **감사 결과**. TTL 10s 캐시.
 
-**응답**: `200 OK`
+> **지금 구현 상태 (TRI-72)**: 아래 응답은 **완성형 목표**다. 현재 실제로 나가는 필드는
+> **`classification.stuckReceived` 하나뿐**이고, 나머지 블록(`backlog` · `aiCallSavings` ·
+> `cache` · `audit` · `classification` 의 다른 카운트)은 각 측정 소유자가 끝나는 대로 붙인다.
+> 미착수 블록은 `0` 이나 빈 객체로 채우지 않고 **응답에서 빠진 채로 둔다** — "안 만든 것을 만든
+> 것처럼" 보이지 않게 한다 (CLAUDE.md 문서 작성 규칙 4). `classification` 중첩 구조는 지금부터
+> 계약대로라 형제 필드가 붙어도 `stuckReceived` 의 경로는 바뀌지 않는다.
+
+**응답**: `200 OK` (완성형 목표 — 위 「지금 구현 상태」 참조)
 
 ```json
 {
