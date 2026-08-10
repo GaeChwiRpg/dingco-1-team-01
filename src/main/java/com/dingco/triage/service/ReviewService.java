@@ -32,19 +32,24 @@ import org.springframework.transaction.annotation.Transactional;
  * ({@code CONCURRENT_UPDATE})을 잡는다. 후자를 이 메서드 안에서 잡으려면 트랜잭션 끝(메서드
  * 반환 후)이 아니라 <b>여기서 직접 flush</b>해야 하므로 {@code saveAndFlush} 를 쓴다.
  *
- * <p><b>캐시는 아직 건드리지 않는다.</b> 계약 C(D-036)는 이 확정이 분류 캐시를 사람 답으로
- * 덮어쓰도록 정하지만, 1단 캐시({@code ClassificationCache}, TRI-40~43·P1)가 아직 구현되지
+ * <p><b>분류 캐시(1단, D-036)는 아직 건드리지 않는다.</b> 계약 C는 이 확정이 분류 캐시를 사람
+ * 답으로 덮어쓰도록 정하지만, 1단 캐시({@code ClassificationCache}, TRI-40~43·P1)가 아직 구현되지
  * 않아 덮어쓸 대상이 없다. 캐시가 생기면 커밋 후({@code @TransactionalEventListener(AFTER_COMMIT)})
- * 덮어쓰는 코드를 별도로 붙인다.
+ * 덮어쓰는 코드를 별도로 붙인다 (TRI-44).
+ *
+ * <p><b>통계 캐시({@code stats:summary}, TRI-67)는 확정 성공 시 비운다.</b> {@link StatsService
+ * #evictSummary()} 가 실패를 스스로 삼키므로, Redis 문제가 이 확정 트랜잭션을 절대 못 건드린다.
  */
 @Service
 public class ReviewService {
 
     private final InquiryReviewQueueRepository queueRepository;
+    private final StatsService statsService;
     private final Clock clock;
 
-    ReviewService(InquiryReviewQueueRepository queueRepository, Clock clock) {
+    ReviewService(InquiryReviewQueueRepository queueRepository, StatsService statsService, Clock clock) {
         this.queueRepository = queueRepository;
+        this.statsService = statsService;
         this.clock = clock;
     }
 
@@ -73,6 +78,7 @@ public class ReviewService {
                     "다른 상담원이 방금 이 항목을 확정했습니다.");
         }
 
+        statsService.evictSummary();
         return item;
     }
 }

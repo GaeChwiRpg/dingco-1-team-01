@@ -1,9 +1,11 @@
 package com.dingco.triage.domain.repository;
 
 import com.dingco.triage.domain.InquiryReviewQueueItem;
+import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.domain.type.QueueStatus;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -57,4 +59,37 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
      * {@code reason} 이 아니다. 사유로 거르는 메서드를 이 인터페이스에 만들지 않는다.
      */
     List<InquiryReviewQueueItem> findByInquiryId(Long inquiryId);
+
+    /**
+     * 큐 적체(backlog) — 사유별 미결(PENDING) 건수 (계약 §7 {@code backlog.byReason}, TRI-67).
+     *
+     * <p>항상 {@code PENDING} 만 센다 — "적체"는 정의상 아직 처리 안 된 건이라 파라미터로 상태를
+     * 받지 않는다. 다른 상태가 필요해지면 그때 파라미터를 연다.
+     *
+     * <p>⚠️ blind 규칙(D-010)은 {@code GET /api/inquiry-review-queue} 에서만 {@code reason} 을
+     * 가린다. {@code GET /api/stats}({@code ROLE_MANAGER})는 노출이 허용된 자리다 — 여기서
+     * 만든 값을 이 endpoint 밖으로 새어나가게 하지 않는다.
+     */
+    @Query("""
+            select q.reason as reason, count(q) as count
+            from InquiryReviewQueueItem q
+            where q.status = com.dingco.triage.domain.type.QueueStatus.PENDING
+            group by q.reason
+            """)
+    List<ReasonCount> countPendingByReason();
+
+    /** 사유별 집계 프로젝션. */
+    interface ReasonCount {
+        QueueReason getReason();
+
+        long getCount();
+    }
+
+    /**
+     * 미결(PENDING) 큐 항목 중 가장 오래된 것의 생성 시각 (계약 §7 {@code backlog.oldestPendingAt},
+     * TRI-67). 적체가 0건이면 {@code Optional.empty()}.
+     */
+    @Query("select min(q.createdAt) from InquiryReviewQueueItem q "
+            + "where q.status = com.dingco.triage.domain.type.QueueStatus.PENDING")
+    Optional<Instant> findOldestPendingCreatedAt();
 }

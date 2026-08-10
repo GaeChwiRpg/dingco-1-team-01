@@ -52,6 +52,7 @@ public class ClassificationService {
     private final InquiryClassificationResultRepository resultRepository;
     private final InquiryReviewQueueRepository queueRepository;
     private final ClassificationProperties properties;
+    private final StatsService statsService;
 
     /**
      * 판정 시각의 출처. 상태 전이 UPDATE 가 {@code updated_at} 을 직접 쓰기 때문에 필요하다 —
@@ -160,11 +161,20 @@ public class ClassificationService {
      * (TRI-65 · D-012). 밖으로 빼면 감사율이 설정값 미달이 되어 측정 8ⓐ 의 분모가 조용히 준다.
      *
      * <p>{@code switch} 가 exhaustive 라 판정이 늘면 여기서도 컴파일이 막힌다.
+     *
+     * <p><b>큐에 실제로 삽입될 때만 통계 캐시({@code stats:summary}, TRI-67)를 비운다.</b>
+     * {@code AUTO_ACCEPTED}/{@code REUSED} 는 지금 큐를 안 건드리므로 적체가 안 바뀐다 — 그런데도
+     * 매번 비우면 이 메서드가 문의마다(가장 빈번한 경로) 불려서 캐시가 상시 비게 된다(D-042 와
+     * 같은 이유). {@link StatsService#evictSummary()} 는 이 메서드가 사설(private)이라 프록시를
+     * 못 타는 애노테이션 대신 직접 호출로 부르고, 실패해도 이 트랜잭션에 영향을 주지 않는다.
      */
     private void enqueueIfNeeded(Verdict verdict, InquiryClassificationResult result) {
         switch (verdict) {
             // 사유는 InquiryReviewQueueItem.from 이 verdict 로 정한다 — 여기서 고르지 않는다 (D-022)
-            case NEEDS_REVIEW, FAILED -> queueRepository.save(InquiryReviewQueueItem.from(result));
+            case NEEDS_REVIEW, FAILED -> {
+                queueRepository.save(InquiryReviewQueueItem.from(result));
+                statsService.evictSummary();
+            }
             case AUTO_ACCEPTED, REUSED -> {
                 // TRI-64·65 에서 감사 표본 추출 + 삽입이 이 자리에 들어온다.
             }
