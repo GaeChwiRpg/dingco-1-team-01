@@ -169,9 +169,10 @@
   - `.env.example` — `ANTHROPIC_API_KEY` 포함 전 환경변수 목록. 실제 `.env` 는 `.gitignore` + `constitution-guard.py` 로 이중 차단
   - `MONITORING.md` + `SENTRY-GUIDE.md` — PR #9 로 **실측 기록까지 채워졌다.** 도구 선택 표 · SDK 실제 적용값 · MCP 등록 · 운영 시나리오 실측이 모두 들어 있다
 - 도구: Docker Compose (동작), Sentry SDK + Source Context + MCP 연동 (실측 검증 완료 — `SENTRY-GUIDE.md`, PR #9)
-- 관측 설계는 되어 있다 — `GET /api/stats` 블록 + Actuator gauge 5종(`triage.inquiries.stuck_received` 포함). **노출할 코드가 없을 뿐 무엇을 볼지는 정해져 있다** (`API-CONTRACT.md` §8~§9)
+- 관측 설계는 되어 있다 — `GET /api/stats` 블록 + Actuator gauge 5종(`triage.inquiries.stuck_received` 포함) (`API-CONTRACT.md` §8~§9)
+  - **`stuckReceived` 는 관측이 아니라 구현·측정까지 됐다 (TRI-72·73, 브랜치 `feat/stuck-received-tri24`).** `GET /api/stats` 의 `classification.stuckReceived` + Actuator gauge `triage.inquiries.stuck_received` 가 실제로 나가고(TRI-72), ②롤백 시 이 값이 0→1 로 올라가는 것을 실 MySQL 로 확인했다(측정 3, TRI-73 · `evidence/measurement-3-rollback.md`). **0 이 아니면 분류 파이프라인이 실패 중**이라는 뜻이다 (D-017). 나머지 gauge 4종과 `/api/stats` 의 다른 블록(`backlog`·`aiCallSavings`·`cache`·`audit`)은 여전히 설계만 돼 있고 각 측정 소유자가 붙인다
 - 한계:
-  - **실 트래픽 0.** 속도 측정(a·b)과 `stuckReceived` 실측은 `service/`·`api/` 착수 후
+  - **실 트래픽 0.** 속도 측정(a·b)은 `service/`·`api/` 착수 후. `stuckReceived` 는 위 측정 3 으로 실측했으나, **감사 표본 누락 대조(D-045②, 측정 3 의 나머지 절반)는 감사 샘플링 경로(TRI-64·65) 착수 후**로 남는다
   - Sentry MCP 연동 자체는 PR #9 로 완료됐다(`SENTRY-GUIDE.md` 실측 검증). 다만 이 시스템은 자체 에러 수집 파이프라인이라 Sentry 와 역할이 겹친다 — "무엇을 Sentry 로 보내고 무엇을 자체 큐로 보낼지"는 아직 정하지 않아 실 트래픽에서의 캡처 시나리오는 남아 있다
 
 ## 진행 상태
