@@ -17,7 +17,10 @@ import com.dingco.triage.domain.type.InquiryStatus;
 import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
+import com.dingco.triage.service.cache.CacheSource;
+import com.dingco.triage.service.cache.ClassificationCache;
 import com.dingco.triage.support.MySqlTestContainer;
+import com.dingco.triage.support.RedisContainerSupport;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -41,17 +44,19 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * 확정 트랜잭션 ③ 이 네 가지를 한 덩어리로 하는지 고정한다 (TRI-59 · D-021 · 불변 규칙 1·2).
+ * <p><b>확정 트랜잭션 ③은 네 가지 작업을 하나의 트랜잭션으로 처리하는지 확인한다.</b>
+ * (TRI-59 · D-021 · 불변 규칙 1·2).
  *
- * <p><b>TRI-63</b> — 두 상담원이 <b>실제로 동시에</b> 같은 항목을 확정하는 경합을
- * {@link #reproducesConcurrentUpdate()} 에서 재현한다. {@code CyclicBarrier} 로 두 스레드의
- * {@code confirm} 진입을 맞춰 둘 다 {@code PENDING} 을 읽은 뒤 커밋이 겹치게 만들고,
- * 타이밍에 의존하므로 여러 트라이얼을 반복해 분포를 집계한다.
+ * <p>동시에 두 상담원이 같은 항목을 확정하는 상황은
+ * {@link #reproducesConcurrentUpdate()}에서 확인한다.
+ * {@code CyclicBarrier}로 두 스레드가 {@code confirm}을 호출하는 시점을 맞춰
+ * 둘 다 {@code PENDING} 상태를 읽은 뒤 저장하도록 만든다.
+ * 실행 순서에 따라 결과가 달라질 수 있으므로 여러 번 반복해서 확인한다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @Import(MySqlTestContainer.class)
-class ReviewServiceTest {
+class ReviewServiceTest extends RedisContainerSupport {
 
     @Autowired
     private ReviewService reviewService;
@@ -67,6 +72,9 @@ class ReviewServiceTest {
 
     @Autowired
     private InquiryReviewQueueRepository queueRepository;
+
+    @Autowired
+    private ClassificationCache classificationCache;
 
     /**
      * PENDING 큐 항목을 트랜잭션 ②(검증된 경로)로 만든다 — 손으로 UNCLASSIFIED 상태를
@@ -108,6 +116,35 @@ class ReviewServiceTest {
         assertThat(reloaded.getStatus()).isEqualTo(InquiryStatus.CLASSIFIED);
         assertThat(reloaded.getCurrentCategory()).isEqualTo(InquiryCategory.DELIVERY);
         assertThat(reloaded.getCurrentConfidence()).isNull();
+    }
+
+    /**
+     * TRI-44 — 확정(③)이 커밋된 뒤 1단 캐시를 사람 답으로 덮어쓰는지 확인한다 (계약 C · D-036).
+     *
+     * <p>{@code confirm} 이 반환한 시점엔 이미 커밋 후({@code @TransactionalEventListener})
+     * 처리까지 끝나 있다 — 같은 스레드에서 동기로 불리기 때문에 별도로 기다릴 필요가 없다.
+     */
+
+    @Test
+    @DisplayName("확정하면 1단 캐시가 사람 답(source=HUMAN, confidence=null)으로 덮인다 (TRI-44)")
+    void overwritesCacheWithHumanAnswerAfterCommit() {
+        InquiryReviewQueueItem item = givenPendingQueueItem(InquiryCategory.ETC);
+        // item.getInquiry() 는 LAZY 프록시라 .getId() 는 안전하지만(FK 로 이미 아는 값),
+        // .getNormalizedKey() 는 실제 필드 접근이라 세션 밖에서 부르면 LazyInitializationException 이다.
+        // findByIdForClassification 로 다시 읽어 안전하게 값을 얻는다 (confirmsInOneTransaction 과 같은 방식).
+        Long inquiryId = item.getInquiry().getId();
+        String normalizedKey = inquiryRepository.findByIdForClassification(inquiryId)
+                .orElseThrow()
+                .getNormalizedKey();
+        Long resultId = item.getClassificationResult().getId();
+
+        reviewService.confirm(item.getId(), 7L, InquiryCategory.COMPLAINT);
+
+        var cached = classificationCache.get(normalizedKey).orElseThrow();
+        assertThat(cached.category()).isEqualTo(InquiryCategory.COMPLAINT);
+        assertThat(cached.confidence()).isNull();
+        assertThat(cached.source()).isEqualTo(CacheSource.HUMAN);
+        assertThat(cached.sourceResultId()).isEqualTo(resultId);
     }
 
     @Test
