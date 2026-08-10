@@ -23,18 +23,19 @@ import org.springframework.stereotype.Component;
  * 재사용된다. <b>번호 승격과 캐시 장애 대응(캐시가 죽어도 접수·분류는 계속)은 TRI-85</b> 가
  * 이 위에 얹는다.
  *
- * <p><b>이 판(TRI-40)이 제공하는 것은 {@link #get} 과 조건 없는 {@link #put} 둘뿐이다.</b>
+ * <p><b>넣기는 두 가지다.</b>
  * <ul>
- *   <li>{@code put} 은 <b>무조건 덮는 원시 연산</b>이다. ③(사람 확정, TRI-44)이 그대로 쓴다 —
+ *   <li>{@link #put} 은 <b>무조건 덮는 원시 연산</b>이다. ③(사람 확정, TRI-44)이 그대로 쓴다 —
  *       사람 답은 조건 없이 덮기 때문이다
- *   <li>②(AI 자동 확정, TRI-53)가 쓸 <b>"사람 답이면 덮지 않는" 조건부 넣기는 여기 없다.</b>
- *       그 검사는 보기와 쓰기를 <b>한 덩어리(원자적)</b>로 해야 하는데(GET→판단→SET 으로 쪼개면
- *       그 사이에 ③이 넣은 사람 답을 ②가 덮는다, D-048), 그 원자적 구현은 <b>TRI-84</b> 가 붙인다
+ *   <li>{@link #putIfNotHuman} 은 ②(AI 자동 확정, TRI-53)가 쓰는 <b>조건부 넣기</b>다. 기존이
+ *       사람 답이면 덮지 않으며, 보기와 쓰기를 Lua 로 <b>한 덩어리(원자적)</b>로 처리한다
+ *       (GET→판단→SET 으로 쪼개면 그 사이에 ③이 넣은 사람 답을 ②가 덮는다, D-048 · TRI-84)
  * </ul>
  *
  * <p><b>evict 는 없다.</b> 정확성은 지우기가 아니라 사람 답의 덮어쓰기(③)가 지킨다. 무한히 쌓이는
- * 것은 {@code maxmemory} + {@code allkeys-lru} 로 막는다 — 이 상한도 TRI-84 다. <b>TTL 로 상한을
- * 대신하지 않는다</b>: 캐시가 비는 시점이 시계에 달리면 측정 6·11 이 실행마다 다른 값을 낸다.
+ * 것은 {@code maxmemory} + {@code allkeys-lru} 로 막는다 — 이 상한은 {@code docker-compose.yml} 의
+ * redis 설정으로 건다 (TRI-84). <b>TTL 로 상한을 대신하지 않는다</b>: 캐시가 비는 시점이 시계에
+ * 달리면 측정 6·11 이 실행마다 다른 값을 낸다.
  */
 @Component
 @RequiredArgsConstructor
@@ -62,15 +63,19 @@ public class ClassificationCache {
      * 으로 쪼개면 그 사이에 ③이 넣은 사람 답을 ②가 덮어버려 "덮어쓰기는 한 방향"(D-036) 규칙이
      * 그대로 뚫린다. Lua 스크립트 하나로 원자적으로 처리해 그 창을 없앤다.
      *
-     * <p>기존 값은 JSON 이라 {@code cjson} 으로 {@code source} 만 본다. 깨져서 파싱이 안 되면
-     * ({@code pcall} 실패) 사람 답이 아닌 것으로 보고 덮는다 — 깨진 값은 새 AI 값으로 자가 치유된다.
+     * <p>기존 값은 JSON 이라 {@code cjson} 으로 {@code source} 만 본다. 사람 답으로 <b>확인되지
+     * 않는 모든 경우</b>는 덮는다 — 파싱이 안 되거나({@code pcall} 실패), 파싱은 됐지만 객체가
+     * 아니거나(다른 도구가 같은 키에 스칼라 {@code 123}·{@code "x"} 를 쓴 경우), 객체지만
+     * {@code source} 가 HUMAN 이 아닌 경우. 깨진/낯선 값은 새 AI 값으로 자가 치유된다.
+     * <b>{@code type(decoded) == 'table'} 가드가 없으면</b> 스칼라를 인덱싱하다 Lua 런타임 에러가
+     * 호출자에게 그대로 올라가, 위 "자가 치유" 설명과 실제 동작이 어긋난다 (AI 리뷰 지적).
      * 반환: 썼으면 {@code 1}, 사람 답이라 안 썼으면 {@code 0}.
      */
     private static final RedisScript<Long> PUT_IF_NOT_HUMAN = RedisScript.of("""
             local cur = redis.call('GET', KEYS[1])
             if cur then
               local ok, decoded = pcall(cjson.decode, cur)
-              if ok and decoded.source == 'HUMAN' then
+              if ok and type(decoded) == 'table' and decoded.source == 'HUMAN' then
                 return 0
               end
             end
@@ -104,7 +109,7 @@ public class ClassificationCache {
      * 값을 <b>조건 없이</b> 넣는다 (덮어쓰기 포함).
      *
      * <p>③(사람 확정)의 넣기가 이것이다 — 사람 답은 조건 없이 덮는다 (D-036). ②의 조건부 넣기
-     * ("기존이 사람 답이면 덮지 않기")는 원자성이 필요해 <b>TRI-84</b> 에서 별도 메서드로 붙는다.
+     * ("기존이 사람 답이면 덮지 않기")는 원자성이 필요해 별도 메서드 {@link #putIfNotHuman} 로 있다.
      */
     public void put(String normalizedKey, CachedClassification value) {
         classificationCacheTemplate.opsForValue().set(redisKey(normalizedKey), value);

@@ -19,6 +19,7 @@ import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.data.redis.DataRedisTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * ②의 조건부 넣기 {@code putIfNotHuman} 의 원자성 (TRI-84 · D-048). 사람 답을 AI 답이 덮지
@@ -33,6 +34,9 @@ class ClassificationCacheAtomicPutIT extends RedisContainerSupport {
 
     @Autowired
     private ClassificationCache cache;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @BeforeEach
     void flush(@Autowired RedisConnectionFactory connectionFactory) {
@@ -72,6 +76,20 @@ class ClassificationCacheAtomicPutIT extends RedisContainerSupport {
         CachedClassification found = cache.get(KEY).orElseThrow();
         assertThat(found.source()).isEqualTo(CacheSource.HUMAN);
         assertThat(found.category()).isEqualTo(InquiryCategory.RETURN_REFUND);
+    }
+
+    @Test
+    @DisplayName("기존 값이 사람 답이 아닌 스칼라(다른 도구가 쓴 123 등)면 에러 없이 덮는다")
+    void overwritesNonTableScalar() {
+        // 다른 도구가 같은 키에 JSON 스칼라를 써 둔 상황. cjson.decode 는 성공하지만 table 이
+        // 아니라, 타입 가드가 없으면 decoded.source 인덱싱에서 Lua 런타임 에러가 난다.
+        stringRedisTemplate.opsForValue().set(ClassificationCache.redisKey(KEY), "123");
+
+        boolean wrote = cache.putIfNotHuman(KEY,
+                CachedClassification.ofAi(InquiryCategory.DELIVERY, new BigDecimal("0.9"), 1L));
+
+        assertThat(wrote).isTrue();
+        assertThat(cache.get(KEY).orElseThrow().source()).isEqualTo(CacheSource.AI);
     }
 
     @Test

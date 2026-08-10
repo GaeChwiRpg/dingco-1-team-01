@@ -8,7 +8,8 @@
  * <pre>
  * CacheSource           HUMAN | AI — 1순위/2순위를 캐시 단에서도 구분한다 (D-036)
  * CachedClassification  계약 C 의 값 구조. 모양 변경은 세 담당자 합의
- * ClassificationCache   Redis 읽기·쓰기 (get / 조건 없는 put). 조건부 put·상한은 TRI-84
+ * ClassificationCache   Redis 읽기·쓰기 (get / 조건 없는 put / 조건부 putIfNotHuman[Lua 원자]).
+ *                       메모리 상한(maxmemory·allkeys-lru)은 docker-compose 의 redis 설정 (TRI-84)
  * </pre>
  *
  * <p><b>왜 담당자 패키지가 아니라 전용 패키지인가 (D-059).</b> {@code CachedClassification} 은

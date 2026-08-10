@@ -73,7 +73,7 @@ public interface InquiryClassificationResultRepository
               JOIN r.inquiry i
              WHERE i.normalizedKey = :normalizedKey
                AND r.finalCategory IS NOT NULL
-             ORDER BY i.createdAt DESC, r.createdAt DESC
+             ORDER BY i.createdAt DESC, r.createdAt DESC, r.id DESC
             """)
     List<InquiryClassificationResult> findHumanConfirmedByNormalizedKey(
             @Param("normalizedKey") String normalizedKey, Pageable pageable);
@@ -96,7 +96,7 @@ public interface InquiryClassificationResultRepository
               JOIN r.inquiry i
              WHERE i.normalizedKey = :normalizedKey
                AND r.verdict = com.dingco.triage.domain.type.Verdict.AUTO_ACCEPTED
-             ORDER BY i.createdAt DESC, r.createdAt DESC
+             ORDER BY i.createdAt DESC, r.createdAt DESC, r.id DESC
             """)
     List<InquiryClassificationResult> findAutoAcceptedByNormalizedKey(
             @Param("normalizedKey") String normalizedKey, Pageable pageable);
