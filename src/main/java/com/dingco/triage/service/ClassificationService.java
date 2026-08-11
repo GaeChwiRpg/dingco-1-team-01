@@ -17,6 +17,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 /**
  * AI 분류 결과를 저장하는 서비스 (D-011 · D-012 · D-049).
  *
@@ -208,9 +211,12 @@ public class ClassificationService {
      * </p>
      *
      * <p>
-     * 검토 큐에 새로운 항목이 들어갈 때만
-     * {@link StatsService#evictSummary()}를 호출해 통계 캐시를 삭제한다 — 자동 확정은
-     * 빈도가 높아 매번 비우면 캐시가 상시 비게 된다 (D-042).
+     * 검토 큐에 새로운 항목이 들어갈 때만 {@link StatsService#evictSummary()}를 예약해
+     * 통계 캐시를 삭제한다 — 자동 확정은 빈도가 높아 매번 비우면 캐시가 상시 비게 된다 (D-042).
+     * <b>예약이지 즉시 호출이 아니다</b> — 이 메서드는 트랜잭션 ② 안에서 불리는데, 여기서 바로
+     * 비우면 커밋 전에 비우는 셈이 되어 그 틈에 다른 요청이 아직 커밋 안 된 옛 상태를 캐시에
+     * 다시 채울 수 있다. {@link TransactionSynchronizationManager#registerSynchronization}로
+     * 커밋 후(afterCommit)에만 실행되게 미룬다.
      * </p>
      */
     private void enqueueIfNeeded(
@@ -220,12 +226,21 @@ public class ClassificationService {
         switch (verdict) {
             case NEEDS_REVIEW, FAILED -> {
                 queueRepository.save(InquiryReviewQueueItem.from(result));
-                statsService.evictSummary();
+                TransactionSynchronizationManager.registerSynchronization(
+                        new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                statsService.evictSummary();
+                            }
+                        });
             }
 
             case AUTO_ACCEPTED, REUSED -> {
-                // 현재는 검토 큐에 추가하지 않는다.
-                // 감사 표본 처리는 별도 정책에서 담당한다.
+                // 현재는 검토 큐에 추가하지 않는다 — evictSummary 도 안 부른다. 큐에 아무것도
+                // 안 넣으니 지금은 비울 대상이 없다.
+                // 감사 표본 처리는 별도 정책에서 담당한다. 나중에 여기서 감사 표본으로 뽑혀
+                // 큐에 실제로 삽입될 때만 evictSummary 를 불러야 한다(D-042) — 뽑히지 않은
+                // 대다수까지 매번 비우면 접수 경로 빈도가 높아 캐시가 상시 비게 된다.
             }
         }
     }

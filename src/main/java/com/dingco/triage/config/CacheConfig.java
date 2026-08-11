@@ -2,6 +2,7 @@ package com.dingco.triage.config;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
 import java.time.Duration;
 import org.springframework.cache.annotation.EnableCaching;
@@ -39,6 +40,18 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  * <p>⚠️ {@code DefaultTyping.NON_FINAL} 로는 안 고쳐진다 — 그 옵션은 record 처럼
  * {@code final} 인 타입엔 애초에 타입 정보를 안 붙인다. {@code EVERYTHING} 이어야 record 에도
  * 붙는다.
+ *
+ * <p>재현 방법: {@code NON_FINAL} 로 설정 → {@code backlog()} 호출(캐시 저장) → TTL(10초) 안에
+ * 같은 메서드 재호출(캐시 조회) → {@code ClassCastException: class java.util.LinkedHashMap
+ * cannot be cast to class ...StatsService$Backlog}.
+ *
+ * <p>⚠️ <b>타입 검증기는 스프링 기본값({@code getPolymorphicTypeValidator()})을 그대로 쓰지
+ * 않는다</b> (CodeRabbit 지적, CWE-502). 기본값은 아무 타입이나 허용하는
+ * {@code LaissezFaireSubTypeValidator} 라, {@code EVERYTHING} 과 같이 쓰면 <b>Redis 에 쓰기
+ * 권한을 가진 공격자가 {@code @class} 값을 조작해 클래스패스의 아무 클래스나 역직렬화시킬 수
+ * 있다</b> — 잘 알려진 Jackson RCE 경로다. 대신 이 캐시가 실제로 담는
+ * {@code StatsService} 의 중첩 record 들만 허용하는 좁은 allow-list
+ * ({@link BasicPolymorphicTypeValidator})를 쓴다.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
@@ -49,7 +62,12 @@ public class CacheConfig {
     @Bean
     RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory, ObjectMapper objectMapper) {
         ObjectMapper cacheObjectMapper = objectMapper.copy();
-        PolymorphicTypeValidator typeValidator = cacheObjectMapper.getPolymorphicTypeValidator();
+        // stats:summary 에 실제로 담기는 값만 허용한다 — StatsService 의 중첩 record 들
+        // (Backlog 등, 앞으로 붙을 Classification·AiCallSavings·Audit 도 전부 여기 소속이다).
+        // 검증 없는 기본 검증기를 그대로 쓰면 아무 클래스나 역직렬화할 수 있게 된다 (CWE-502).
+        PolymorphicTypeValidator typeValidator = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("com.dingco.triage.service.StatsService$")
+                .build();
         cacheObjectMapper.activateDefaultTyping(
                 typeValidator, ObjectMapper.DefaultTyping.EVERYTHING, JsonTypeInfo.As.PROPERTY);
         RedisSerializer<Object> jsonSerializer = new GenericJackson2JsonRedisSerializer(cacheObjectMapper);

@@ -40,23 +40,22 @@ import org.springframework.transaction.annotation.Transactional;
  * 실제 전달은 커밋 후로 미룬다({@code @TransactionalEventListener(AFTER_COMMIT)},
  * {@link ReviewConfirmedEvent} 참조). 그래야 확정이 롤백됐을 때 캐시에 사람 답이 남지 않는다.
  *
- * <p><b>통계 캐시({@code stats:summary}, TRI-67)는 확정 성공 시 삭제한다.</b>
- * {@link StatsService#evictSummary()}가 캐시 삭제 중 발생한 예외를 처리하므로,
- * Redis 문제가 확정 트랜잭션에 영향을 주지 않는다.
+ * <p><b>통계 캐시({@code stats:summary}, TRI-67)도 커밋 후에 비운다.</b> 여기서 직접 부르지
+ * 않고, 위와 같은 {@code ReviewConfirmedEventListener}(AFTER_COMMIT)에서
+ * {@link StatsService#evictSummary()} 를 호출한다 — 커밋 전에 비우면 그 틈에 다른 요청이
+ * 아직 커밋 안 된 옛 상태를 캐시에 다시 채울 수 있다.
  */
 
 @Service
 public class ReviewService {
 
     private final InquiryReviewQueueRepository queueRepository;
-    private final StatsService statsService;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
-    ReviewService(InquiryReviewQueueRepository queueRepository, StatsService statsService,
+    ReviewService(InquiryReviewQueueRepository queueRepository,
             ApplicationEventPublisher eventPublisher, Clock clock) {
         this.queueRepository = queueRepository;
-        this.statsService = statsService;
         this.eventPublisher = eventPublisher;
         this.clock = clock;
     }
@@ -88,7 +87,6 @@ public class ReviewService {
 
         eventPublisher.publishEvent(
                 new ReviewConfirmedEvent(inquiry.getNormalizedKey(), finalCategory, result.getId()));
-        statsService.evictSummary();
         return item;
     }
 }

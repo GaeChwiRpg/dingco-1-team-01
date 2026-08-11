@@ -1,5 +1,6 @@
 package com.dingco.triage.service.event;
 
+import com.dingco.triage.service.StatsService;
 import com.dingco.triage.service.cache.CachedClassification;
 import com.dingco.triage.service.cache.ClassificationCache;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,11 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * 실행되므로, 캐시 갱신 중 예외가 발생해도 이미 확정된 DB 결과는 롤백되지 않는다.
  * {@code StatsService#evictSummary()}와 달리 여기서는 캐시 갱신 실패를 별도로
  * try-catch로 처리하지 않는다.
+ *
+ * <p><b>통계 캐시({@code stats:summary}) 비우기도 여기서 한다.</b> {@code ReviewService.confirm()}
+ * 은 {@code @Transactional} 이라, 그 안에서 직접 {@link StatsService#evictSummary()} 를 부르면
+ * 커밋 전에 비우는 셈이 된다 — 그 틈에 다른 요청이 아직 커밋 안 된 옛 상태를 캐시에 다시 채울
+ * 수 있다. 이 리스너는 커밋 후에만 실행되므로 그 창이 없다.
  */
 @Slf4j
 @Component
@@ -30,6 +36,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 class ReviewConfirmedEventListener {
 
     private final ClassificationCache classificationCache;
+    private final StatsService statsService;
 
     @TransactionalEventListener
     public void onReviewConfirmed(ReviewConfirmedEvent event) {
@@ -37,5 +44,6 @@ class ReviewConfirmedEventListener {
                 CachedClassification.ofHuman(event.finalCategory(), event.resultId()));
         log.debug("classification_cache_overwritten_by_human normalizedKey={} resultId={}",
                 event.normalizedKey(), event.resultId());
+        statsService.evictSummary();
     }
 }

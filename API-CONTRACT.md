@@ -388,6 +388,8 @@ X-User-Role: AGENT
 > 운영 통계 (`ROLE_MANAGER`). 적체 · 분류 성공률 · **감사 결과**. TTL 10s 캐시.
 
 > **지금 구현 상태 (TRI-72 · TRI-67)**: 아래 JSON은 나중에 다 만들어졌을 때의 모습이다. 지금 실제로 볼 수 있는 건 두 가지다 — `classification.stuckReceived`(접수만 되고 오래도록 분류되지 않은 문의 수)와 `backlog`(지금 검토 대기 중인 문의 수, 검토 대기 사유별 건수, 가장 오래 기다리고 있는 문의의 시간). 나머지(`aiCallSavings`·`cache`·`audit`·`classification`의 다른 카운트)는 각 담당자가 끝나는 대로 붙인다. 아직 안 만든 건 `0`이나 빈 값으로 채우지 않고 응답에서 그냥 뺀다 — 안 만든 걸 만든 것처럼 보이지 않기 위해서다.
+>
+> **"TTL 10s 캐시"는 응답 전체가 아니라 `backlog`에만 적용된다.** `classification.stuckReceived`는 캐시를 안 거치고 요청마다 새로 계산한다.
 
 **응답**: `200 OK` (완성형 목표 — 위 「지금 구현 상태」 참조)
 
