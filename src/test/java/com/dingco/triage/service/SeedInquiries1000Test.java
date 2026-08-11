@@ -133,6 +133,56 @@ class SeedInquiries1000Test {
                 distinctKeys.size(), systemReuse, collapse, wording);
     }
 
+    @Test
+    void 파생_1000건이_현재_inquiries_50_원본과_일치한다() throws Exception {
+        // 이 테스트가 없으면: 누가 inquiries-50.csv 를 고치고 1000건을 재생성하지 않아도
+        // 구조·키 테스트는 (1000 파일 내부 정합만 보므로) 그대로 통과해, 파생본이 조용히 stale 된다.
+        // 여기서 "정본(첫 COLLAPSE=레시피 0=원본 그대로) 본문·카테고리·채널·묶음번호"가 현재 원본과
+        // 같은지 대조해, 원본이 바뀌면 재생성을 강제한다.
+        List<Row> rows = load();
+        Map<Integer, String[]> src = loadSources(); // id -> [content, category, channel, dup_group]
+
+        Map<Integer, List<Row>> bySource = new TreeMap<>();
+        for (Row r : rows) {
+            bySource.computeIfAbsent(r.sourceId(), k -> new ArrayList<>()).add(r);
+        }
+        assertEquals(src.keySet(), bySource.keySet(), "source_id 집합이 원본 50건과 같아야 한다");
+
+        for (var e : bySource.entrySet()) {
+            String[] s = src.get(e.getKey());
+            String expectedContent = s[0], expectedCat = s[1], expectedChan = s[2];
+            String expectedGroup = s[3].isBlank() ? "S" + e.getKey() : s[3];
+            Row canonical = e.getValue().stream()
+                    .filter(r -> r.kind().equals("COLLAPSE")).findFirst().orElseThrow();
+            assertEquals(expectedContent, canonical.content(),
+                    "원본 " + e.getKey() + ": 정본 본문이 현재 inquiries-50.csv 와 다르다 "
+                            + "— 원본을 고쳤으면 build_inquiries_1000.py 로 재생성하라");
+            assertTrue(e.getValue().stream().allMatch(r ->
+                            r.category().equals(expectedCat) && r.channel().equals(expectedChan)
+                                    && r.group().equals(expectedGroup)),
+                    "원본 " + e.getKey() + ": 카테고리·채널·묶음번호가 원본 파생 규칙과 어긋난다");
+        }
+    }
+
+    /** 파생 원본 50건 로드. id -> [content, expected_category, channel, dup_group]. */
+    private Map<Integer, String[]> loadSources() throws Exception {
+        try (InputStream in = getClass().getResourceAsStream("/seed/inquiries-50.csv")) {
+            assertNotNull(in, "/seed/inquiries-50.csv 를 클래스패스에서 찾지 못했다");
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                br.readLine(); // 헤더: id,content,expected_category,channel,is_boundary,rationale,dup_group
+                Map<Integer, String[]> map = new TreeMap<>();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    List<String> f = parseCsv(line);
+                    assertEquals(7, f.size(), "inquiries-50.csv 열 수가 7이 아니다: " + line);
+                    map.put(Integer.parseInt(f.get(0)),
+                            new String[]{f.get(1), f.get(2), f.get(3), f.get(6)});
+                }
+                return map;
+            }
+        }
+    }
+
     private List<Row> load() throws Exception {
         try (InputStream in = getClass().getResourceAsStream(RESOURCE)) {
             assertNotNull(in, RESOURCE + " 를 클래스패스에서 찾지 못했다");
