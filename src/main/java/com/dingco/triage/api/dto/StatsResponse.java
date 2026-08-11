@@ -6,38 +6,56 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * {@code GET /api/stats} 응답 (계약 §7).
+ * {@code GET /api/stats}에서 반환하는 운영 통계 데이터.
  *
- * <p><b>지금 상태 — {@code classification.stuckReceived} 와 {@code backlog} 를 담는다
- * (TRI-72 · TRI-67).</b> 계약 §7 은 {@code aiCallSavings} · {@code cache} · {@code audit} 블록까지
- * 정의하지만, 그 값들은 각각 다른 측정의 소유라 해당 측정이 끝나는 대로 이 DTO 에 <b>증분으로</b>
- * 붙는다. 미착수 블록을 {@code 0} 이나 빈 객체로 채워 "있는 것처럼" 보이게 하지 않는다 — 없는
- * 필드는 응답에 나타나지 않는다 (CLAUDE.md "안 만든 것을 만든 것처럼 쓰지 않는다").
+ * 분류 상태와 검토 큐 적체 정보를 담는다.
  *
- * <p>계약이 정한 <b>중첩 구조({@code classification} 객체)는 지금부터 지킨다.</b> 나중에 형제
- * 블록이 붙어도 {@code classification} 의 자리는 그대로라, 소비자가 {@code stuckReceived} 를 읽는
- * 경로가 바뀌지 않는다.
+ * 아직 구현되지 않은 통계는 0이나 빈 값으로 넣지 않고,
+ * 실제로 계산할 수 있는 값만 응답에 포함한다.
  */
 public record StatsResponse(Classification classification, Backlog backlog) {
 
     /**
-     * 계약 §7 의 {@code classification} 블록. 지금은 {@code stuckReceived} 한 칸이다.
-     * {@code inquiriesTotal} · {@code autoAccepted} · {@code needsReview} · {@code failed} ·
-     * {@code autoAcceptRate} 는 각 측정 소유자가 붙인다.
+     * 문의 분류 관련 통계.
+     *
+     * 현재는 RECEIVED 상태에서 오래 머물러 있는
+     * 문의 개수를 제공한다.
      */
     public record Classification(long stuckReceived) {
     }
 
     /**
-     * 계약 §7 의 {@code backlog} 블록 (TRI-67). {@code byReason} 에 없는 사유는 0건 —
-     * 0 으로 채워 넣지 않는다. blind 규칙(D-010)은 이 endpoint({@code ROLE_MANAGER})에는 안 걸린다.
+     * 검토 큐에 쌓여 있는 문의 통계.
+     *
+     * total은 아직 처리하지 않은 전체 건수,
+     * byReason은 검토가 필요한 이유별 건수,
+     * oldestPendingAt은 가장 오래 기다리고 있는 문의의 생성 시간이다.
+     *
+     * {@link QueueReason}으로 검토 사유를 구분한다.
      */
-    public record Backlog(long total, Map<QueueReason, Long> byReason, Instant oldestPendingAt) {
+    public record Backlog(
+            long total,
+            Map<QueueReason, Long> byReason,
+            Instant oldestPendingAt) {
     }
 
-    public static StatsResponse of(long stuckReceived, StatsService.Backlog backlog) {
+    /**
+     * 서비스에서 조회한 통계 데이터를
+     * API 응답 형태로 변환한다.
+     *
+     * @param stuckReceived 오래 처리되지 않은 문의 수
+     * @param backlog 검토 큐 적체 정보
+     * @return API에서 반환할 통계 응답
+     */
+    public static StatsResponse of(
+            long stuckReceived,
+            StatsService.Backlog backlog) {
+
         return new StatsResponse(
                 new Classification(stuckReceived),
-                new Backlog(backlog.total(), backlog.byReason(), backlog.oldestPendingAt()));
+                new Backlog(
+                        backlog.total(),
+                        backlog.byReason(),
+                        backlog.oldestPendingAt()));
     }
 }

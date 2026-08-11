@@ -1,6 +1,8 @@
 package com.dingco.triage.config;
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
 import java.time.Duration;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -25,7 +27,18 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  *
  * <p><b>값은 JSON 으로 담는다</b> — {@code RedisConfig}(TRI-40)와 같은 이유다. 기본값(JDK 직렬화)은
  * 불투명한 바이트라 {@code redis-cli} 로 캐시된 통계를 확인할 수 없다. 스프링이 이미 구성한
- * {@link ObjectMapper} 를 그대로 써서 별도 mapper 가 어긋나지 않게 한다.
+ * {@link ObjectMapper} 를 <b>복사해서</b> 쓴다 — 원본을 그대로 건드리면 이 설정이 HTTP 응답
+ * JSON 직렬화에도 새어 들어간다.
+ *
+ * <p><b>복사본에 다형 타이핑(default typing)을 켠다 — 실제로 재현한 버그다.</b> 캐시에 담는
+ * 값(예: {@code Backlog})은 record 라 전부 {@code final} 인데, 타이핑이 꺼져 있으면 저장할 때
+ * 타입 정보({@code @class})를 안 남긴다. 처음 쓸 때는 문제없이 넘어가지만, TTL(10초) 안에
+ * 같은 통계를 다시 읽으면 타입을 몰라 {@code LinkedHashMap} 으로 잘못 복원되고
+ * {@code ClassCastException} 으로 500 이 난다.
+ *
+ * <p>⚠️ {@code DefaultTyping.NON_FINAL} 로는 안 고쳐진다 — 그 옵션은 record 처럼
+ * {@code final} 인 타입엔 애초에 타입 정보를 안 붙인다. {@code EVERYTHING} 이어야 record 에도
+ * 붙는다.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
@@ -35,7 +48,11 @@ public class CacheConfig {
 
     @Bean
     RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory, ObjectMapper objectMapper) {
-        RedisSerializer<Object> jsonSerializer = new GenericJackson2JsonRedisSerializer(objectMapper);
+        ObjectMapper cacheObjectMapper = objectMapper.copy();
+        PolymorphicTypeValidator typeValidator = cacheObjectMapper.getPolymorphicTypeValidator();
+        cacheObjectMapper.activateDefaultTyping(
+                typeValidator, ObjectMapper.DefaultTyping.EVERYTHING, JsonTypeInfo.As.PROPERTY);
+        RedisSerializer<Object> jsonSerializer = new GenericJackson2JsonRedisSerializer(cacheObjectMapper);
         RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer));
 
