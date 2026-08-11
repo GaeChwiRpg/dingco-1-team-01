@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 매핑표 대상 endpoint 가 같은데 더미 컨트롤러를 패키지마다 새로 만들면 표가 두 곳에서 어긋날 수 있다.
  * 담당자가 진짜 컨트롤러를 만들면 그 endpoint 의 메서드만 지운다 — {@code GET
  * /api/inquiry-review-queue} 가 TRI-56 으로, {@code PATCH /api/inquiry-review-queue/{id}} 가
- * TRI-60 으로 먼저 빠졌다(실제 컨트롤러와 매핑이 겹치면 앱 기동 시
- * {@code IllegalStateException}(ambiguous mapping)이 난다).
+ * TRI-60 으로, {@code GET /api/policies} 가 TRI-69 로 먼저 빠졌다(실제 컨트롤러와 매핑이 겹치면
+ * 앱 기동 시 {@code IllegalStateException}(ambiguous mapping)이 난다).
  *
  * <p>{@code @Profile("!test")} 인 이유 — 이 클래스는 {@code com.dingco.triage.config} 패키지에
  * 있어서 {@code @SpringBootTest} 전체 컨텍스트의 기본 컴포넌트 스캔에도 같이 잡힌다. 그러면
@@ -47,11 +47,6 @@ public class ProbeController {
 
     @GetMapping("/api/stats")
     String stats() {
-        return "ok";
-    }
-
-    @GetMapping("/api/policies")
-    String policies() {
         return "ok";
     }
 }

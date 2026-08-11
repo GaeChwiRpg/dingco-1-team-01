@@ -1,8 +1,11 @@
 package com.dingco.triage.domain.repository;
 
 import com.dingco.triage.domain.InquiryReviewQueueItem;
+import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.domain.type.QueueStatus;
+import com.dingco.triage.domain.type.Verdict;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -92,4 +95,64 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
     @Query("select min(q.createdAt) from InquiryReviewQueueItem q "
             + "where q.status = com.dingco.triage.domain.type.QueueStatus.PENDING")
     Optional<Instant> findOldestPendingCreatedAt();
+
+    // ─────────────────────────────────────────────────────────────
+    // 감사 대조 — 계약 §7 audit 블록 (TRI-68 · D-012 · D-033)
+    //
+    // AUDIT_SAMPLE 로 뽑힌 큐 항목을 원본 판정의 verdict(AUTO_ACCEPTED/REUSED)로 나눠 센다.
+    // 둘을 합치지 않는 이유는 CLAUDE.md 「캐시 전략」과 같다 — autoAccepted 는 "AI 답 vs 사람
+    // 답" 비교지만 reused 에는 비교할 AI 답이 없다. 합치면 측정 8ⓐ 가 오염된다.
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * 감사로 뽑힌 건수 — verdict 별 (계약 §7 {@code audit.*.sampledTotal}). 상태(PENDING/RESOLVED)를
+     * 가리지 않는다 — <b>실제 사람 확인 여부와 무관하게 감사 장치가 몇 건을 뽑았는지</b>가
+     * {@code actualSampleRate} 의 분자다. 리뷰 완료분만 세면 아직 대기 중인 표본이 조용히
+     * 빠져 감사율이 실제보다 낮게 보인다.
+     */
+    @Query("""
+            select r.verdict as verdict, count(q) as count
+            from InquiryReviewQueueItem q
+              join q.classificationResult r
+            where q.reason = com.dingco.triage.domain.type.QueueReason.AUDIT_SAMPLE
+            group by r.verdict
+            """)
+    List<SampledVerdictCount> countAuditSampledByVerdict();
+
+    /** 감사 표본 건수 집계 프로젝션. */
+    interface SampledVerdictCount {
+        Verdict getVerdict();
+
+        long getCount();
+    }
+
+    /**
+     * 감사로 뽑혀 <b>사람이 이미 확정한</b> 건의 대조용 행 (계약 §7 {@code audit.*.reviewed} 이하).
+     *
+     * <p>{@code status = RESOLVED} 만 센다 — {@link InquiryReviewQueueItem#resolve} 가 항상
+     * {@code final_category} 기록 뒤에 불리므로(트랜잭션 ③, {@code ReviewService}), RESOLVED 는
+     * 곧 {@code final_category IS NOT NULL} 과 같다. verdict·confidence·category·finalCategory
+     * 네 칸만 뽑는 이유는 여기서 신뢰도 구간별 집계({@code byConfidenceBucket})와 일치/불일치를
+     * 가르는 데 이 넷이면 충분해서다 — 나머지 칸을 실어 나를 이유가 없다.
+     */
+    @Query("""
+            select r.verdict as verdict, r.confidence as confidence,
+                   r.category as category, r.finalCategory as finalCategory
+            from InquiryReviewQueueItem q
+              join q.classificationResult r
+            where q.reason = com.dingco.triage.domain.type.QueueReason.AUDIT_SAMPLE
+              and q.status = com.dingco.triage.domain.type.QueueStatus.RESOLVED
+            """)
+    List<AuditReviewRow> findResolvedAuditSampleRows();
+
+    /** 감사 대조 1건의 값 4칸. */
+    interface AuditReviewRow {
+        Verdict getVerdict();
+
+        BigDecimal getConfidence();
+
+        InquiryCategory getCategory();
+
+        InquiryCategory getFinalCategory();
+    }
 }
