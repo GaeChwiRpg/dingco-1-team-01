@@ -82,7 +82,7 @@ class ClassificationCacheIT extends RedisContainerSupport {
     @Test
     @DisplayName("실제 키에 이름공간과 규칙 번호(v1)가 붙는다")
     void redisKey_hasNamespaceAndVersion() {
-        assertThat(ClassificationCache.redisKey("abc"))
+        assertThat(cache.redisKey("abc"))
                 .isEqualTo("classification:byNormalizedKey:v1:abc");
     }
 }

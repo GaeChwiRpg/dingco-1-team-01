@@ -83,7 +83,7 @@ class ClassificationCacheAtomicPutIT extends RedisContainerSupport {
     void overwritesNonTableScalar() {
         // 다른 도구가 같은 키에 JSON 스칼라를 써 둔 상황. cjson.decode 는 성공하지만 table 이
         // 아니라, 타입 가드가 없으면 decoded.source 인덱싱에서 Lua 런타임 에러가 난다.
-        stringRedisTemplate.opsForValue().set(ClassificationCache.redisKey(KEY), "123");
+        stringRedisTemplate.opsForValue().set(cache.redisKey(KEY), "123");
 
         boolean wrote = cache.putIfNotHuman(KEY,
                 CachedClassification.ofAi(InquiryCategory.DELIVERY, new BigDecimal("0.9"), 1L));
