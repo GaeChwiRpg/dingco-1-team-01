@@ -50,6 +50,7 @@ class ReuseLookupExplainIT {
     private static final int KEYS = 20_000;      // 키당 평균 N/KEYS = 5 문의 (한 자릿수 = 현실 상정)
     private static final String HOT_KEY = "k-hot"; // 판정 행이 많이 쌓인 키 (스트레스 케이스)
     private static final int HOT_ROWS = 200;
+    private static final String SEED_PREFIX = "m5d-seed "; // 이 측정 전용 시드 식별 접두사 (LIKE 특수문자 없음)
 
     /** 1순위 조회 — findHumanConfirmedByNormalizedKey 와 같은 SQL (LIMIT 1). */
     private static String firstPrioritySql(String key) {
@@ -63,8 +64,12 @@ class ReuseLookupExplainIT {
     private JdbcTemplate jdbcTemplate;
 
     private void seedOnce() {
-        Integer existing = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM inquiries", Integer.class);
-        if (existing != null && existing >= N) {
+        // 전체 COUNT 로 재사용 여부를 판단하면 다른 테스트/이전 실행이 남긴 행이 섞여
+        // k-hot 분포·사람 확정답 비율을 만들지 않은 채 리포트가 나온다. 이 측정 전용
+        // 접두사로 식별하고, 그 접두사 행이 정확히 N 개일 때만 재사용한다.
+        Integer seeded = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM inquiries WHERE content LIKE ?", Integer.class, SEED_PREFIX + "%");
+        if (seeded != null && seeded == N) {
             return;
         }
         jdbcTemplate.update("DELETE FROM inquiry_review_queue");
@@ -79,7 +84,7 @@ class ReuseLookupExplainIT {
                 // 앞 HOT_ROWS 건은 한 키(k-hot)에 몰아 "판정 행이 많이 쌓인 키"를 만든다.
                 String key = i < HOT_ROWS ? HOT_KEY : "k-" + (i % KEYS);
                 java.sql.Timestamp ts = new java.sql.Timestamp(baseMillis + (long) i * 60_000L);
-                rows.add(new Object[]{1_000 + (i % 5_000), "문의 본문 " + i, "WEB", key,
+                rows.add(new Object[]{1_000 + (i % 5_000), SEED_PREFIX + i, "WEB", key,
                         "CLASSIFIED", "DELIVERY", new java.math.BigDecimal("0.900"), ts, ts, ts});
             }
             jdbcTemplate.batchUpdate("""
@@ -116,7 +121,11 @@ class ReuseLookupExplainIT {
         // ── A. 보통 키 (판정 행 한 자릿수) — 인덱스 있음 ──
         Map<String, Object> a = explain(report,
                 "A · 보통 키(판정 행 한 자릿수) · 인덱스 있음", firstPrioritySql("k-123"));
-        assertThat(str(a.get("key"))).as("구동 inquiries 는 normalized_key 인덱스를 타야 한다").isNotBlank();
+        // key 비어있지 않음만으로는 구동 테이블/인덱스를 특정 못 한다 (다른 조인 순서·인덱스도 통과).
+        // 구동 테이블이 inquiries(별칭 i)이고 V2 인덱스를 탔음을 둘 다 단언한다.
+        assertThat(str(a.get("table"))).as("구동 테이블은 inquiries(별칭 i)여야 한다").isEqualTo("i");
+        assertThat(str(a.get("key"))).as("구동 i 는 idx_inquiries_key_created 를 타야 한다")
+                .isEqualTo("idx_inquiries_key_created");
 
         // ── B. 판정 행이 많이 쌓인 키 — final_category 서버 필터가 훑는 양이 는다 ──
         explain(report, "B · hot 키(판정 행 " + HOT_ROWS + "건) · 인덱스 있음", firstPrioritySql(HOT_KEY));
