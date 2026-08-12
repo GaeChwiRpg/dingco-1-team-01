@@ -29,8 +29,9 @@ class AuditSamplingPolicyTest {
     private static final BigDecimal ANY_THRESHOLD = new BigDecimal("0.8");
 
     private static AuditSamplingPolicy policyOf(String sampleRate, DoubleSupplier randomSource) {
+        // 재사용 스위치는 감사와 무관하다 — null 을 주면 「켜짐」이 채워진다 (D-062).
         ClassificationProperties properties = new ClassificationProperties(
-                ANY_THRESHOLD, new ClassificationProperties.Audit(new BigDecimal(sampleRate)));
+                ANY_THRESHOLD, new ClassificationProperties.Audit(new BigDecimal(sampleRate)), null);
         return new AuditSamplingPolicy(properties, randomSource);
     }
 
