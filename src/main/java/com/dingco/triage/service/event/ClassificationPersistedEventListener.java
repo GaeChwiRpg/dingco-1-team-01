@@ -1,6 +1,7 @@
 package com.dingco.triage.service.event;
 
 import com.dingco.triage.service.cache.ClassificationCache;
+import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -50,13 +51,11 @@ public class ClassificationPersistedEventListener {
                 log.debug("cache_put_skipped reason=human_answer_kept key={}", event.normalizedKey());
             }
         } catch (RuntimeException e) {
-            // 로그만 찍고 끝내는 것이 아니다 — "넣기를 포기하고 진행한다"는 처리를 한다 (D-030).
-            // 판정은 이미 커밋됐고, 다음 문의는 2단 DB 조회로 같은 답을 찾는다.
-            //
-            // ⚠️ 이 상태가 계속되면 hit rate 는 0 인데 절감률은 살아 있는 모양이 된다.
-            // 그 둘을 따로 노출하는 이유가 이것이다 (D-014). 캐시 장애 대응은 TRI-85.
-            log.warn("cache_put_failed key={} — 판정은 저장됐고 다음 문의는 2단 DB 로 찾는다",
+            // 재시도 없이 넣기를 포기하는 최종 지점이라 명시적으로 올린다 (D-030, CodeRabbit 지적).
+            // 로그만 남기면 Redis 가 계속 죽어 있어도 아무도 모른 채 hit rate 0 이 유지된다.
+            log.warn("cache_put_failed key={} — 판정은 저장됐고 다음 문의는 2단 DB 로 찾는다 (TRI-85)",
                     event.normalizedKey(), e);
+            Sentry.captureException(e);
         }
     }
 }

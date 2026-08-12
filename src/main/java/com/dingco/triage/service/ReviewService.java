@@ -8,43 +8,56 @@ import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.type.ConflictCode;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.QueueStatus;
+import com.dingco.triage.service.event.ReviewConfirmedEvent;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.NoSuchElementException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 확정 트랜잭션 <b>③</b> (TRI-59 · D-021 · 불변 규칙 1·2).
+ * 확정 트랜잭션 ③ (TRI-59 · D-021 · 불변 규칙 1·2).
  *
- * <p><b>한 트랜잭션 안에서 네 가지를 한다</b> — 하나라도 밖에 있으면 조용히 어긋난다.
+ * <p><b>한 트랜잭션 안에서 네 가지를 처리한다.</b> 하나라도 트랜잭션 밖에서 처리하면
+ * 일부만 저장되는 문제가 생길 수 있다.
  *
  * <ol>
- *   <li>큐 항목 상태 검사 ({@code PENDING} 인가)
- *   <li>{@code final_category} 기록 — {@code category}(AI 제안)는 덮지 않는다
- *   <li>큐 항목을 {@code RESOLVED} + {@code agentId} · {@code resolvedAt}
- *   <li>{@code Inquiry} 를 {@code CLASSIFIED} 로 + {@code current_category} 갱신
+ *   <li>큐 항목 상태 검사 ({@code PENDING}인지 확인)</li>
+ *   <li>{@code final_category} 기록 — {@code category}(AI 제안)는 덮어쓰지 않는다.</li>
+ *   <li>큐 항목을 {@code RESOLVED}로 변경하고 {@code agentId}와 {@code resolvedAt}을 기록한다.</li>
+ *   <li>{@code Inquiry}를 {@code CLASSIFIED}로 변경하고 {@code current_category}를 갱신한다.</li>
+ *   <li>{@link ReviewConfirmedEvent} 발행 — 커밋 후 리스너가 1단 캐시 갱신과 통계 캐시 비우기를 처리한다 (TRI-44 · TRI-67).</li>
  * </ol>
  *
- * <p><b>동시성은 두 겹이다 (D-021).</b> 조회 시점의 상태 검사가 "이미 끝난 것"(시간 차,
- * {@code ALREADY_RESOLVED})을 잡고, 커밋 시점의 {@code @Version} 불일치가 "동시에 눌린 것"
- * ({@code CONCURRENT_UPDATE})을 잡는다. 후자를 이 메서드 안에서 잡으려면 트랜잭션 끝(메서드
- * 반환 후)이 아니라 <b>여기서 직접 flush</b>해야 하므로 {@code saveAndFlush} 를 쓴다.
+ * <p><b>동시성은 두 가지 경우를 확인한다(D-021).</b> 먼저 조회한 항목이 이미 처리된 상태인지
+ * 확인해서 {@code ALREADY_RESOLVED}를 잡고, 저장할 때 {@code @Version}이 변경됐는지 확인해서
+ * {@code CONCURRENT_UPDATE}를 잡는다. {@code CONCURRENT_UPDATE}를 이 메서드에서 바로 확인하려면
+ * 트랜잭션이 끝날 때까지 기다리지 않고 여기서 DB에 변경 내용을 반영해야 하므로
+ * {@code saveAndFlush}를 사용한다.
  *
- * <p><b>캐시는 아직 건드리지 않는다.</b> 계약 C(D-036)는 이 확정이 분류 캐시를 사람 답으로
- * 덮어쓰도록 정하지만, 1단 캐시({@code ClassificationCache}, TRI-40~43·P1)가 아직 구현되지
- * 않아 덮어쓸 대상이 없다. 캐시가 생기면 커밋 후({@code @TransactionalEventListener(AFTER_COMMIT)})
- * 덮어쓰는 코드를 별도로 붙인다.
+ * <p><b>분류 캐시는 사람 답으로 갱신한다(1단, D-036).</b> 이벤트는 이 트랜잭션 안에서 발행하지만,
+ * 실제 전달은 커밋 후로 미룬다({@code @TransactionalEventListener(AFTER_COMMIT)},
+ * {@link ReviewConfirmedEvent} 참조). 그래야 확정이 롤백됐을 때 캐시에 사람 답이 남지 않는다.
+ *
+ * <p><b>통계 캐시({@code stats:summary}, TRI-67)도 커밋 후에 비운다.</b> 여기서 직접 부르지
+ * 않고, 위와 같은 {@code ReviewConfirmedEventListener}(AFTER_COMMIT)에서
+ * {@link StatsService#evictSummary()} 를 호출한다 — 커밋 전에 비우면 그 틈에 다른 요청이
+ * 아직 커밋 안 된 옛 상태를 캐시에 다시 채울 수 있다.
  */
+
 @Service
 public class ReviewService {
 
     private final InquiryReviewQueueRepository queueRepository;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
 
-    ReviewService(InquiryReviewQueueRepository queueRepository, Clock clock) {
+    ReviewService(InquiryReviewQueueRepository queueRepository,
+            ApplicationEventPublisher eventPublisher, Clock clock) {
         this.queueRepository = queueRepository;
+        this.eventPublisher = eventPublisher;
         this.clock = clock;
     }
 
@@ -73,6 +86,8 @@ public class ReviewService {
                     "다른 상담원이 방금 이 항목을 확정했습니다.");
         }
 
+        eventPublisher.publishEvent(
+                new ReviewConfirmedEvent(inquiry.getNormalizedKey(), finalCategory, result.getId()));
         return item;
     }
 }

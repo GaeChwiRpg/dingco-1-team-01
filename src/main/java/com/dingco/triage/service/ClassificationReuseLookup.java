@@ -48,9 +48,36 @@ public class ClassificationReuseLookup {
     /**
      * 재사용할 답을 찾는다.
      *
+     * <p><b>어떤 이유로든 못 찾으면 비어 있다 — 예외를 밖으로 던지지 않는다</b> (CodeRabbit 지적).
+     * 부르는 쪽은 {@code @Async} 리스너라 예외를 받아줄 사람이 없고, 그대로 나가면 <b>문의가
+     * {@code RECEIVED} 인 채로 남는다.</b> 재사용은 <b>있으면 좋은 것</b>이지 분류의 필수 조건이
+     * 아니므로, 조회가 깨지면 AI 를 부르면 된다.
+     *
+     * <p>실패는 두 층으로 나뉘고 <b>대처가 다르다.</b>
+     *
+     * <ul>
+     *   <li><b>1단 캐시 실패</b> → 2단 DB 로 넘어간다. 절감이 유지된다 ({@link #fromCache})
+     *   <li><b>2단 DB 실패</b> → 여기서 잡아 AI 호출로 넘긴다. 절감은 못 하지만 분류는 된다
+     * </ul>
+     *
      * @return 있으면 재사용할 답, 없으면 {@link Optional#empty()} — 부르는 쪽이 AI 를 호출한다
      */
     public Optional<CachedClassification> find(String normalizedKey) {
+        try {
+            return lookup(normalizedKey);
+        } catch (RuntimeException e) {
+            // 로그만 찍고 끝내는 것이 아니다 — "재사용을 포기하고 AI 를 부른다"는 처리를 한다 (D-030).
+            //
+            // Sentry 로 올리지 않는 이유: 대체 경로가 코드 안에 있고, DB 가 정말 죽었다면
+            // 뒤이은 트랜잭션 ②가 같은 이유로 실패하며 그쪽에서 드러난다. 여기서까지 올리면
+            // 같은 장애가 두 번 잡혀 어느 쪽이 원인인지 흐려진다.
+            log.warn("reuse_lookup_failed key={} — 재사용을 건너뛰고 AI 를 부른다", normalizedKey, e);
+            return Optional.empty();
+        }
+    }
+
+    /** 찾는 순서 그 자체. 실패 처리는 {@link #find} 가 감싼다. */
+    private Optional<CachedClassification> lookup(String normalizedKey) {
         Optional<CachedClassification> cached = fromCache(normalizedKey);
         if (cached.isPresent()) {
             log.debug("reuse_hit tier=CACHE key={}", normalizedKey);

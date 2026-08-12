@@ -8,6 +8,7 @@ name: ai-review
 #
 # 팀별 설정:
 #   Settings → Secrets and variables → Actions
+#     Variable ENABLE_AI_REVIEW (필수, `true`일 때만 러너 실행)
 #     Secret   ANTHROPIC_API_KEY  (필수)
 #     Variable ANTHROPIC_MODEL    (선택, 기본 claude-opus-5)
 
@@ -26,6 +27,8 @@ concurrency:
 
 jobs:
   review:
+    # opt-in 변수를 job 레벨에서 확인해 키가 없는 팀에 러너가 배정되지 않게 한다.
+    if: ${{ vars.ENABLE_AI_REVIEW == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check API key

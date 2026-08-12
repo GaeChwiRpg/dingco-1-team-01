@@ -26,6 +26,7 @@ import com.dingco.triage.support.MySqlTestContainer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -207,8 +208,19 @@ class ClassifyRetryMeasureIT {
         report("C. 두 번째에 성공 (회수)", actualCalls, result, elapsed);
     }
 
+    /**
+     * 문의를 접수한다 — <b>본문 끝에 매번 다른 값을 붙인다.</b>
+     *
+     * <p>재사용 조회(TRI-47)가 붙은 뒤로는 <b>같은 내용의 문의가 AI 를 아예 안 부른다.</b>
+     * 이 측정이 세는 것은 「AI 를 몇 번 불렀나」라서, 앞선 케이스가 남긴 판정이 재사용되면
+     * 호출 횟수가 0 이 되고 <b>재시도가 안 걸린 것처럼 보인다</b> — 실제로 그렇게 깨졌다.
+     *
+     * <p>재사용을 끄는 설정(TRI-90)으로 막을 수도 있지만, 그러면 <b>이 측정이 그 설정에
+     * 의존</b>하게 된다. 키를 매번 새로 만드는 편이 이 테스트 안에서 닫힌다.
+     */
     private Inquiry receive(String content) {
-        return inquiryIngestService.receive(CUSTOMER_ID, content, Channel.WEB);
+        return inquiryIngestService.receive(
+                CUSTOMER_ID, content + " " + UUID.randomUUID(), Channel.WEB);
     }
 
     /**
