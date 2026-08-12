@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>{@code final_category} 기록 — {@code category}(AI 제안)는 덮어쓰지 않는다.</li>
  *   <li>큐 항목을 {@code RESOLVED}로 변경하고 {@code agentId}와 {@code resolvedAt}을 기록한다.</li>
  *   <li>{@code Inquiry}를 {@code CLASSIFIED}로 변경하고 {@code current_category}를 갱신한다.</li>
+ *   <li>{@link ReviewConfirmedEvent} 발행 — 커밋 후 리스너가 1단 캐시 갱신과 통계 캐시 비우기를 처리한다 (TRI-44 · TRI-67).</li>
  * </ol>
  *
  * <p><b>동시성은 두 가지 경우를 확인한다(D-021).</b> 먼저 조회한 항목이 이미 처리된 상태인지

@@ -21,15 +21,16 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * 분류 결과 저장 트랜잭션 <b>②</b> (TRI-51 · D-011 · D-012 · D-049).
+ * 분류 결과 저장 트랜잭션 <b>②</b> — AI 가 낸 결과를 판정해 저장하고, 사람이 봐야 하는 건이면
+ * 검토 목록으로 넘긴다 (TRI-51 · D-011 · D-012 · D-049).
  *
  * <p><b>네 가지를 한 덩어리로 묶는다.</b> 하나라도 밖에 있으면 조용히 어긋난다.
  *
  * <ol>
  *   <li>기준값과 비교해 판정을 정한다 — {@code AUTO_ACCEPTED} / {@code NEEDS_REVIEW} / {@code FAILED}
- *   <li>{@code Inquiry} 상태 전이 + {@code current_*} 사본 갱신
- *   <li>{@code InquiryClassificationResult} 행 저장
- *   <li>조건에 맞으면 검토 목록에 삽입
+ *   <li>{@link InquiryRepository} — {@code Inquiry} 상태 전이 + {@code current_*} 사본 갱신
+ *   <li>{@link InquiryClassificationResultRepository} — 판정 행 저장
+ *   <li>{@link InquiryReviewQueueRepository} — 조건에 맞으면 검토 목록에 삽입
  * </ol>
  *
  * <p><b>이 트랜잭션은 ①(접수)과 분리된 채로 돈다 (D-031).</b> 여기서 실패해도 ①은 이미 커밋돼
@@ -72,13 +73,16 @@ public class ClassificationService {
     private final StatsService statsService;
 
     /**
-     * 판정 시각의 출처. 상태 전이 UPDATE 가 {@code updated_at} 을 직접 쓰기 때문에 필요하다 —
-     * 벌크 UPDATE 는 auditing 을 타지 않는다 ({@code InquiryRepository} 참조).
+     * 상태를 바꿀 때 쓸 시각. <b>{@link InquiryRepository} 가 UPDATE 로 직접 쓰기 때문에</b>
+     * 여기서 만들어 넘긴다 — 벌크 UPDATE 는 auditing 을 타지 않아 {@code updated_at} 이 저절로
+     * 채워지지 않는다.
      */
     private final Clock clock;
 
     /**
      * 판정하고 저장한다 (트랜잭션 ②).
+     *
+     * <p>순서: <b>판정 결정 → 문의 상태 변경 → 판정 행 저장 → 필요하면 검토 목록에 추가.</b>
      *
      * @param inquiryId    분류 대상 문의 id
      * @param parsed       값 검증 4가지를 <b>이미 통과했거나 거기서 걸린</b> 결과
@@ -90,6 +94,7 @@ public class ClassificationService {
     @Transactional
     public boolean verifyAndPersist(Long inquiryId, AiParsedClassification parsed,
             AiRawResponse raw, int attemptCount) {
+        // 값 검증을 통과한 것만 기준값과 비교한다 (D-034)
         Verdict verdict = decideVerdict(parsed);
 
         // ── 1) 중복 실행 차단 + 상태 전이를 한 문장으로 (D-049)
@@ -109,6 +114,8 @@ public class ClassificationService {
         Inquiry inquiry = inquiryRepository.findByIdForClassification(inquiryId)
                 .orElseThrow(() -> new IllegalStateException(
                         "방금 갱신한 문의를 못 찾는다: inquiryId=" + inquiryId));
+
+        // 문의에 AI 가 매긴 카테고리와 확신도를 반영한다
         inquiry.applyClassification(parsed.category(), parsed.confidence());
 
         // ── 3) 판정 행 저장. category·confidence 를 넣을 자리가 팩토리마다 다르므로
@@ -125,7 +132,7 @@ public class ClassificationService {
     }
 
     /**
-     * 판정을 정한다 — <b>값 검증을 통과한 것만 기준값과 비교한다</b>.
+     * AI 결과와 확신도로 판정을 정한다 — <b>값 검증을 통과한 것만 기준값과 비교한다</b>.
      *
      * <p>검증에 걸린 건은 비교 자체를 하지 않는다. 확신도가 {@code null} 이라 비교할 것이 없고,
      * 억지로 {@code 0} 을 넣으면 측정 8ⓐ 의 최하위 구간이 오염된다 (D-022).
@@ -142,6 +149,9 @@ public class ClassificationService {
     /**
      * 판정이 문의를 확정시키는지 — <b>규칙을 한 곳에만 둔다</b>.
      *
+     * <p>자동 확정과 재사용은 {@link InquiryStatus#CLASSIFIED} 로, 사람이 봐야 하는 건은
+     * {@link InquiryStatus#UNCLASSIFIED} 로 간다.
+     *
      * <p>{@code switch} 가 exhaustive 라 {@link Verdict} 에 값이 늘면 <b>여기가 컴파일 에러로
      * 터진다.</b> 새 판정이 문의를 확정시키는지 아무도 안 정한 채로 지나갈 수 없다.
      */
@@ -152,6 +162,11 @@ public class ClassificationService {
         };
     }
 
+    /**
+     * 판정에 맞는 결과 행을 만든다 — 자동 확정 · 사람 검토 · 실패에 따라 담기는 값이 다르다.
+     *
+     * <p>{@code REUSED} 는 AI 를 부르지 않는 별도 경로가 만든다. 아래에서 예외로 막는 이유가 그것이다.
+     */
     private InquiryClassificationResult newResult(Verdict verdict, Inquiry inquiry,
             AiParsedClassification parsed, AiRawResponse raw, int attemptCount) {
         String model = raw == null ? null : raw.model();
@@ -171,16 +186,19 @@ public class ClassificationService {
     }
 
     /**
-     * 검토 목록에 넣을지 정한다 (계약 B).
+     * 사람이 봐야 하는 문의를 검토 목록에 넣을지 정한다 (계약 B).
      *
-     * <p><b>격리는 전건, 감사는 일부다.</b> 확신 못 한 건({@code NEEDS_REVIEW})과 못 읽은 건
-     * ({@code FAILED})은 하나도 빠짐없이 사람에게 가고, 자동으로 확정된 건은 <b>설정한 비율만큼만</b>
-     * 뽑아서 보낸다 (TRI-65 · D-005).
+     * <p><b>격리는 전건, 감사는 일부다.</b> 확신 못 한 건({@link Verdict#NEEDS_REVIEW})과 못 읽은 건
+     * ({@link Verdict#FAILED})은 하나도 빠짐없이 사람에게 가고, 자동으로 확정된 건은 <b>설정한
+     * 비율만큼만</b> 뽑아서 보낸다 (TRI-65 · D-005).
      *
      * <p><b>이 삽입은 반드시 이 트랜잭션 안에 있어야 한다 (D-012).</b> "부차적이니 나중에"라며
      * 별도 스레드나 이벤트로 빼면 조용히 빠질 수 있고, 그러면 감사 건수가 설정값보다 줄어
      * <b>오분류율의 분모가 조용히 작아진다.</b> 측정 8 이 이 프로젝트의 결론인데 그 분모를 믿을
      * 수 없게 된다.
+     *
+     * <p>넣는 것과 통계 캐시를 비우는 것은 {@link #enqueue} 가 한 몸으로 처리한다 — 비우기를
+     * 언제·왜 거는지는 거기 적혀 있다.
      *
      * <p>{@code switch} 가 exhaustive 라 판정이 늘면 여기서도 컴파일이 막힌다.
      */
@@ -198,6 +216,9 @@ public class ClassificationService {
             // 여기 미리 적어둔 것은 배선할 때(TRI-47 잔여 · TRI-53) "감사는 이미 준비됐다"를
             // 알리기 위해서다 — 지금 이 가지는 실행되지 않으므로 감사 테스트도 AUTO_ACCEPTED 로만 한다.
             case AUTO_ACCEPTED, REUSED -> {
+                // 뽑히면 넣고, 안 뽑히면 아무것도 하지 않는다 — 통계 캐시도 건드리지 않는다.
+                // 큐에 아무것도 안 넣었으니 비울 것이 없고, 자동 확정은 접수 경로마다 일어나
+                // 빈도가 높아 뽑히지 않은 대다수까지 매번 비우면 캐시가 상시 비게 된다 (D-042).
                 if (auditSamplingPolicy.shouldSample()) {
                     enqueue(result);
                     // 뽑힌 건을 로그로도 남긴다 — 측정 8ⓐ-2 를 검산할 때 DB 집계(TRI-66)와
@@ -225,6 +246,11 @@ public class ClassificationService {
      *
      * <p>비우기가 실패해도 이 트랜잭션은 이미 커밋돼 있어 영향을 받지 않는다 — 삼키는 처리는
      * {@link StatsService#evictSummary()} 안에 있다 (Sentry 로는 보낸다, D-030).
+     *
+     * <p><b>확정(③)은 같은 일을 다른 방식으로 한다</b> — 그쪽은 {@code ReviewConfirmedEvent} 라는
+     * 도메인 이벤트가 이미 있어 {@code ReviewConfirmedEventListener} 가 캐시 갱신과 함께 처리한다.
+     * 여기(②)에는 그럴 이벤트가 없어 동기화를 직접 등록한다. <b>두 방식이 공존하는 것은 우연이
+     * 아니라 이 차이 때문이다</b> — 없는 이벤트를 이 자리 하나 때문에 만들지 않는다.
      */
     private void enqueue(InquiryClassificationResult result) {
         queueRepository.save(InquiryReviewQueueItem.from(result));

@@ -29,6 +29,11 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * 은 {@code @Transactional} 이라, 그 안에서 직접 {@link StatsService#evictSummary()} 를 부르면
  * 커밋 전에 비우는 셈이 된다 — 그 틈에 다른 요청이 아직 커밋 안 된 옛 상태를 캐시에 다시 채울
  * 수 있다. 이 리스너는 커밋 후에만 실행되므로 그 창이 없다.
+ *
+ * <p>단, {@code ClassificationService} 쪽 큐 삽입(②)은 이 리스너를 거치지 않고
+ * {@code TransactionSynchronization.afterCommit()} 으로 직접 {@code evictSummary()} 를 부른다.
+ * 확정(③)만 이 리스너에서 처리하는 이유는, 확정은 이미 {@code ReviewConfirmedEvent} 라는
+ * 도메인 이벤트가 있어 캐시 갱신과 통계 비우기를 한 곳에서 처리하는 게 자연스럽기 때문이다.
  */
 @Slf4j
 @Component

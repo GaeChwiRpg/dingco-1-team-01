@@ -138,6 +138,9 @@ class ReviewServiceTest extends RedisContainerSupport {
                 .getNormalizedKey();
         Long resultId = item.getClassificationResult().getId();
 
+        // 확정 전 캐시 상태도 확인 — 덮어쓰기가 "원래 없던 것을 새로 쓴 것"인지 "있던 것을 바꾼 것"인지 구분된다.
+        assertThat(classificationCache.get(normalizedKey)).isEmpty();
+
         reviewService.confirm(item.getId(), 7L, InquiryCategory.COMPLAINT);
 
         var cached = classificationCache.get(normalizedKey).orElseThrow();
