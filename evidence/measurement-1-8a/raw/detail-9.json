@@ -1,0 +1,1 @@
+{"id":9,"content":"어제 주문했는데 아직 배송 시작이 안 됐어요. 언제 출발하나요?","channel":"APP","status":"CLASSIFIED","category":"DELIVERY","confidence":0.950,"receivedAt":"2026-08-12T13:37:51.507721Z","classifications":[{"id":8,"category":"DELIVERY","confidence":0.950,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:37:54.089626Z"}]}

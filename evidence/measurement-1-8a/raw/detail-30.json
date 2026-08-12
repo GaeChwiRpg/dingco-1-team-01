@@ -1,0 +1,1 @@
+{"id":30,"content":"로그인이 안 되는데 비밀번호 찾기를 눌러도 메일이 오지 않아요.","channel":"APP","status":"CLASSIFIED","category":"ACCOUNT","confidence":0.850,"receivedAt":"2026-08-12T13:37:52.109769Z","classifications":[{"id":29,"category":"ACCOUNT","confidence":0.850,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:38:14.039899Z"}]}

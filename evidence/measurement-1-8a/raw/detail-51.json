@@ -1,0 +1,1 @@
+{"id":51,"content":"앱이 자꾸 튕겨서 짜증나네요.","channel":"APP","status":"UNCLASSIFIED","category":"SERVICE_USAGE","confidence":0.650,"receivedAt":"2026-08-12T13:37:52.671215Z","classifications":[{"id":50,"category":"SERVICE_USAGE","confidence":0.650,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:39:08.045683Z"}]}
