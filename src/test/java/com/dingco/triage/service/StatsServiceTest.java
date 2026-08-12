@@ -26,8 +26,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * TRI-68 — {@code aiCallSavings} · {@code audit} 이 실제 판정·큐 데이터로부터 계약대로 집계되는지
- * 확인한다 (D-012 · D-033).
+ * TRI-68 — {@code aiCallSavings} · {@code audit} · {@code cache} 가 실제 판정·큐 데이터로부터
+ * 계약대로 집계되는지 확인한다 (D-012 · D-033 · D-014).
  *
  * <p><b>목(mock) 이 아니라 실 MySQL + Redis 위에서 검증한다</b> — 이 두 메서드는
  * {@code @Cacheable(stats:summary)} 라 목으로는 캐시 배선 자체가 검증에서 빠진다.
@@ -57,6 +57,9 @@ class StatsServiceTest extends RedisContainerSupport {
 
     @Autowired
     private ReviewService reviewService;
+
+    @Autowired
+    private ClassificationReuseLookup reuseLookup;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -193,5 +196,19 @@ class StatsServiceTest extends RedisContainerSupport {
         assertThat(autoAudit.eligibleTotal()).isEqualTo(1);
         assertThat(autoAudit.reviewed()).isEqualTo(1);
         assertThat(autoAudit.mismatched()).isZero();
+    }
+
+    @Test
+    @DisplayName("cache — 1단 hit/miss 를 Redis 에 실제로 담고 꺼낸다 (TRI-68, 타입 지정 직렬화기 회귀 테스트)")
+    void cache_roundTripsThroughRedisWithTypedSerializer() {
+        // ClassificationReuseLookup 을 직접 불러 1단 캐시 카운터를 움직인다 — 1단이 비어 있으므로
+        // 무조건 miss 다. 여기서 재려는 것은 hit/miss 비율의 정확성이 아니라, CacheStats 값이
+        // @Cacheable(stats:summary:cache) 를 거쳐 Redis 에 직렬화·역직렬화까지 되는가다.
+        reuseLookup.find(UUID.randomUUID().toString());
+
+        StatsService.CacheStats cache = statsService.cache();
+
+        assertThat(cache.misses()).isGreaterThanOrEqualTo(1);
+        assertThat(cache.hitRate()).isBetween(0.0, 1.0);
     }
 }

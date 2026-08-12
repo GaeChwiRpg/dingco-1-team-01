@@ -80,9 +80,11 @@ class SecurityConfigTest {
         item.resolve(1L, Instant.now());
         given(reviewService.confirm(any(), anyLong(), any())).willReturn(item);
         // GET /api/policies 매핑표 케이스(role=MANAGER → 200)도 역할 필터링만 잰다 — 값 자체는
-        // PoliciesControllerTest 소관이라 임의의 유효값만 채운다.
+        // PoliciesControllerTest 소관이라 임의의 유효값만 채운다. 재사용 스위치는 역할 필터링과
+        // 무관하다 — null 을 주면 「켜짐」이 채워진다 (D-062).
         given(policiesService.current()).willReturn(
-                new ClassificationProperties(new BigDecimal("0.8"), new ClassificationProperties.Audit(new BigDecimal("0.05"))));
+                new ClassificationProperties(
+                        new BigDecimal("0.8"), new ClassificationProperties.Audit(new BigDecimal("0.05")), null));
     }
 
     @ParameterizedTest(name = "{0} {1} — role={2} → {3}")

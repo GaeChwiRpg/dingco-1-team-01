@@ -1,4 +1,4 @@
-# API-CONTRACT v1.6
+# API-CONTRACT v1.7
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -9,6 +9,7 @@
 > **v1.4 는 공용 예외 처리 지점 구현 반영(TRI-29)** — 공통 오류 표에 500(`INTERNAL_ERROR`) 추가.
 > **v1.5 는 값 검증 4종 구현 반영(TRI-49·50)** — §3 `model` 예시를 D-024 확정값(`claude-sonnet-5`)으로 정정, 실패 사유 5종은 로그로만 남음을 명시.
 > **v1.6 은 통계·정책 조회 구현 반영(TRI-67·68·69 완료)** — §7 `backlog`·`classification`·`aiCallSavings`·`audit`(autoAccepted/reused 분리 + 신뢰도 구간별 집계) 이 실제로 나가기 시작함을, §6 `threshold`·`audit.sampleRate` 가 실제로 나가기 시작함을 명시. `cache` 만 아직 TRI-53 이 없어 남는다.
+> **v1.7 은 재사용 on/off 스위치 노출(D-062)** — §6 `GET /api/policies` 에 `reuse.enabled` 추가. 측정 1·8ⓐ-1(재사용 없이 잰 오분류율) 이 어느 조건에서 나온 것인지 화면에서 확인할 수 있다. 기동 시 고정, 실행 중 변경 API 없음 — `threshold`·`audit.sampleRate` 와 같은 이유(D-028).
 
 ## 형식 원칙
 
@@ -357,7 +358,7 @@ X-User-Role: AGENT
 
 > **판정 설정 조회** (`ROLE_MANAGER`). Phase 2 는 **읽기 전용**이다.
 
-> **현재 구현 상태 (TRI-69)**: `threshold`·`audit.sampleRate` 모두 실제로 나간다.
+> **현재 구현 상태 (TRI-69)**: `threshold`·`audit.sampleRate`·`reuse.enabled` 모두 실제로 나간다.
 
 **응답**: `200 OK`
 
@@ -366,16 +367,20 @@ X-User-Role: AGENT
   "threshold": 0.8,
   "audit": {
     "sampleRate": 0.05
+  },
+  "reuse": {
+    "enabled": true
   }
 }
 ```
 
-**Phase 2 에서 읽기 전용인 이유 (D-028)** — 출처는 `application.yml` (`classification.threshold`, `classification.audit.sample-rate`) 이고 변경은 재기동을 동반한다.
+**Phase 2 에서 읽기 전용인 이유 (D-028)** — 출처는 `application.yml` (`classification.threshold`, `classification.audit.sample-rate`, `classification.reuse.enabled`) 이고 변경은 재기동을 동반한다.
 
 | 필드 | 의미 | 왜 읽기 전용인가 |
 | --- | --- | --- |
 | `threshold` | 자동 확정 기준 신뢰도 (0.8) | 판정 기준이 실행 중에 바뀌면 측정 1·8 의 결과가 어느 기준에서 나온 것인지 사후에 구분되지 않는다 |
 | `audit.sampleRate` | 자동 확정 건 중 감사 표본 추출 비율 (0.05) | **측정 8 의 모집단을 정하는 값**이다. 실행 중 변경을 허용하면 `GET /api/stats` 의 `actualSampleRate` 괴리가 "표본 누락"인지 "설정 변경"인지 갈리지 않아, 감사 장치를 감사하려던 D-012 의 목적이 무너진다 |
+| `reuse.enabled` | 재사용(1단 캐시·2단 DB) on/off. 기본 `true` (D-062) | **측정 1·8ⓐ-1 은 재사용을 끈 상태에서 재는 값**이다. 실행 중 변경을 허용하면 `threshold`·`audit.sampleRate` 와 같은 이유로 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다. 껐다 켜도 캐시에 넣는 것(②)은 계속되고 **조회만** 건너뛴다 |
 
 > **카테고리별 임계값(`policies` 배열)과 `PATCH /api/policies/{category}` 는 삭제됐다.** 팀 스코프 조정으로 D-006 이 폐기되면서 `classification_policy` 테이블과 함께 사라졌다 (D-031). Phase 3 항목 B·C.
 >
@@ -389,39 +394,20 @@ X-User-Role: AGENT
 
 > 운영 통계 (`ROLE_MANAGER`). 적체 · 분류 성공률 · **감사 결과**. TTL 10s 캐시.
 
-> **현재 구현 상태 (TRI-72 · TRI-67 · TRI-68)**
->
-> 아래 JSON 예시는 나중에 다 완성됐을 때의 모습이다. **지금은 그중 일부만 실제로 나간다.**
->
-> **지금 실제로 나가는 것**
->
-> - `backlog` — 검토 큐에 아직 처리 못 한 건이 몇 개인지
-> - `classification` — 판정이 자동확정/검토대기/실패로 각각 몇 건씩 나왔는지, 자동확정 비율
-> - `aiCallSavings` — 문의를 몇 건 받았는지, 그중 실제로 AI를 부른 건 몇 건인지, 그래서 절감률이
->   얼마인지
-> - `audit` — 감사로 뽑혀서 사람이 다시 확인한 건 중, AI 답과 사람 답이 몇 건 맞고 몇 건 틀렸는지
->
-> **아직 안 나가는 것 — `cache` 하나뿐**
->
-> Redis 캐시 자체(넣고 꺼내는 코드)는 이미 만들어져 있다. 근데 실제 분류 과정에서 **그 캐시를
-> 찾아보는 코드가 아직 없다**(TRI-53, 김준현 담당, 아직 시작 전). 찾아보는 코드가 없으니 "찾아봤더니
-> 있었다/없었다"를 셀 수가 없다. TRI-53이 끝나면 그때 이 블록을 추가한다.
->
-> **참고 — `aiCallSavings`·`audit` 수치가 현재 낮은 이유**
->
-> 계산 로직은 정상이다. 현재 캐시(TRI-53)가 아직 적용되지 않아 같은 문의도 매번 AI 를 호출하므로,
-> 지금은 AI 호출 절감 효과가 거의 나타나지 않는다.
->
-> TRI-53 완료 후에는 기존 계산 로직을 그대로 사용해 실제 절감 수치가 반영된다.
->
-> 아직 구현하지 않은 기능은 `0`이나 빈 값으로 표시하지 않고, 아예 제외한다.
+> **현재 구현 상태 (TRI-72 · TRI-67 · TRI-68)**: `backlog`·`classification`·`aiCallSavings`·
+> `cache`·`audit` 다섯 블록 모두 실제로 나간다.
 >
 > **"TTL 10s 캐시"가 안 걸리는 값이 하나 있다.** `classification` 블록 안의 `stuckReceived` 는
 > 캐시를 안 거치고 요청마다 새로 계산한다 — 같은 블록 안의 나머지 필드(`inquiriesTotal` 등)는
 > 최대 10초 지난 값일 수 있는데 `stuckReceived` 만 항상 지금 시각 기준이다. 유실 의심 건수라
 > 지연 표시가 없어야 해서다(D-017).
+>
+> **`cache` 는 애플리케이션 기동 이후 누적값이다.** Redis 가 재시작돼 캐시 내용이 비어도 이 숫자는
+> 그대로다 — 반대로 앱을 재기동하면 0 부터 다시 센다. `hitRate` 는 1단(Redis) 만의 결과라 항상
+> `aiCallSavings.savingsRate` 이하다(D-014) — 캐시가 miss 여도 2단(DB)에서 재사용되면 AI 는
+> 안 불린다.
 
-**응답**: `200 OK` (`cache` 는 아직 없음 — 위 「현재 구현 상태」 참조)
+**응답**: `200 OK`
 
 ```json
 {

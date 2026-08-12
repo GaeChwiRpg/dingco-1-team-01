@@ -14,9 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
  * ({@code ReviewQueueController} 와 같은 방식).
  *
  * <p><b>지금 상태 — {@code classification} · {@code backlog} · {@code aiCallSavings} ·
- * {@code audit} 을 내보낸다.</b> 계약 §7 의 {@code cache} 블록은 아직 없다 — 이유는
- * {@link StatsService} 의 클래스 javadoc 참조. 도메인 객체를 그대로 반환하지 않고
- * {@link StatsResponse} 로 변환한다 (3계층 분리).
+ * {@code cache} · {@code audit} 계약 §7 다섯 블록을 모두 내보낸다.</b> 도메인 객체를 그대로
+ * 반환하지 않고 {@link StatsResponse} 로 변환한다 (3계층 분리).
  */
 @RestController
 @RequestMapping("/api/stats")
@@ -35,6 +34,7 @@ public class StatsController {
                 statsService.backlog(),
                 statsService.classification(),
                 statsService.aiCallSavings(),
+                statsService.cache(),
                 statsService.audit());
     }
 }

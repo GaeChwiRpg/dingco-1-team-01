@@ -36,15 +36,17 @@ class PoliciesControllerTest {
     private PoliciesService policiesService;
 
     @Test
-    @DisplayName("threshold·audit.sampleRate 를 계약 구조 그대로 응답한다")
+    @DisplayName("threshold·audit.sampleRate·reuse.enabled 를 계약 구조 그대로 응답한다")
     void returnsThresholdAndAuditSampleRateUnderContractShape() throws Exception {
-        given(policiesService.current()).willReturn(
-                new ClassificationProperties(new BigDecimal("0.8"), new Audit(new BigDecimal("0.05"))));
+        given(policiesService.current()).willReturn(new ClassificationProperties(
+                new BigDecimal("0.8"), new Audit(new BigDecimal("0.05")),
+                new ClassificationProperties.Reuse(true)));
 
         mockMvc.perform(get("/api/policies")
                         .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.threshold").value(0.8))
-                .andExpect(jsonPath("$.audit.sampleRate").value(0.05));
+                .andExpect(jsonPath("$.audit.sampleRate").value(0.05))
+                .andExpect(jsonPath("$.reuse.enabled").value(true));
     }
 }

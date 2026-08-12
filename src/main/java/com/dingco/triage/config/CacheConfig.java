@@ -21,10 +21,10 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  * 표현이 안 된다. 여기는 반대로 "그냥 계산 결과를 몇 초 담아뒀다 재사용" 하는 단순한 캐시라
  * {@code @Cacheable} 로 충분하다 — 같은 Redis 서버를 다른 방식으로 쓸 뿐 서로 간섭하지 않는다.
  *
- * <p><b>{@code stats:summary:*} 4개를 10초 TTL 로 등록한다</b> (CLAUDE.md 캐시 전략) — 계약 §7 의
- * {@code backlog}·{@code classification}·{@code aiCallSavings}·{@code audit} 블록 하나당 캐시
- * 이름 하나다 (TRI-67 · TRI-68). 다른 캐시 이름이 필요해지면 {@code withCacheConfiguration} 을
- * 추가한다 — 지금 없는 것을 미리 만들지 않는다.
+ * <p><b>{@code stats:summary:*} 5개를 10초 TTL 로 등록한다</b> (CLAUDE.md 캐시 전략) — 계약 §7 의
+ * {@code backlog}·{@code classification}·{@code aiCallSavings}·{@code cache}·{@code audit} 블록
+ * 하나당 캐시 이름 하나다 (TRI-67 · TRI-68). 다른 캐시 이름이 필요해지면 {@code withCacheConfiguration}
+ * 을 추가한다 — 지금 없는 것을 미리 만들지 않는다.
  *
  * <p><b>값은 JSON 으로 담는다</b> — {@code RedisConfig}(TRI-40)와 같은 이유다. 기본값(JDK 직렬화)은
  * 불투명한 바이트라 {@code redis-cli} 로 캐시된 통계를 확인할 수 없다. 스프링이 이미 구성한
@@ -70,6 +70,7 @@ public class CacheConfig {
     static final String BACKLOG_CACHE = "stats:summary:backlog";
     static final String CLASSIFICATION_CACHE = "stats:summary:classification";
     static final String AI_CALL_SAVINGS_CACHE = "stats:summary:aiCallSavings";
+    static final String CACHE_CACHE = "stats:summary:cache";
     static final String AUDIT_CACHE = "stats:summary:audit";
 
     @Bean
@@ -82,6 +83,7 @@ public class CacheConfig {
                         CLASSIFICATION_CACHE, typedConfig(cacheObjectMapper, StatsService.Classification.class))
                 .withCacheConfiguration(
                         AI_CALL_SAVINGS_CACHE, typedConfig(cacheObjectMapper, StatsService.AiCallSavings.class))
+                .withCacheConfiguration(CACHE_CACHE, typedConfig(cacheObjectMapper, StatsService.CacheStats.class))
                 .withCacheConfiguration(AUDIT_CACHE, typedConfig(cacheObjectMapper, StatsService.Audit.class))
                 .build();
     }

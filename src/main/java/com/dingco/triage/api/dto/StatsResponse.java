@@ -9,16 +9,10 @@ import java.util.Map;
 /**
  * {@code GET /api/stats}에서 반환하는 운영 통계 데이터.
  *
- * <p><b>지금 상태 — {@code cache} 블록만 없다 (TRI-72 · TRI-67 · TRI-68).</b> 아직 안 만든
- * 블록을 {@code 0} 이나 빈 객체로 채워 "있는 것처럼" 보이게 하지 않는다 — 없는 필드는 응답에
- * 아예 나타나지 않는다 (CLAUDE.md "안 만든 것을 만든 것처럼 쓰지 않는다").
- *
- * <p>지금 정한 응답 모양({@code classification} 을 객체 하나로 묶는 것 등)은 앞으로도 그대로
- * 지킨다. 나중에 {@code cache} 가 붙어도 다른 블록의 자리는 안 바뀌므로, 이 값을 읽는 쪽 코드도
- * 다시 고칠 필요가 없다.
+ * <p><b>지금 상태 — 계약 §7 다섯 블록이 모두 나간다 (TRI-72 · TRI-67 · TRI-68).</b>
  */
 public record StatsResponse(
-        Classification classification, Backlog backlog, AiCallSavings aiCallSavings, Audit audit) {
+        Classification classification, Backlog backlog, AiCallSavings aiCallSavings, Cache cache, Audit audit) {
 
     /**
      * 계약 §7 의 {@code classification} 블록 (TRI-68 · TRI-72). {@code autoAccepted} 는
@@ -51,6 +45,14 @@ public record StatsResponse(
     }
 
     /**
+     * 계약 §7 의 {@code cache} 블록 (TRI-68 · D-014). {@code hitRate} 는 1단(Redis) 만의 결과라
+     * 항상 {@code aiCallSavings.savingsRate} 이하다 — 캐시 miss 여도 2단(DB)에서 재사용되면
+     * AI 는 안 불린다.
+     */
+    public record Cache(double hitRate, long hits, long misses) {
+    }
+
+    /**
      * 계약 §7 의 {@code audit} 블록 (TRI-68 · D-033). {@code autoAccepted} 와 {@code reused} 를
      * 합치지 않는다 — {@code reused} 에는 비교할 AI 답이 없다.
      */
@@ -79,12 +81,13 @@ public record StatsResponse(
      * @param backlog 검토 큐 적체 정보
      * @param classification 판정 집계 정보
      * @param aiCallSavings AI 호출 절감 정보
+     * @param cache 1단 캐시 hit/miss 정보
      * @param audit 감사 대조 정보
      * @return API에서 반환할 통계 응답
      */
     public static StatsResponse of(long stuckReceived, StatsService.Backlog backlog,
             StatsService.Classification classification, StatsService.AiCallSavings aiCallSavings,
-            StatsService.Audit audit) {
+            StatsService.CacheStats cache, StatsService.Audit audit) {
         return new StatsResponse(
                 new Classification(
                         classification.inquiriesTotal(),
@@ -96,6 +99,7 @@ public record StatsResponse(
                 new Backlog(backlog.total(), backlog.byReason(), backlog.oldestPendingAt()),
                 new AiCallSavings(
                         aiCallSavings.inquiriesReceived(), aiCallSavings.aiCallsMade(), aiCallSavings.savingsRate()),
+                new Cache(cache.hitRate(), cache.hits(), cache.misses()),
                 new Audit(
                         audit.configuredSampleRate(),
                         toAutoAccepted(audit.autoAccepted()),

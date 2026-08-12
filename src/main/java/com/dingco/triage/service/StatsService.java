@@ -32,10 +32,7 @@ import org.springframework.stereotype.Service;
  * 운영 통계 (계약 §7, {@code GET /api/stats}).
  *
  * <p><b>지금 상태 — {@code stuckReceived} · {@code backlog} · {@code classification} ·
- * {@code aiCallSavings} · {@code audit} 을 산출한다 (TRI-72 · TRI-67 · TRI-68).</b> 계약 §7 의
- * {@code cache} 블록만 아직 없다 — 1단(Redis) 캐시 자체는 있지만, 그 캐시를 실제로 찾아보는
- * 코드가 아직 어디에도 없어서(TRI-53) hit/miss 를 셀 지점이 없다. 여기서 없는 값을 지어내지 않는다
- * (CLAUDE.md "안 만든 것을 만든 것처럼 쓰지 않는다" · "본인 실측만").
+ * {@code aiCallSavings} · {@code cache} · {@code audit} 을 산출한다 (TRI-72 · TRI-67 · TRI-68).</b>
  *
  * <p><b>{@code @Transactional} 을 붙이지 않는다.</b> 단일 read 는 트랜잭션 경계의 이득보다 비용이
  * 크다 (CLAUDE.md {@code @Transactional} 위치 규칙). 묶음 read+write 인 ①②③ 세 메서드에만 붙는다.
@@ -53,6 +50,7 @@ public class StatsService {
     public static final String BACKLOG_CACHE = "stats:summary:backlog";
     public static final String CLASSIFICATION_CACHE = "stats:summary:classification";
     public static final String AI_CALL_SAVINGS_CACHE = "stats:summary:aiCallSavings";
+    public static final String CACHE_CACHE = "stats:summary:cache";
     public static final String AUDIT_CACHE = "stats:summary:audit";
 
     private final InquiryRepository inquiryRepository;
@@ -60,6 +58,7 @@ public class StatsService {
     private final InquiryClassificationResultRepository resultRepository;
     private final MonitoringProperties monitoringProperties;
     private final ClassificationProperties classificationProperties;
+    private final ClassificationReuseLookup reuseLookup;
     private final CacheManager cacheManager;
     private final Clock clock;
 
@@ -144,6 +143,27 @@ public class StatsService {
         long aiCallsMade = total - reused;
         double savingsRate = rate(inquiriesReceived - aiCallsMade, inquiriesReceived);
         return new AiCallSavings(inquiriesReceived, aiCallsMade, savingsRate);
+    }
+
+    /**
+     * 1단(Redis) 캐시 hit/miss — 계약 §7 {@code cache} 블록 (TRI-68 · D-014).
+     *
+     * <p><b>{@code aiCallSavings} 와 별개 지표다.</b> 캐시가 줄이는 것은 DB 조회이고, AI 호출을
+     * 줄이는 것은 2단 절감 경로 전체다 — 캐시가 miss 여도 2단(DB)에 같은 정규화 키의 지난 결과가
+     * 있으면 AI 는 안 불린다. 그래서 {@code hitRate} 는 항상 {@code aiCallSavings.savingsRate}
+     * 이하다(D-014).
+     *
+     * <p>DB 를 조회하지 않는다 — {@link ClassificationReuseLookup} 이 실제 조회 시점에 이미 센
+     * <b>인메모리 누적값</b>을 그대로 읽는다. 그래서 여기 값은 <b>애플리케이션 기동 이후 누적</b>이고,
+     * Redis 가 재시작돼 캐시 내용이 비어도 이 숫자는 그대로다 — 반대로 <b>앱을 재기동하면 0 부터
+     * 다시 센다.</b>
+     */
+    @Cacheable(CACHE_CACHE)
+    public CacheStats cache() {
+        long hits = reuseLookup.cacheHitCount();
+        long misses = reuseLookup.cacheMissCount();
+        long total = hits + misses;
+        return new CacheStats(rate(hits, total), hits, misses);
     }
 
     /**
@@ -284,7 +304,8 @@ public class StatsService {
      */
     public void evictSummary() {
         try {
-            for (String cacheName : List.of(BACKLOG_CACHE, CLASSIFICATION_CACHE, AI_CALL_SAVINGS_CACHE, AUDIT_CACHE)) {
+            for (String cacheName
+                    : List.of(BACKLOG_CACHE, CLASSIFICATION_CACHE, AI_CALL_SAVINGS_CACHE, CACHE_CACHE, AUDIT_CACHE)) {
                 Cache cache = cacheManager.getCache(cacheName);
                 if (cache != null) {
                     cache.clear();
@@ -318,6 +339,14 @@ public class StatsService {
      * {@code 1 - aiCallsMade / inquiriesReceived} — 캐시 {@code hitRate}(D-014) 와는 다른 지표다.
      */
     public record AiCallSavings(long inquiriesReceived, long aiCallsMade, double savingsRate) {
+    }
+
+    /**
+     * 계약 §7 {@code cache} 블록의 값 구조. {@code hitRate} 는 1단(Redis) 만의 결과라 항상
+     * {@link AiCallSavings#savingsRate} 이하다(D-014) — 클래스 이름을
+     * {@code org.springframework.cache.Cache} 와 겹치지 않게 {@code CacheStats} 로 둔다.
+     */
+    public record CacheStats(double hitRate, long hits, long misses) {
     }
 
     /**
