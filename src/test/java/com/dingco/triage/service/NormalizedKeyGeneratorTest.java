@@ -15,6 +15,10 @@ import org.junit.jupiter.api.Test;
  *   <li><b>과소 병합</b> — 같은 문의가 다른 키가 된다. 절감이 안 난다
  * </ul>
  *
+ * <p><b>알려진 한계 (TRI-43)</b>: 단어 사이 띄어쓰기는 아직 접지 않아 {@code "환불해 주세요"} 와
+ * {@code "환불해주세요"} 가 다른 키가 된다(과소 병합). {@link #wordInternalSpacingIsKnownUnderMerge}
+ * 가 이를 트립와이어로 못박는다 — 조여서 고치려면 <b>과도 병합부터</b> 확인한다(D-031 재평가).
+ *
  * <p>DB·스프링 없이 {@code new} 로 조립한다 — 실제 협력자({@link ContentMasker})를 그대로
  * 넣어야 "두 경로가 같은 마스킹을 쓴다"는 계약까지 함께 검증된다.
  */
@@ -100,6 +104,20 @@ class NormalizedKeyGeneratorTest {
                 .isNotEqualTo(generator.generate(literalToken));
     }
 
+    @Test
+    @DisplayName("과도 병합 방지 — 토큰이 거의 겹쳐도 뜻이 반대면 다른 키다 (TRI-43)")
+    void nearlyOverlappingButOppositeMeaningDifferentKey() {
+        // differentMeaningDifferentKey 의 날카로운 판 — '배송 vs 환불' 처럼 낱말이 통째로 다른 게
+        // 아니라, '환불' 을 공유하면서 요구가 정반대인 쌍이다("해달라" vs "하지 마라"). 이런 근접
+        // 쌍이 같은 키가 되면 가장 위험한 과도 병합(틀린 분류의 조용한 재사용)이 난다.
+        String doRefund = "환불해주세요";
+        String dontRefund = "환불하지 마세요";
+
+        assertThat(generator.generate(doRefund))
+                .as("'환불' 을 공유해도 요구가 정반대면 다른 키여야 한다 — 근접 과도 병합")
+                .isNotEqualTo(generator.generate(dontRefund));
+    }
+
 
     @Test
     @DisplayName("대문자 입력도 같은 키로 접힌다 — 키 토큰 구별이 대소문자에 의존하지 않는다 (D-053, Claude 리뷰)")
@@ -127,6 +145,30 @@ class NormalizedKeyGeneratorTest {
         assertThat(generator.generate(ideographicSpace))
                 .as("전각 공백(U+3000)으로 띄운 같은 문의는 같은 키여야 한다")
                 .isEqualTo(key);
+    }
+
+    @Test
+    @DisplayName("과소 병합 — 단어 사이 띄어쓰기는 아직 접지 않는다 (알려진 gap · 조이려면 과도 병합 먼저, D-031 재평가)")
+    void wordInternalSpacingIsKnownUnderMerge() {
+        // ⚠️ 이건 '방지'가 아니라 '현재 한계'를 못박는 트립와이어다.
+        // 정리 정규식은 [\p{P}\p{Z}\s]+ 의 '연속'을 공백 하나로 접을 뿐, 단어 사이의 단일 공백
+        // (한국어 띄어쓰기)은 남긴다. 그래서 '환불해주세요' 와 '환불해 주세요' 는 다른 키가 된다 —
+        // 사람 눈엔 같은 문의인데 시스템은 다르게 본다(과소 병합). 헌법의 정규화 규칙도
+        // '연속 공백/문장부호 정리'라 이는 명세대로다(버그가 아니다).
+        //
+        // 지금 고치지 않는 이유: 공백을 전부 제거해 접으면 과소 병합은 줄지만, 서로 다른 문의가
+        // 한 키로 뭉치는 과도 병합 위험이 생긴다(더 위험한 방향). 정규화 강도는 측정 6 을 보고
+        // 조이기로 이미 정해져 있다(D-031 재평가). 조일 때는 '항상 과도 병합을 먼저 확인'한다.
+        //
+        // ⛓ 트립와이어: 훗날 띄어쓰기를 접도록 정규화를 조이면 이 단언이 깨진다. 그때 이 테스트를
+        //    고치기 전에 과도 병합 케이스부터 다시 돌려라 — 그게 이 테스트가 여기 있는 이유다.
+        String noSpace = "환불해주세요!!";
+        String withSpace = "환불해 주세요";
+
+        assertThat(generator.generate(noSpace))
+                .as("현재 정규화는 단어 사이 띄어쓰기를 접지 않는다 — 알려진 과소 병합. "
+                        + "이 단언이 깨지면(=접게 조였으면) 과도 병합 케이스부터 확인하라 (D-031 재평가)")
+                .isNotEqualTo(generator.generate(withSpace));
     }
 
     @Test

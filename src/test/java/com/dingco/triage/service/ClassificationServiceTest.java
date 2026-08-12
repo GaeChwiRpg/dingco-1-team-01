@@ -143,7 +143,11 @@ class ClassificationServiceTest {
                     .extracting(InquiryClassificationResult::getVerdict)
                     .isEqualTo(Verdict.AUTO_ACCEPTED);
 
-            // 자동 확정 건은 감사로 뽑힐 때만 큐에 들어간다 (TRI-64·65). 아직 그 경로가 없다.
+            // 자동 확정 건은 감사로 뽑힐 때만 큐에 들어간다 (TRI-64·65).
+            // 이 테스트가 보는 것은 「감사에 안 뽑히면 큐가 비어 있다」이고, 그래서
+            // application-test.yml 이 sample-rate 를 0 으로 둔다 — 안 그러면 이 줄이
+            // 5% 확률로 실패해서 무엇이 깨진 것인지 알 수 없게 된다.
+            // 뽑혔을 때의 동작은 ClassificationAuditSamplingIT 가 본다.
             assertThat(queueOf(inquiry)).isEmpty();
         }
 
