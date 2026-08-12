@@ -54,6 +54,12 @@ public class ClassificationService {
     private final ClassificationProperties properties;
 
     /**
+     * 자동 확정된 건을 감사로 뽑을지 정한다 (TRI-64). <b>판단만 저쪽이 하고, 넣는 것은 여기서</b>
+     * — 이 트랜잭션 안이어야 감사율이 설정값과 어긋나지 않는다 (D-012).
+     */
+    private final AuditSamplingPolicy auditSamplingPolicy;
+
+    /**
      * 판정 시각의 출처. 상태 전이 UPDATE 가 {@code updated_at} 을 직접 쓰기 때문에 필요하다 —
      * 벌크 UPDATE 는 auditing 을 타지 않는다 ({@code InquiryRepository} 참조).
      */
@@ -155,9 +161,14 @@ public class ClassificationService {
     /**
      * 검토 목록에 넣을지 정한다 (계약 B).
      *
-     * <p><b>{@code AUDIT_SAMPLE} 은 아직 안 넣는다.</b> 자동 확정된 건 중 5% 를 뽑는 판단은
-     * {@code AuditSamplingPolicy}(TRI-64)의 몫이고, 삽입은 <b>이 트랜잭션 안에서</b> 한다
-     * (TRI-65 · D-012). 밖으로 빼면 감사율이 설정값 미달이 되어 측정 8ⓐ 의 분모가 조용히 준다.
+     * <p><b>격리는 전건, 감사는 일부다.</b> 확신 못 한 건({@code NEEDS_REVIEW})과 못 읽은 건
+     * ({@code FAILED})은 하나도 빠짐없이 사람에게 가고, 자동으로 확정된 건은 <b>설정한 비율만큼만</b>
+     * 뽑아서 보낸다 (TRI-65 · D-005).
+     *
+     * <p><b>이 삽입은 반드시 이 트랜잭션 안에 있어야 한다 (D-012).</b> "부차적이니 나중에"라며
+     * 별도 스레드나 이벤트로 빼면 조용히 빠질 수 있고, 그러면 감사 건수가 설정값보다 줄어
+     * <b>오분류율의 분모가 조용히 작아진다.</b> 측정 8 이 이 프로젝트의 결론인데 그 분모를 믿을
+     * 수 없게 된다.
      *
      * <p>{@code switch} 가 exhaustive 라 판정이 늘면 여기서도 컴파일이 막힌다.
      */
@@ -165,8 +176,23 @@ public class ClassificationService {
         switch (verdict) {
             // 사유는 InquiryReviewQueueItem.from 이 verdict 로 정한다 — 여기서 고르지 않는다 (D-022)
             case NEEDS_REVIEW, FAILED -> queueRepository.save(InquiryReviewQueueItem.from(result));
+
+            // 자동으로 확정된 것은 주체가 사람이어도 감사한다 (D-033) — REUSED 가 여기 함께 있는
+            // 이유다. 재사용은 원본 하나가 틀리면 같은 내용의 문의가 전부 틀리는데, "사람이 정했다"는
+            // 사실이 신뢰의 근거가 되어 아무도 의심하지 않는다.
+            //
+            // ⚠️ 다만 REUSED 는 아직 이 경로로 오지 않는다. 리스너에 재사용 조회(1단 캐시·2단 DB)가
+            // 없어서 그 판정이 만들어지지 않고, newResult 가 REUSED 를 예외로 막고 있다.
+            // 여기 미리 적어둔 것은 배선할 때(TRI-47 잔여 · TRI-53) "감사는 이미 준비됐다"를
+            // 알리기 위해서다 — 지금 이 가지는 실행되지 않으므로 감사 테스트도 AUTO_ACCEPTED 로만 한다.
             case AUTO_ACCEPTED, REUSED -> {
-                // TRI-64·65 에서 감사 표본 추출 + 삽입이 이 자리에 들어온다.
+                if (auditSamplingPolicy.shouldSample()) {
+                    queueRepository.save(InquiryReviewQueueItem.from(result));
+                    // 뽑힌 건을 로그로도 남긴다 — 측정 8ⓐ-2 를 검산할 때 DB 집계(TRI-66)와
+                    // 대조할 두 번째 근거가 된다. 한쪽만 있으면 어긋났을 때 어느 쪽이 틀렸는지 모른다.
+                    log.info("audit_sampled inquiryId={} resultId={} verdict={}",
+                            result.getInquiry().getId(), result.getId(), verdict);
+                }
             }
         }
     }
