@@ -13,7 +13,9 @@ import static org.mockito.Mockito.when;
 
 import com.dingco.triage.config.AsyncConfig;
 import com.dingco.triage.service.ClassificationService;
+import com.dingco.triage.service.ClassificationReuseLookup;
 import com.dingco.triage.service.ContentMasker;
+import com.dingco.triage.service.cache.CachedClassification;
 import com.dingco.triage.service.ai.AiCallException;
 import io.sentry.Sentry;
 import com.dingco.triage.service.ai.AiParsedClassification;
@@ -25,6 +27,7 @@ import com.dingco.triage.domain.type.InquiryCategory;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -62,6 +65,7 @@ class InquiryReceivedEventListenerTest {
     private static final String RAW_CONTENT = "주문번호 20260808-1234 환불해주세요";
     private static final String MASKED_CONTENT = "주문번호 [ORDER] 환불해주세요";
 
+    private ClassificationReuseLookup reuseLookup;
     private ContentMasker contentMasker;
     private RetryingAiClassifier retryingAiClassifier;
     private ClassificationService classificationService;
@@ -69,12 +73,16 @@ class InquiryReceivedEventListenerTest {
 
     @BeforeEach
     void setUp() {
+        reuseLookup = mock(ClassificationReuseLookup.class);
         contentMasker = mock(ContentMasker.class);
         retryingAiClassifier = mock(RetryingAiClassifier.class);
         classificationService = mock(ClassificationService.class);
         listener = new InquiryReceivedEventListener(
-                contentMasker, retryingAiClassifier, classificationService);
+                reuseLookup, contentMasker, retryingAiClassifier, classificationService);
 
+        // 기본은 「재사용할 답이 없음」 — 이 클래스의 기존 테스트들은 AI 호출 갈래를 본다.
+        // 재사용 갈래는 아래 Reuse 묶음에서 따로 채운다.
+        when(reuseLookup.find(any())).thenReturn(Optional.empty());
         when(contentMasker.mask(RAW_CONTENT)).thenReturn(MASKED_CONTENT);
     }
 
@@ -164,6 +172,51 @@ class InquiryReceivedEventListenerTest {
      *
      * <p>「막았다고 생각한 것이 안 막혀 있는」 상태를 만들지 않으려고 여기서 확인한다.
      */
+    @Nested
+    @DisplayName("같은 내용의 답이 이미 있으면")
+    class WhenReusable {
+
+        private final CachedClassification reusable =
+                CachedClassification.ofHuman(InquiryCategory.RETURN_REFUND, 77L);
+
+        @BeforeEach
+        void found() {
+            when(reuseLookup.find("normalized-key")).thenReturn(Optional.of(reusable));
+        }
+
+        @Test
+        @DisplayName("AI 를 부르지 않는다 — 이게 이 시스템이 AI 호출을 아끼는 유일한 경로다")
+        void doesNotCallAi() {
+            listener.onInquiryReceived(event());
+
+            verify(retryingAiClassifier, never()).classify(any(), any());
+        }
+
+        @Test
+        @DisplayName("찾은 답을 그대로 ②에 넘긴다 — 리스너가 바꾸지 않는다")
+        void handsReusableToTransactionTwo() {
+            listener.onInquiryReceived(event());
+
+            verify(classificationService).persistReuse(INQUIRY_ID, reusable);
+        }
+
+        @Test
+        @DisplayName("가리기도 건너뛴다 — 가리는 이유는 AI 로 내보내기 위해서인데 안 내보낸다")
+        void skipsMasking() {
+            listener.onInquiryReceived(event());
+
+            verify(contentMasker, never()).mask(any());
+        }
+
+        @Test
+        @DisplayName("AI 경로의 저장은 부르지 않는다 — 판정이 두 번 저장되면 안 된다")
+        void doesNotAlsoPersistAiResult() {
+            listener.onInquiryReceived(event());
+
+            verify(classificationService, never()).verifyAndPersist(any(), any(), any(), anyInt());
+        }
+    }
+
     @Nested
     @DisplayName("배선")
     class Wiring {

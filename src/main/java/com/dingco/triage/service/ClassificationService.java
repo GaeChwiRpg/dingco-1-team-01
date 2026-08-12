@@ -7,12 +7,19 @@ import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
 import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
+import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.InquiryStatus;
 import com.dingco.triage.domain.type.Verdict;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
+import com.dingco.triage.service.cache.CachedClassification;
+import com.dingco.triage.service.event.ClassificationPersistedEvent;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.function.Function;
+import org.springframework.context.ApplicationEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -67,6 +74,12 @@ public class ClassificationService {
     private final AuditSamplingPolicy auditSamplingPolicy;
 
     /**
+     * 캐시 넣기 신호를 던지는 자리 (TRI-53). <b>여기서 캐시를 직접 건드리지 않는다</b> — 넣기는
+     * 커밋 후여야 하고, 이 트랜잭션은 아직 안 끝났다.
+     */
+    private final ApplicationEventPublisher eventPublisher;
+
+    /**
      * 검토 목록이 바뀌면 적체 통계 캐시를 비운다 (TRI-67). <b>큐에 실제로 넣었을 때만</b> 부르고,
      * 그것도 커밋 후에 부른다 — 이유는 {@link #enqueue}.
      */
@@ -96,6 +109,64 @@ public class ClassificationService {
             AiRawResponse raw, int attemptCount) {
         // 값 검증을 통과한 것만 기준값과 비교한다 (D-034)
         Verdict verdict = decideVerdict(parsed);
+        Optional<Persisted> persisted = persist(inquiryId, verdict,
+                parsed.category(), parsed.confidence(),
+                inquiry -> newResult(verdict, inquiry, parsed, raw, attemptCount));
+
+        // 자동 확정된 것만 캐시에 담는다 — 이 행이 곧 원본이라 sourceResultId 는 자기 id 다.
+        // 확신 못 한 건·못 읽은 건은 아직 판정이 아니라 사람에게 넘긴 것이라 담지 않는다 (계약 C).
+        if (verdict == Verdict.AUTO_ACCEPTED) {
+            persisted.ifPresent(p -> publishCachePut(p, CachedClassification.ofAi(
+                    parsed.category(), parsed.confidence(), p.result().getId())));
+        }
+        return persisted.isPresent();
+    }
+
+    /**
+     * <b>재사용한 답을 저장한다 (트랜잭션 ②의 두 번째 입구, TRI-47).</b>
+     *
+     * <p>같은 키의 지난 답을 찾았을 때 온다 — AI 를 부르지 않은 경로다. 하는 일은 위와 <b>완전히
+     * 같고</b>(상태 전이 · 사본 갱신 · 결과 저장 · 감사 삽입) 판정만 {@code REUSED} 로 정해져 있다.
+     *
+     * <p><b>왜 {@code verifyAndPersist} 에 합치지 않았나</b> — 저쪽의 "verify" 는 <b>기준값 비교</b>다.
+     * 재사용은 이미 확정된 답을 쓰는 것이라 비교할 것이 없다. 한 메서드로 합치면 그 이름이
+     * 거짓이 되고, 파라미터도 「AI 결과 또는 재사용 결과」로 둘 중 하나만 채워지는 모양이 된다 —
+     * {@code AiParsedClassification} 이 D-022 를 막으려고 없앤 바로 그 모양이다.
+     *
+     * <p><b>{@code @Transactional} 이 네 번째로 붙은 자리다.</b> 헌법은 ①②③ 세 자리만 두라고 했는데,
+     * 이것은 <b>새 트랜잭션이 아니라 ②의 다른 입구</b>다 — 안쪽 로직({@link #persist})을 그대로
+     * 공유하고 상태 전이·감사 규칙도 같다. <b>근거는 D-063 에 있다</b> — PR 본문에만 적으면
+     * 시간이 지났을 때 코드와 함께 읽히지 않는다 (CodeRabbit 지적).
+     *
+     * @param reusable 재사용할 답. {@code sourceResultId} 는 <b>원본</b> 결과 id 다 — 재사용 행
+     *                 자신의 id 가 아니다. 그 보장은 조회 쪽이 한다 (체인 금지, D-033)
+     * @return 저장했으면 {@code true}. {@code false} 면 이미 처리된 문의다
+     */
+    @Transactional
+    public boolean persistReuse(Long inquiryId, CachedClassification reusable) {
+        Optional<Persisted> persisted = persist(inquiryId, Verdict.REUSED,
+                reusable.category(), reusable.confidence(),
+                inquiry -> newReusedResult(inquiry, reusable));
+
+        // ⚠️ 방금 만든 REUSED 행이 아니라 「받은 값 그대로」를 다시 넣는다 (D-042).
+        //
+        // 자기 id 를 넣으면 다음 문의가 이 행을 원본으로 삼고, 그 다음 문의가 또 그것을 삼아
+        // 체인이 길어진다 — 원본 하나가 틀렸을 때 어디까지 퍼졌는지 추적할 수 없게 된다.
+        // 2단 hit 이었으면 캐시에 없던 값이라 이 넣기로 1단이 채워지고, 1단 hit 이었으면
+        // 같은 값을 다시 쓰는 것이라 무해하다.
+        persisted.ifPresent(p -> publishCachePut(p, reusable));
+        return persisted.isPresent();
+    }
+
+    /**
+     * ②의 알맹이 — <b>두 입구가 공유하는 네 단계</b>.
+     *
+     * <p>판정 행을 무엇으로 만들지만 호출부가 정하고, 나머지는 여기서 같은 순서로 일어난다.
+     * 중복을 없애려는 것이 아니라 <b>두 경로가 어긋나지 않게</b> 하려는 것이다 — 한쪽에만
+     * 감사 삽입이 빠지면 재사용 건의 감사율이 조용히 0 이 된다 (D-033 · D-012).
+     */
+    private Optional<Persisted> persist(Long inquiryId, Verdict verdict, InquiryCategory category,
+            BigDecimal confidence, Function<Inquiry, InquiryClassificationResult> resultFactory) {
 
         // ── 1) 중복 실행 차단 + 상태 전이를 한 문장으로 (D-049)
         //
@@ -107,28 +178,54 @@ public class ClassificationService {
             // 조용히 삼키지 않는다 — 이 로그가 측정 2 에서 "신호가 두 번 왔다"를 세는 근거다.
             log.info("classification_skipped reason=already_processed inquiryId={} verdict={}",
                     inquiryId, verdict);
-            return false;
+            return Optional.empty();
         }
 
         // ── 2) 역정규화 사본 (D-011). 위 UPDATE 가 컨텍스트를 비웠으므로 여기서 읽는 것은 갱신본이다
+        //
+        // 사람 답을 재사용한 건은 confidence 가 null 이고, 그 null 을 그대로 복사한다 (D-039) —
+        // 사본은 요약이 아니라 사본이다.
         Inquiry inquiry = inquiryRepository.findByIdForClassification(inquiryId)
                 .orElseThrow(() -> new IllegalStateException(
                         "방금 갱신한 문의를 못 찾는다: inquiryId=" + inquiryId));
 
-        // 문의에 AI 가 매긴 카테고리와 확신도를 반영한다
-        inquiry.applyClassification(parsed.category(), parsed.confidence());
+        // 판정에서 나온 카테고리·확신도를 문의에 반영한다.
+        //
+        // ⚠️ AI 가 매긴 값이 아닐 수도 있다 — 재사용 경로로 오면 사람이 확정한 답이고,
+        // 그때는 confidence 가 null 이다. 그 null 을 그대로 복사한다 (D-039) — 사본은
+        // 요약이 아니라 사본이라, 원본이 비어 있으면 사본도 비어 있어야 한다.
+        inquiry.applyClassification(category, confidence);
 
         // ── 3) 판정 행 저장. category·confidence 를 넣을 자리가 팩토리마다 다르므로
         //       잘못된 조합(FAILED 인데 confidence 가 있는 등)이 문법적으로 안 만들어진다 (D-022)
-        InquiryClassificationResult result = resultRepository.save(
-                newResult(verdict, inquiry, parsed, raw, attemptCount));
+        InquiryClassificationResult result = resultRepository.save(resultFactory.apply(inquiry));
 
         // ── 4) 검토 목록 삽입. 사유는 verdict 가 정한다 (계약 B) — 호출부가 고르지 않는다
         enqueueIfNeeded(verdict, result);
 
-        log.debug("classification_persisted inquiryId={} verdict={} resultId={} attempt={}",
-                inquiryId, verdict, result.getId(), attemptCount);
-        return true;
+        log.debug("classification_persisted inquiryId={} verdict={} resultId={}",
+                inquiryId, verdict, result.getId());
+        return Optional.of(new Persisted(inquiry, result));
+    }
+
+    /**
+     * ②가 저장한 것 — 문의와 판정 행.
+     *
+     * <p>캐시에 넣으려면 <b>조회 키(문의 쪽)와 결과 id(판정 쪽)가 둘 다</b> 필요해서 함께 돌려준다.
+     * {@code boolean} 만 돌려주던 앞선 판으로는 호출부가 키를 다시 조회해야 했다.
+     */
+    private record Persisted(Inquiry inquiry, InquiryClassificationResult result) {
+    }
+
+    /**
+     * 캐시에 넣으라는 신호를 보낸다 — <b>전달은 커밋 후</b> (계약 C).
+     *
+     * <p>여기서 직접 캐시에 쓰지 않는 이유는 ②가 롤백될 수 있기 때문이다. 되돌아간 판정이
+     * 캐시에 남으면 <b>저장되지도 않은 답이 다음 문의로 재사용된다.</b>
+     */
+    private void publishCachePut(Persisted persisted, CachedClassification value) {
+        eventPublisher.publishEvent(new ClassificationPersistedEvent(
+                persisted.inquiry().getNormalizedKey(), value));
     }
 
     /**
@@ -178,10 +275,29 @@ public class ClassificationService {
                     inquiry, parsed.category(), parsed.confidence(), model, rawResponse, attemptCount);
             case FAILED -> InquiryClassificationResult.failed(
                     inquiry, model, rawResponse, attemptCount);
-            // 재사용은 AI 를 부르지 않는 경로라 이 메서드로 들어오지 않는다 (2단계 — TRI-40·41).
-            // 붙일 때 이 자리가 컴파일러에게 "여기도 정하라"고 말해준다.
+            // 재사용은 AI 를 부르지 않는 경로라 이 메서드로 들어오지 않는다.
+            // 만드는 자리는 newReusedResult 이고, 부르는 입구는 persistReuse 다.
             case REUSED -> throw new IllegalStateException(
-                    "재사용 판정은 이 경로가 만들지 않는다 — 2단 절감 경로(TRI-40·41)에서 붙인다");
+                    "재사용 판정은 이 경로가 만들지 않는다 — persistReuse 가 만든다");
+        };
+    }
+
+    /**
+     * 재사용 판정 행을 만든다 — <b>출처에 따라 팩토리가 갈린다</b> (D-033).
+     *
+     * <p>사람 답을 재사용하면 {@code confidence} 가 없고(사람은 확신도를 매기지 않는다), AI 답을
+     * 재사용하면 원본 값을 그대로 가져온다. 팩토리를 나눠 두었기 때문에 <b>사람 답에 확신도를
+     * 채워 넣는 실수가 문법적으로 불가능</b>하다.
+     *
+     * <p>{@code switch} 가 exhaustive 라 {@code CacheSource} 에 값이 늘면 여기가 컴파일 에러로
+     * 터진다 — 새 출처가 확신도를 어떻게 다룰지 아무도 안 정한 채 지나갈 수 없다.
+     */
+    private InquiryClassificationResult newReusedResult(Inquiry inquiry, CachedClassification reusable) {
+        return switch (reusable.source()) {
+            case HUMAN -> InquiryClassificationResult.reusedFromHuman(
+                    inquiry, reusable.category(), reusable.sourceResultId());
+            case AI -> InquiryClassificationResult.reusedFromAi(
+                    inquiry, reusable.category(), reusable.confidence(), reusable.sourceResultId());
         };
     }
 
@@ -251,6 +367,13 @@ public class ClassificationService {
      * 도메인 이벤트가 이미 있어 {@code ReviewConfirmedEventListener} 가 캐시 갱신과 함께 처리한다.
      * 여기(②)에는 그럴 이벤트가 없어 동기화를 직접 등록한다. <b>두 방식이 공존하는 것은 우연이
      * 아니라 이 차이 때문이다</b> — 없는 이벤트를 이 자리 하나 때문에 만들지 않는다.
+     *
+     * <p>⚠️ <b>TRI-53 으로 ②에도 이벤트가 생겼다</b> ({@code ClassificationPersistedEvent}).
+     * 그래도 이 자리를 그쪽으로 옮기지 않는 이유는 <b>나가는 조건이 다르기 때문</b>이다 —
+     * 그 이벤트는 <b>확정된 판정</b>({@code AUTO_ACCEPTED}·{@code REUSED})에만 나가는데, 통계
+     * 비우기는 <b>큐에 넣었을 때</b> 필요하다(확신 못 한 건 · 못 읽은 건 · 감사 표본). 겹치는
+     * 것은 감사 표본뿐이라, 조건이 다른 둘을 한 이벤트에 태우면 <b>한쪽이 조용히 틀린다.</b>
+     * 위 문단의 판단("없는 이벤트를 만들지 않는다")은 그대로 유효하다.
      */
     private void enqueue(InquiryClassificationResult result) {
         queueRepository.save(InquiryReviewQueueItem.from(result));
