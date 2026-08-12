@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.dingco.triage.config.ClassificationProperties;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
@@ -36,6 +37,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  *   <li><b>안 찾아도 되는데 찾는 것</b> — 1단이 답을 주면 DB 를 건드리면 안 된다. 그게 캐시가
  *       있는 이유다 (D-014 — 캐시가 줄이는 것은 DB 조회다)
  *   <li><b>캐시가 죽으면 분류가 통째로 멈추는 것</b> — 조회 실패는 miss 로 떨어져야 2단이 받는다
+ *   <li><b>재사용을 껐는데 반만 꺼지는 것</b> — 1단·2단이 <b>함께</b> 꺼져야 한다. 한쪽만 꺼지면
+ *       절감이 반만 남아 측정 1·8ⓐ-1 의 조건이 애매해진다 (TRI-90 · D-062)
  * </ol>
  *
  * <p><b>재현</b>: {@code ./gradlew test --tests '*ClassificationReuseLookupTest'} (DB·스프링 없이 돈다)
@@ -52,11 +55,20 @@ class ClassificationReuseLookupTest {
     void setUp() {
         cache = mock(ClassificationCache.class);
         resultRepository = mock(InquiryClassificationResultRepository.class);
-        lookup = new ClassificationReuseLookup(cache, resultRepository);
+        lookup = lookupWithReuse(true);
 
         when(cache.get(any())).thenReturn(Optional.empty());
         when(resultRepository.findLatestHumanConfirmed(any())).thenReturn(Optional.empty());
         when(resultRepository.findLatestAutoAccepted(any())).thenReturn(Optional.empty());
+    }
+
+    /** 기준값·감사 비율은 이 클래스와 무관하다 — 재사용 조회는 판정 전에 일어난다. */
+    private ClassificationReuseLookup lookupWithReuse(boolean enabled) {
+        ClassificationProperties properties = new ClassificationProperties(
+                new BigDecimal("0.8"),
+                new ClassificationProperties.Audit(new BigDecimal("0.05")),
+                new ClassificationProperties.Reuse(enabled));
+        return new ClassificationReuseLookup(cache, resultRepository, properties);
     }
 
     /** id 는 DB 가 채우는 값이라 테스트에서는 리플렉션으로 넣는다. */
@@ -156,6 +168,50 @@ class ClassificationReuseLookupTest {
 
             verify(resultRepository).findLatestHumanConfirmed(KEY);
             verify(resultRepository).findLatestAutoAccepted(KEY);
+        }
+    }
+
+    /**
+     * 측정 1·8ⓐ-1 을 잴 때 쓰는 스위치 (TRI-90 · D-062).
+     *
+     * <p><b>「찾을 게 있는데도 안 찾는다」를 확인한다.</b> 아무것도 없는 상태로 껐다 켜면 결과가
+     * 양쪽 다 비어 있어서 <b>스위치를 지워도 통과하는 테스트</b>가 된다 — 그래서 1단·2단 모두
+     * 답을 준비해 두고 그것을 지나치는지 본다.
+     */
+    @Nested
+    @DisplayName("재사용을 끄면")
+    class WhenDisabled {
+
+        @BeforeEach
+        void bothTiersHaveAnswers() {
+            lookup = lookupWithReuse(false);
+
+            when(cache.get(KEY)).thenReturn(Optional.of(
+                    CachedClassification.ofAi(InquiryCategory.DELIVERY, new BigDecimal("0.930"), 7L)));
+            when(resultRepository.findLatestHumanConfirmed(KEY)).thenReturn(
+                    Optional.of(resultWithId(41L, InquiryCategory.PAYMENT, new BigDecimal("0.900"),
+                            InquiryCategory.PAYMENT)));
+            when(resultRepository.findLatestAutoAccepted(KEY)).thenReturn(
+                    Optional.of(resultWithId(42L, InquiryCategory.PAYMENT, new BigDecimal("0.900"), null)));
+        }
+
+        @Test
+        @DisplayName("1단도 2단도 보지 않는다 — 둘 중 하나만 꺼지면 절감이 반만 남는다")
+        void looksAtNeitherTier() {
+            // 켜져 있었다면 1단에서 바로 답이 나왔을 상태다.
+            assertThat(lookup.find(KEY)).isEmpty();
+
+            verify(cache, never()).get(any());
+            verify(resultRepository, never()).findLatestHumanConfirmed(any());
+            verify(resultRepository, never()).findLatestAutoAccepted(any());
+        }
+
+        @Test
+        @DisplayName("도로 켜면 다시 찾는다 — 끄는 것이 데이터를 지우는 게 아니다")
+        void findsAgainWhenReEnabled() {
+            // 꺼진 동안에도 쓰기는 계속되므로(D-062 ⓓ) 켜는 순간 그대로 재사용된다.
+            // 이게 성립해야 측정 11 의 hit rate 를 「켠 뒤 구간」에서 읽을 수 있다.
+            assertThat(lookupWithReuse(true).find(KEY)).isPresent();
         }
     }
 }
