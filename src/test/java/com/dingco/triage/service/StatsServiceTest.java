@@ -203,14 +203,30 @@ class StatsServiceTest extends RedisContainerSupport {
     @Test
     @DisplayName("cache — 1단 hit/miss 를 Redis 에 실제로 담고 꺼낸다 (TRI-68, 타입 지정 직렬화기 회귀 테스트)")
     void cache_roundTripsThroughRedisWithTypedSerializer() {
+        // 절대값이 아니라 실행 전후 차이(delta)로 잰다. reuseLookup 의 hit/miss 카운터는
+        // Micrometer 카운터라 이 빈 인스턴스가 사는 동안 계속 누적되는데, @SpringBootTest 는
+        // 컨텍스트를 테스트 클래스 간에 캐싱해 재사용하므로 다른 테스트가 먼저 같은 카운터를
+        // 건드렸을 수 있다. 절대값으로 단언하면 실행 순서에 따라 깨지는 테스트가 된다.
+        //
+        // "before" 는 statsService.cache() 가 아니라 reuseLookup 의 카운터를 직접 읽는다 —
+        // cache() 는 @Cacheable 이라 미리 불러두면 그 호출이 캐시를 채워버려서, 뒤이은 호출이
+        // 재계산 없이 그 옛 값을 그대로 돌려준다.
+        long missesBefore = reuseLookup.cacheMissCount();
+        long hitsBefore = reuseLookup.cacheHitCount();
+
         // ClassificationReuseLookup 을 직접 불러 1단 캐시 카운터를 움직인다 — 1단이 비어 있으므로
-        // 무조건 miss 다. 여기서 재려는 것은 hit/miss 비율의 정확성이 아니라, CacheStats 값이
-        // @Cacheable(stats:summary:cache) 를 거쳐 Redis 에 직렬화·역직렬화까지 되는가다.
+        // 무조건 miss 다.
         reuseLookup.find(UUID.randomUUID().toString());
 
-        StatsService.CacheStats cache = statsService.cache();
+        StatsService.CacheStats written = statsService.cache();
+        assertThat(written.misses()).isEqualTo(missesBefore + 1);
+        assertThat(written.hits()).isEqualTo(hitsBefore);
+        assertThat(written.hitRate()).isBetween(0.0, 1.0);
 
-        assertThat(cache.misses()).isGreaterThanOrEqualTo(1);
-        assertThat(cache.hitRate()).isBetween(0.0, 1.0);
+        // 두 번째 호출은 재계산이 아니라 @Cacheable(stats:summary:cache) 를 거쳐 Redis 에서
+        // 읽어와 역직렬화한 값이어야 한다 — 첫 호출(쓰기)만 재면 CacheStats 역직렬화가 깨져도
+        // 이 테스트는 통과할 수 있다.
+        StatsService.CacheStats cache = statsService.cache();
+        assertThat(cache).isEqualTo(written);
     }
 }

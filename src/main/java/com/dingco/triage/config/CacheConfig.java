@@ -70,7 +70,7 @@ public class CacheConfig {
     static final String BACKLOG_CACHE = "stats:summary:backlog";
     static final String CLASSIFICATION_CACHE = "stats:summary:classification";
     static final String AI_CALL_SAVINGS_CACHE = "stats:summary:aiCallSavings";
-    static final String CACHE_CACHE = "stats:summary:cache";
+    static final String CACHE_STATS_CACHE = "stats:summary:cache";
     static final String AUDIT_CACHE = "stats:summary:audit";
 
     @Bean
@@ -83,7 +83,8 @@ public class CacheConfig {
                         CLASSIFICATION_CACHE, typedConfig(cacheObjectMapper, StatsService.Classification.class))
                 .withCacheConfiguration(
                         AI_CALL_SAVINGS_CACHE, typedConfig(cacheObjectMapper, StatsService.AiCallSavings.class))
-                .withCacheConfiguration(CACHE_CACHE, typedConfig(cacheObjectMapper, StatsService.CacheStats.class))
+                .withCacheConfiguration(
+                        CACHE_STATS_CACHE, typedConfig(cacheObjectMapper, StatsService.CacheStats.class))
                 .withCacheConfiguration(AUDIT_CACHE, typedConfig(cacheObjectMapper, StatsService.Audit.class))
                 .build();
     }

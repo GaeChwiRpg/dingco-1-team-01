@@ -1,4 +1,4 @@
-# API-CONTRACT v1.7
+# API-CONTRACT v1.8
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -10,6 +10,7 @@
 > **v1.5 는 값 검증 4종 구현 반영(TRI-49·50)** — §3 `model` 예시를 D-024 확정값(`claude-sonnet-5`)으로 정정, 실패 사유 5종은 로그로만 남음을 명시.
 > **v1.6 은 통계·정책 조회 구현 반영(TRI-67·68·69 완료)** — §7 `backlog`·`classification`·`aiCallSavings`·`audit`(autoAccepted/reused 분리 + 신뢰도 구간별 집계) 이 실제로 나가기 시작함을, §6 `threshold`·`audit.sampleRate` 가 실제로 나가기 시작함을 명시. `cache` 만 아직 TRI-53 이 없어 남는다.
 > **v1.7 은 재사용 on/off 스위치 노출(D-062)** — §6 `GET /api/policies` 에 `reuse.enabled` 추가. 측정 1·8ⓐ-1(재사용 없이 잰 오분류율) 이 어느 조건에서 나온 것인지 화면에서 확인할 수 있다. 기동 시 고정, 실행 중 변경 API 없음 — `threshold`·`audit.sampleRate` 와 같은 이유(D-028).
+> **v1.8 은 `audit` 블록 중복 구현 통합(TRI-66 · TRI-68)** — develop 에 독립적으로 먼저 올라가 있던 TRI-66(감사 실측 비율)을 TRI-68(완전판)로 흡수, `actualSampleRate` 의 `eligibleTotal=0` → `null` 처리 반영. §7 `cache.hitRate` 가 `aiCallSavings.savingsRate` 이하라는 서술이 항상 성립하는 보장이 아님을 정정(재기동 직후 두 값의 집계 기간이 어긋날 수 있음).
 
 ## 형식 원칙
 
@@ -411,9 +412,11 @@ X-User-Role: AGENT
 > 지연 표시가 없어야 해서다(D-017).
 >
 > **`cache` 는 애플리케이션 기동 이후 누적값이다.** Redis 가 재시작돼 캐시 내용이 비어도 이 숫자는
-> 그대로다 — 반대로 앱을 재기동하면 0 부터 다시 센다. `hitRate` 는 1단(Redis) 만의 결과라 항상
-> `aiCallSavings.savingsRate` 이하다(D-014) — 캐시가 miss 여도 2단(DB)에서 재사용되면 AI 는
-> 안 불린다.
+> 그대로다 — 반대로 앱을 재기동하면 0 부터 다시 센다. `hitRate` 는 1단(Redis) 만의 결과이고
+> `aiCallSavings.savingsRate` 는 DB 누적값이라(D-014), **둘의 집계 기간·모집단이 다르다.**
+> 앱을 오래 안 재기동한 정상 상태에서는 캐시가 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불리므로
+> `hitRate` 가 `savingsRate` 이하로 나오는 게 보통이지만, **재기동 직후처럼 두 값의 집계 기간이
+> 어긋나 있으면 이 관계가 깨질 수 있다** — 항상 성립하는 부등식으로 읽지 않는다.
 
 **응답**: `200 OK`
 
@@ -472,7 +475,7 @@ X-User-Role: AGENT
 >
 > `audit.autoAccepted.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". **여기 수치는 전부 형식 예시이며, 확정값은 본인 실측으로만 기록한다** (`CLAUDE.md` AI 검증 규칙).
 >
-> `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014, 근거는 D-031 이 교체): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 2단 경로 전체다.** 캐시 miss 여도 DB 에 같은 정규화 키의 이전 결과가 있으면 AI 를 부르지 않으므로 `hitRate < savingsRate` 가 정상이다. 한 객체 안에 두면 같은 현상의 두 표현으로 오독된다.
+> `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014, 근거는 D-031 이 교체): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 2단 경로 전체다.** 캐시 miss 여도 DB 에 같은 정규화 키의 이전 결과가 있으면 AI 를 부르지 않으므로 `hitRate` 가 `savingsRate` 이하로 나오는 게 보통이지만, `hitRate` 는 인메모리 누적(재기동마다 리셋)이고 `savingsRate` 는 DB 누적이라 집계 기간이 어긋나면(예: 재기동 직후) 이 관계가 깨질 수 있다 — 항상 성립하는 부등식은 아니다. 한 객체 안에 두면 이 차이가 같은 현상의 두 표현으로 오독된다.
 >
 > `aiCallSavings.aiCallsMade` 는 새 카운터 없이 판정 행에서 그대로 읽는다 — `verdict = REUSED` 만
 > AI 를 안 부른 경로이고(D-033), 나머지 세 판정(`AUTO_ACCEPTED`·`NEEDS_REVIEW`·`FAILED`)은 전부

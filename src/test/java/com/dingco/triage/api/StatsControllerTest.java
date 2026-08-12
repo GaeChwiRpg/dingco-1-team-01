@@ -1,5 +1,6 @@
 package com.dingco.triage.api;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -61,8 +62,8 @@ class StatsControllerTest {
     /** 빈 감사 대조 — 이 테스트가 {@code audit} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
     private static final Audit EMPTY_AUDIT = new Audit(
             0.0,
-            new AutoAcceptedAudit(0, 0, 0.0, 0, 0, 0.0, List.of()),
-            new VerdictAudit(0, 0, 0.0, 0, 0, 0.0));
+            new AutoAcceptedAudit(0, 0, null, 0, 0, 0.0, List.of()),
+            new VerdictAudit(0, 0, null, 0, 0, 0.0));
 
     /** 매 테스트가 반복해서 스텁하지 않도록 값이 없는 다섯 블록을 한 번에 건다. */
     private void stubEmptyStats() {
@@ -169,6 +170,18 @@ class StatsControllerTest {
                 .andExpect(jsonPath("$.audit.reused.misclassificationRate").value(0.067))
                 // reused 에는 byConfidenceBucket 이 없다 — 비교할 AI 확신도가 없다 (D-033).
                 .andExpect(jsonPath("$.audit.reused.byConfidenceBucket").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("audit — 모집단이 0 이면 actualSampleRate 는 0.0 이 아니라 JSON null 로 나간다 (TRI-66)")
+    void returnsNullActualSampleRateWhenNoEligiblePopulation() throws Exception {
+        stubEmptyStats();
+
+        mockMvc.perform(get("/api/stats")
+                        .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.audit.autoAccepted.actualSampleRate").value(nullValue()))
+                .andExpect(jsonPath("$.audit.reused.actualSampleRate").value(nullValue()));
     }
 
     @Test

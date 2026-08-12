@@ -50,7 +50,7 @@ public class StatsService {
     public static final String BACKLOG_CACHE = "stats:summary:backlog";
     public static final String CLASSIFICATION_CACHE = "stats:summary:classification";
     public static final String AI_CALL_SAVINGS_CACHE = "stats:summary:aiCallSavings";
-    public static final String CACHE_CACHE = "stats:summary:cache";
+    public static final String CACHE_STATS_CACHE = "stats:summary:cache";
     public static final String AUDIT_CACHE = "stats:summary:audit";
 
     private final InquiryRepository inquiryRepository;
@@ -111,7 +111,7 @@ public class StatsService {
                 + byVerdict.getOrDefault(Verdict.REUSED, 0L);
         long needsReview = byVerdict.getOrDefault(Verdict.NEEDS_REVIEW, 0L);
         long failed = byVerdict.getOrDefault(Verdict.FAILED, 0L);
-        long total = byVerdict.values().stream().mapToLong(Long::longValue).sum();
+        long total = totalOf(byVerdict);
         double autoAcceptRate = total == 0 ? 0.0 : (double) autoAccepted / total;
         return new Classification(total, autoAccepted, needsReview, failed, autoAcceptRate);
     }
@@ -121,7 +121,9 @@ public class StatsService {
      *
      * <p><b>이 값이 줄이는 것은 AI 호출이지 DB 조회가 아니다 (D-014).</b> {@code cache} 블록(1단
      * Redis hit)과 별개 지표인 이유가 이것이다 — 캐시가 miss 여도 2단(DB)에 같은 정규화 키의
-     * 지난 결과가 있으면 AI 를 부르지 않으므로, hit rate 는 항상 이 절감률 이하다.
+     * 지난 결과가 있으면 AI 를 부르지 않으므로, hit rate 는 보통 이 절감률 이하다. 다만 hit rate 는
+     * 인메모리 누적(재기동마다 리셋)이고 이 값은 DB 누적이라, 집계 기간이 어긋나면(재기동 직후 등)
+     * 이 관계가 깨질 수 있다 — 항상 성립하는 부등식은 아니다.
      *
      * <p><b>실제 AI 호출 건수는 새 카운터를 두지 않고 판정 행에서 그대로 읽는다.</b>
      * {@code verdict = REUSED} 만 AI 를 안 부른 경로다(D-033) — 나머지 세 판정
@@ -139,7 +141,7 @@ public class StatsService {
         long inquiriesReceived = inquiryRepository.countAll();
         Map<Verdict, Long> byVerdict = verdictCounts();
         long reused = byVerdict.getOrDefault(Verdict.REUSED, 0L);
-        long total = byVerdict.values().stream().mapToLong(Long::longValue).sum();
+        long total = totalOf(byVerdict);
         long aiCallsMade = total - reused;
         double savingsRate = rate(inquiriesReceived - aiCallsMade, inquiriesReceived);
         return new AiCallSavings(inquiriesReceived, aiCallsMade, savingsRate);
@@ -150,15 +152,17 @@ public class StatsService {
      *
      * <p><b>{@code aiCallSavings} 와 별개 지표다.</b> 캐시가 줄이는 것은 DB 조회이고, AI 호출을
      * 줄이는 것은 2단 절감 경로 전체다 — 캐시가 miss 여도 2단(DB)에 같은 정규화 키의 지난 결과가
-     * 있으면 AI 는 안 불린다. 그래서 {@code hitRate} 는 항상 {@code aiCallSavings.savingsRate}
-     * 이하다(D-014).
+     * 있으면 AI 는 안 불린다. 그래서 {@code hitRate} 는 보통 {@code aiCallSavings.savingsRate}
+     * 이하다(D-014). 다만 {@code hitRate} 는 인메모리 누적(재기동마다 리셋)이고 {@code savingsRate}
+     * 는 DB 누적이라, 집계 기간이 어긋나면(재기동 직후 등) 이 관계가 깨질 수 있다 — 항상 성립하는
+     * 부등식으로 가정하지 않는다.
      *
      * <p>DB 를 조회하지 않는다 — {@link ClassificationReuseLookup} 이 실제 조회 시점에 이미 센
      * <b>인메모리 누적값</b>을 그대로 읽는다. 그래서 여기 값은 <b>애플리케이션 기동 이후 누적</b>이고,
      * Redis 가 재시작돼 캐시 내용이 비어도 이 숫자는 그대로다 — 반대로 <b>앱을 재기동하면 0 부터
      * 다시 센다.</b>
      */
-    @Cacheable(CACHE_CACHE)
+    @Cacheable(CACHE_STATS_CACHE)
     public CacheStats cache() {
         long hits = reuseLookup.cacheHitCount();
         long misses = reuseLookup.cacheMissCount();
@@ -264,6 +268,11 @@ public class StatsService {
         return tenths.movePointLeft(1).setScale(1);
     }
 
+    /** {@code classification()}·{@code aiCallSavings()} 가 공유하는 "전체 판정 행 수" 합산. */
+    private static long totalOf(Map<Verdict, Long> byVerdict) {
+        return byVerdict.values().stream().mapToLong(Long::longValue).sum();
+    }
+
     private static double rate(long numerator, long denominator) {
         return denominator == 0 ? 0.0 : (double) numerator / denominator;
     }
@@ -315,7 +324,8 @@ public class StatsService {
     public void evictSummary() {
         try {
             for (String cacheName
-                    : List.of(BACKLOG_CACHE, CLASSIFICATION_CACHE, AI_CALL_SAVINGS_CACHE, CACHE_CACHE, AUDIT_CACHE)) {
+                    : List.of(
+                            BACKLOG_CACHE, CLASSIFICATION_CACHE, AI_CALL_SAVINGS_CACHE, CACHE_STATS_CACHE, AUDIT_CACHE)) {
                 Cache cache = cacheManager.getCache(cacheName);
                 if (cache != null) {
                     cache.clear();

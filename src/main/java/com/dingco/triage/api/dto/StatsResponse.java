@@ -45,9 +45,11 @@ public record StatsResponse(
     }
 
     /**
-     * 계약 §7 의 {@code cache} 블록 (TRI-68 · D-014). {@code hitRate} 는 1단(Redis) 만의 결과라
-     * 항상 {@code aiCallSavings.savingsRate} 이하다 — 캐시 miss 여도 2단(DB)에서 재사용되면
-     * AI 는 안 불린다.
+     * 계약 §7 의 {@code cache} 블록 (TRI-68 · D-014). {@code hitRate} 는 1단(Redis) 만의
+     * 결과라 캐시 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불리므로 {@code aiCallSavings.savingsRate}
+     * 이하로 나오는 게 보통이지만, {@code hitRate} 는 인메모리 누적(재기동마다 리셋)이고
+     * {@code savingsRate} 는 DB 누적이라 <b>집계 기간이 어긋나면(재기동 직후 등) 이 관계가
+     * 깨질 수 있다</b> — 항상 성립하는 부등식으로 가정하지 않는다.
      */
     public record Cache(double hitRate, long hits, long misses) {
     }
