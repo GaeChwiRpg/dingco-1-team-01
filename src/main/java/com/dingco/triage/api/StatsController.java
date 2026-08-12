@@ -13,10 +13,11 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code ROLE_MANAGER} 전용이다. 여기는 조회만 하고 권한을 다시 검사하지 않는다
  * ({@code ReviewQueueController} 와 같은 방식).
  *
- * <p><b>지금 상태 — {@code classification.stuckReceived} 와 {@code backlog} 를 내보낸다.</b>
- * 계약 §7 의 나머지 블록({@code aiCallSavings} · {@code cache} · {@code audit})은 각 측정
- * 소유자가 {@link StatsService} 에 증분으로 붙인다. 도메인 객체를 그대로 반환하지 않고
- * {@link StatsResponse} 로 변환한다 (3계층 분리).
+ * <p><b>지금 상태 — {@code classification.stuckReceived} · {@code backlog} · {@code audit} 의
+ * 감사율을 내보낸다</b> (TRI-66 이 세 번째를 붙였다). 계약 §7 의 나머지({@code aiCallSavings} ·
+ * {@code cache}, 그리고 {@code audit} 안의 오분류 집계)는 각 측정 소유자가 {@link StatsService} 에
+ * 증분으로 붙인다. 도메인 객체를 그대로 반환하지 않고 {@link StatsResponse} 로 변환한다
+ * (3계층 분리).
  */
 @RestController
 @RequestMapping("/api/stats")
@@ -30,6 +31,9 @@ public class StatsController {
 
     @GetMapping
     StatsResponse stats() {
-        return StatsResponse.of(statsService.stuckReceivedCount(), statsService.backlog());
+        return StatsResponse.of(
+                statsService.stuckReceivedCount(),
+                statsService.backlog(),
+                statsService.auditRates());
     }
 }

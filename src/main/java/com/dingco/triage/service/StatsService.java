@@ -1,14 +1,21 @@
 package com.dingco.triage.service;
 
+import com.dingco.triage.config.ClassificationProperties;
 import com.dingco.triage.config.MonitoringProperties;
+import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
+import com.dingco.triage.domain.repository.InquiryClassificationResultRepository.VerdictCount;
 import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository.ReasonCount;
 import com.dingco.triage.domain.type.QueueReason;
+import com.dingco.triage.domain.type.Verdict;
 import io.sentry.Sentry;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +48,9 @@ public class StatsService {
 
     private final InquiryRepository inquiryRepository;
     private final InquiryReviewQueueRepository queueRepository;
+    private final InquiryClassificationResultRepository resultRepository;
     private final MonitoringProperties monitoringProperties;
+    private final ClassificationProperties classificationProperties;
     private final CacheManager cacheManager;
     private final Clock clock;
 
@@ -116,10 +125,75 @@ public class StatsService {
     }
 
     /**
+     * 감사 장치 자체를 감사한다 — 설정한 비율만큼 실제로 뽑히고 있는지 (TRI-66 · D-012).
+     *
+     * <p>설정 비율({@code configuredSampleRate})과 실측 비율({@code actualSampleRate})을
+     * 나란히 두어 표본 삽입 누락을 감지한다. 자동 확정과 재사용을 따로 내며(D-033),
+     * {@code backlog}와 달리 캐시하지 않는다(D-042).
+     *
+     * <p>오분류 집계({@code reviewed}·{@code mismatched} 등)는 측정 8ⓐ의 몫이며,
+     * 이 메서드는 그 측정의 분모가 믿을 만한지만 답한다.
+     */
+    public AuditRates auditRates() {
+        Map<Verdict, Long> eligible = byVerdict(resultRepository.countAuditEligibleByVerdict());
+        Map<Verdict, Long> sampled = byVerdict(resultRepository.countAuditSampledByVerdict());
+        return new AuditRates(
+                classificationProperties.audit().sampleRate(),
+                sampling(eligible, sampled, Verdict.AUTO_ACCEPTED),
+                sampling(eligible, sampled, Verdict.REUSED));
+    }
+
+    /** 판정별 집계를 맵으로. 행이 없는 판정은 키가 없고, 그 "없음"은 {@link #sampling} 이 0 으로 읽는다. */
+    private Map<Verdict, Long> byVerdict(List<VerdictCount> counts) {
+        Map<Verdict, Long> byVerdict = new EnumMap<>(Verdict.class);
+        for (VerdictCount count : counts) {
+            byVerdict.put(count.getVerdict(), count.getCount());
+        }
+        return byVerdict;
+    }
+
+    /**
+     * 한 판정의 「뽑힐 수 있었던 수 · 뽑힌 수 · 실측 비율」.
+     *
+     * <p>모집단이 0 이면 비율을 {@code null} 로 둔다 — <b>{@code 0.0} 으로 채우지 않는다.</b>
+     * 0.0 은 "뽑힐 게 있었는데 하나도 안 뽑혔다"라는 뜻이고 그건 표본 누락의 신호인데, 아직
+     * 아무 건도 안 들어온 상태가 같은 얼굴로 보이면 <b>없는 장애를 보게 된다.</b> 확신도에
+     * {@code 0} 을 안 채우는 규칙(D-022)과 같은 층위다.
+     */
+    private Sampling sampling(Map<Verdict, Long> eligible, Map<Verdict, Long> sampled, Verdict verdict) {
+        long eligibleTotal = eligible.getOrDefault(verdict, 0L);
+        long sampledTotal = sampled.getOrDefault(verdict, 0L);
+        BigDecimal actualSampleRate = eligibleTotal == 0 ? null
+                : BigDecimal.valueOf(sampledTotal)
+                        .divide(BigDecimal.valueOf(eligibleTotal), 3, RoundingMode.HALF_UP);
+        return new Sampling(eligibleTotal, sampledTotal, actualSampleRate);
+    }
+
+    /**
      * 계약 §7 {@code backlog} 블록의 값 구조. {@code byReason} 에 없는 사유는 0건이라 키 자체가
      * 없다 — 0 으로 채워 넣지 않는다(CLAUDE.md "안 만든 것을 만든 것처럼 쓰지 않는다"와 같은 정신,
      * 여기서는 "일어나지 않은 것을 일어난 것처럼 채우지 않는다").
      */
     public record Backlog(long total, Map<QueueReason, Long> byReason, Instant oldestPendingAt) {
+    }
+
+    /**
+     * 계약 §7 {@code audit} 블록 중 <b>감사율</b> 부분의 값 구조 (TRI-66).
+     *
+     * <p>{@code configuredSampleRate} 를 두 블록 밖에 한 번만 둔다 — 설정값은 판정별로 다르지
+     * 않다. 안에 넣으면 <b>판정마다 다른 비율을 줄 수 있는 것처럼</b> 보이는데, 그것은 폐기된
+     * 카테고리별 차등(D-006)과 같은 오해를 부른다.
+     */
+    public record AuditRates(BigDecimal configuredSampleRate, Sampling autoAccepted, Sampling reused) {
+    }
+
+    /**
+     * 한 판정의 감사율. <b>비율만 두지 않고 분자·분모를 함께 낸다</b> — 비율은 소수 셋째 자리에서
+     * 반올림하므로 그것만으로는 검산이 안 되고, 무엇보다 <b>모집단이 몇 건인지 모르면 어긋남이
+     * 유의미한지 판단할 수 없다.</b> 20건에서 1건 차이와 2000건에서 1건 차이는 다른 이야기다.
+     *
+     * @param actualSampleRate 모집단이 0 이면 {@code null} — 이유는 {@code sampling} 참조
+     */
+    public record Sampling(long eligibleTotal, long sampledTotal, BigDecimal actualSampleRate) {
     }
 }
