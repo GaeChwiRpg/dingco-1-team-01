@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.service.ClassificationService;
+import com.dingco.triage.service.ClassificationReuseLookup;
 import com.dingco.triage.service.ContentMasker;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
@@ -103,8 +104,11 @@ class MaskingConsistencyIT {
         given(retryingAiClassifier.classify(anyLong(), anyString())).willReturn(new ClassifyAttempt(
                 AiParsedClassification.classified(InquiryCategory.RETURN_REFUND, new BigDecimal("0.900")),
                 new AiRawResponse("stub-model", "{}"), 1));
-        InquiryReceivedEventListener listener =
-                new InquiryReceivedEventListener(contentMasker, retryingAiClassifier, classificationService);
+        // 재사용할 답이 없어야 AI 갈래로 간다 — 이 테스트가 보는 것이 「AI 로 나가는 본문」이다 (TRI-47).
+        ClassificationReuseLookup reuseLookup = mock(ClassificationReuseLookup.class);
+        given(reuseLookup.find(anyString())).willReturn(java.util.Optional.empty());
+        InquiryReceivedEventListener listener = new InquiryReceivedEventListener(
+                reuseLookup, contentMasker, retryingAiClassifier, classificationService);
 
         listener.onInquiryReceived(new InquiryReceivedEvent(9_999L, "k-consistency", ORIGINAL));
 
