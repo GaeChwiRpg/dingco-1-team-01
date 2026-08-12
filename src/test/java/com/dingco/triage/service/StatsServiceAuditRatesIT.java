@@ -49,7 +49,10 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p><b>재현</b>: {@code ./gradlew test --tests '*StatsServiceAuditRatesIT'}
  */
-@SpringBootTest(properties = "classification.audit.sample-rate=0.05")
+@SpringBootTest(properties = {
+    "classification.audit.sample-rate=0.05",
+    "classification.threshold=0.80"
+})
 @ActiveProfiles("test")
 @Import(MySqlTestContainer.class)
 class StatsServiceAuditRatesIT {
@@ -100,6 +103,19 @@ class StatsServiceAuditRatesIT {
 
     private BigDecimal belowThreshold() {
         return properties.threshold().subtract(new BigDecimal("0.1")).max(BigDecimal.ZERO);
+    }
+
+    /**
+     * 큐에 그 사유로 몇 건 들어갔는지.
+     *
+     * <p><b>「큐에 있다」를 주석이 아니라 단언으로 만들려고 둔다.</b> 이 집계가 세는 것은 판정
+     * 테이블이지만, 격리 건을 빼는 근거는 <b>큐에 어떤 사유로 들어갔는가</b>다. 그 전제를
+     * 확인하지 않으면 <b>큐가 통째로 비어 있을 때도 「안 센다」가 참</b>이 되어버린다.
+     */
+    private int queueCountByReason(String reason) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM inquiry_review_queue WHERE reason = ?", Integer.class, reason);
+        return count == null ? 0 : count;
     }
 
     /** 자동 확정 한 건 (AI 가 기준값 이상으로 답한 경우). */
@@ -182,15 +198,27 @@ class StatsServiceAuditRatesIT {
                 AiParsedClassification.failed(ClassifyFailureReason.PARSE_ERROR),
                 raw(), 3);
 
+        // ⚠️ 「큐에 2건이 있지만」을 먼저 사실로 만든다 (AI 리뷰 지적).
+        //
+        // 아래 단언은 전부 0·null 이라, 큐 삽입이 통째로 안 된 경우에도 그대로 통과한다.
+        // 그러면 이 테스트가 재는 것은 「격리 건을 안 센다」가 아니라 「아무것도 없다」가 된다.
+        // PR #58 에서 고친 「안쪽 기본값을 재는 척했던 테스트」와 같은 함정이다 (사례 13 부류).
+        assertThat(queueCountByReason("LOW_CONFIDENCE"))
+                .as("확신 못 한 건이 실제로 큐에 들어가 있어야 이 테스트가 뭔가를 재게 된다").isEqualTo(1);
+        assertThat(queueCountByReason("CLASSIFY_FAILED"))
+                .as("못 읽은 건도 마찬가지다").isEqualTo(1);
+        assertThat(queueCountByReason("AUDIT_SAMPLE"))
+                .as("격리는 감사가 아니다 — 사유가 섞이면 실측 비율이 부풀어 「감사가 넘치게 돈다」로 보인다")
+                .isZero();
+
         StatsService.AuditRates rates = statsService.auditRates();
 
         assertThat(rates.autoAccepted().eligibleTotal())
                 .as("격리 건은 자동 확정이 아니므로 모집단이 아니다").isZero();
         assertThat(rates.autoAccepted().sampledTotal())
-                .as("큐에 2건이 있지만 감사로 뽑힌 것은 하나도 없다").isZero();
+                .as("큐에 2건이 있지만(위에서 단언) 감사로 뽑힌 것은 하나도 없다").isZero();
         assertThat(rates.autoAccepted().actualSampleRate())
-                .as("모집단이 0 이면 비율을 낼 수 없다 — 0.0 으로 채우면 「뽑힐 게 있었는데 안 뽑혔다」와 섞인다")
-                .isNull();
+            .as("모집단이 0 이면 비율을 낼 수 없다").isNull();
         assertThat(rates.reused().actualSampleRate()).isNull();
     }
 
