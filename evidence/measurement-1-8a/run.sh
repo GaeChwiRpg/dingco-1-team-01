@@ -12,9 +12,14 @@
 #   ⑤ 감사 확정   감사로 뽑힌 건을 PATCH 로 확정 (8ⓐ-2 는 여기서 나온다)
 #
 # 사용법:
-#   evidence/measurement-1-8a/run.sh              전량 50건 (본 측정)
+#   evidence/measurement-1-8a/run.sh              측정 1·8ⓐ — 재사용 **끄고** (전량 50건)
+#   MEASURE=8b evidence/measurement-1-8a/run.sh   측정 8ⓑ  — 재사용 **켜고**
 #   LIMIT=3 evidence/measurement-1-8a/run.sh      앞 3건만 (시험 실행)
 #   BASE_URL=http://localhost:8080 evidence/measurement-1-8a/run.sh
+#
+# ⚠️ 두 측정은 조건이 정반대다. 8ⓐ 는 AI 가 답한 건을 재려고 재사용을 끄고, 8ⓑ 는
+#    재사용된 건을 재려고 켠다. **한쪽 조건으로 다른 쪽을 재면 분모가 0 이 되거나
+#    표본이 줄어드는데 둘 다 눈에 잘 안 띈다** — 그래서 스크립트가 모드별로 막는다.
 #
 # ⚠️ LIMIT 은 「하네스가 끝까지 도는지」를 보려고 두는 것이지 측정을 줄이려는 게 아니다.
 #    3건으로는 확신도 구간이 안 채워지고 감사 표본은 거의 확실히 0 이라, 그 결과로
@@ -27,7 +32,17 @@ cd "$(git rev-parse --show-toplevel)"
 BASE_URL=${BASE_URL:-http://localhost:8080}
 APP_CONTAINER=${APP_CONTAINER:-dingco-1-team-01-app-1}
 SEED=src/test/resources/seed/inquiries-50.csv
-OUT=evidence/measurement-1-8a/raw
+MEASURE=${MEASURE:-1-8a}
+
+# 측정마다 원자료를 따로 둔다. 한 디렉토리에 섞으면 조건이 정반대인 두 실행이 같은
+# 파일 이름을 쓰게 되고, 나중에 어느 숫자가 어느 조건의 것인지 못 가린다.
+#
+# OUT 을 넘기면 그리로 쓴다 — 도구 자체를 시험할 때 **이미 커밋된 측정 원자료를
+# 건드리지 않기 위해서**다 (예: OUT=/tmp/check LIMIT=2 …).
+if [ -z "${OUT:-}" ]; then
+    OUT=evidence/measurement-1-8a/raw
+    [ "$MEASURE" = "8b" ] && OUT=evidence/measurement-8b/raw
+fi
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-900}   # 초. 넘으면 남은 건수를 기록하고 다음 단계로 간다
 
 # 역할별 헤더. 접수는 고객, 조회·확정은 상담원, 통계는 매니저다 — 측정이라고 한 역할로
@@ -63,10 +78,29 @@ curl -sf -o /dev/null "$BASE_URL/actuator/health" || die "앱이 안 뜬다: $BA
 # 아직 없어서 앱에게 직접 물을 방법이 없다. 손으로 적으면 틀릴 수 있고, 틀린 조건은
 # 숫자를 통째로 무효로 만든다.
 REUSE=$(docker exec "$APP_CONTAINER" printenv CLASSIFICATION_REUSE_ENABLED 2>/dev/null || echo "")
-if [ "$REUSE" != "false" ]; then
-    cat >&2 <<EOF
+REUSE=${REUSE:-true}   # 설정 안 됐으면 켜짐이 기본이다 (D-062)
 
-재사용이 꺼져 있지 않다 (CLASSIFICATION_REUSE_ENABLED='${REUSE:-설정 안 됨}').
+if [ "$MEASURE" = "8b" ]; then
+    # 8ⓑ 는 정반대 조건이다 — 재사용된 건이 틀린 비율을 재므로 켜져 있어야 한다.
+    # 꺼진 채로 돌리면 REUSED 판정이 하나도 안 생겨 "잰 것이 없다"가 된다.
+    if [ "$REUSE" != "true" ]; then
+        cat >&2 <<EOF
+
+측정 8ⓑ 인데 재사용이 꺼져 있다 (CLASSIFICATION_REUSE_ENABLED='$REUSE').
+
+  8ⓑ 는 「재사용해서 확정된 건이 틀린 비율」이다. 꺼두면 REUSED 판정이 하나도
+  안 생겨서 분모가 0 이 된다 — 잰 것이 없는데 잰 것처럼 보인다.
+
+  켜는 법 (환경변수 없이 띄우면 켜짐이 기본이다):
+    docker compose up -d --force-recreate app
+EOF
+        die "재사용을 켜고 다시 실행한다"
+    fi
+else
+    if [ "$REUSE" != "false" ]; then
+        cat >&2 <<EOF
+
+재사용이 꺼져 있지 않다 (CLASSIFICATION_REUSE_ENABLED='$REUSE').
 
   켜진 채로 재면 같은 내용의 문의가 AI 를 건너뛴다. 50건 중 뜻이 같은 묶음이 12건
   있어서, 정답과 대조할 표본이 조용히 줄어든다 (D-043 ⓒ). 8ⓐ-1 은 "자동 확정된 건이
@@ -76,8 +110,11 @@ if [ "$REUSE" != "false" ]; then
     CLASSIFICATION_REUSE_ENABLED=false docker compose up -d --force-recreate app
 
   ⚠️ 실행 중에는 못 바꾼다 (D-028). 반드시 재기동해야 한다.
+
+  ※ 재사용을 켜고 재는 측정 8ⓑ 를 하려면: MEASURE=8b 로 실행한다
 EOF
-    die "재사용을 끄고 다시 실행한다"
+        die "재사용을 끄고 다시 실행한다"
+    fi
 fi
 
 MODEL=$(docker exec "$APP_CONTAINER" printenv ANTHROPIC_MODEL 2>/dev/null || echo "")
@@ -94,8 +131,13 @@ SAMPLE_RATE=${SAMPLE_RATE:-$(yml_value sample-rate)}
 # 실제로 쓰인 모델 id 는 AI 응답이 말한 값이라, 아래 값은 「설정」이고 ④에서 모으는
 # classifications[].model 이 「실제」다. 둘이 다르면 analyze.py 가 경고한다.
 {
+    echo "측정             : $MEASURE"
     echo "실행 시각        : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "재사용(reuse)    : $REUSE   ← 반드시 false"
+    if [ "$MEASURE" = "8b" ]; then
+        echo "재사용(reuse)    : $REUSE   ← 8ⓑ 는 반드시 true"
+    else
+        echo "재사용(reuse)    : $REUSE   ← 측정 1·8ⓐ 는 반드시 false"
+    fi
     echo "모델(설정값)     : $MODEL"
     echo "자동확정 기준값  : $THRESHOLD"
     echo "감사 비율(설정)  : $SAMPLE_RATE"
@@ -204,11 +246,25 @@ done
 # ─────────────────────────────────────────────────────────────
 say "④ 판정 이력 수집"
 
+# 한 줄에 응답 하나씩 모은다 (JSON Lines).
+#
+# ⚠️ 앞선 판은 문의마다 파일을 하나씩 만들어 50개가 생겼다. 기능은 같았지만 원자료
+#    디렉토리가 파일 목록만으로 부담스러워졌다. **하나의 JSON 배열로 합치지는 않는다** —
+#    bash 로 배열을 만들려면 쉼표·괄호를 문자열로 이어 붙여야 하고, 중간 한 건이 실패하면
+#    파일 전체가 깨진 JSON 이 된다. 한 줄에 하나면 그 줄만 깨진다.
+#
+# 응답에 문의 id 가 이미 들어 있어(`.id`) 파일 이름으로 구분할 필요가 없다.
+: > "$OUT/details.jsonl"
 for id in $ids; do
-    curl -s "${AGENT[@]}" "$BASE_URL/api/inquiries/$id" > "$OUT/detail-$id.json"
+    # -c 로 한 줄로 눌러 담는다. 실패하면 그 줄이 비어 집계 쪽에서 걸린다.
+    curl -s "${AGENT[@]}" "$BASE_URL/api/inquiries/$id" | jq -c '.' >> "$OUT/details.jsonl"
     printf '.'
 done
 echo
+
+COLLECTED=$(grep -c . "$OUT/details.jsonl" || true)
+[ "$COLLECTED" -eq "$(echo "$ids" | wc -w | tr -d ' ')" ] \
+    || echo "⚠️ 수집이 모자란다: $COLLECTED 건" | tee -a "$OUT/conditions.txt"
 
 # 검토 큐 전체. 감사로 뽑힌 건을 알아내려면 이게 필요하다 — 큐는 사유(reason)를 안 주지만
 # (blind, D-010), 「큐에 있다 + 판정이 자동 확정이다」면 감사밖에 이유가 없다.
@@ -243,8 +299,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 
 confirmed=0
+: > "$OUT/confirms.jsonl"
 while IFS=$'\t' read -r queue_id inquiry_id; do
-    verdict=$(jq -r '.classifications[0].verdict // "?"' "$OUT/detail-$inquiry_id.json" 2>/dev/null || echo "?")
+    # 이 문의의 판정을 details.jsonl 에서 찾는다. 한 줄에 응답 하나라 select 로 고른다.
+    verdict=$(jq -r --argjson id "$inquiry_id" \
+                 'select(.id == $id) | .classifications[0].verdict // "?"' \
+                 "$OUT/details.jsonl" 2>/dev/null | head -1)
     case "$verdict" in
         AUTO_ACCEPTED|REUSED) ;;   # 감사 표본이다
         *) continue ;;             # 격리 건은 감사가 아니다
@@ -255,7 +315,7 @@ while IFS=$'\t' read -r queue_id inquiry_id; do
 
     curl -s -X PATCH "$BASE_URL/api/inquiry-review-queue/$queue_id" "${AGENT[@]}" \
          -H "Content-Type: application/json" \
-         -d "{\"finalCategory\":\"$expected\"}" > "$OUT/confirm-$queue_id.json"
+         -d "{\"finalCategory\":\"$expected\"}" | jq -c '.' >> "$OUT/confirms.jsonl"
     confirmed=$((confirmed + 1))
 done < <(jq -r '.content[] | [.id, .inquiryId] | @tsv' "$OUT/queue.json")
 

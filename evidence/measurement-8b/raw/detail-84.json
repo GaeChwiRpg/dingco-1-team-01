@@ -1,0 +1,1 @@
+{"id":84,"content":"아직 발송 전인데 배송지 주소를 바꾸고 싶어요.","channel":"WEB","status":"CLASSIFIED","category":"DELIVERY","confidence":null,"receivedAt":"2026-08-12T14:32:41.103966Z","classifications":[{"id":81,"category":"DELIVERY","confidence":null,"verdict":"REUSED","finalCategory":null,"model":"reused:32","attemptCount":1,"createdAt":"2026-08-12T14:32:44.745428Z"}]}

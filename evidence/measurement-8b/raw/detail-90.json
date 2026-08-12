@@ -1,0 +1,1 @@
+{"id":90,"content":"장바구니에서 쿠폰 적용 버튼을 눌러도 금액이 그대로입니다.","channel":"APP","status":"UNCLASSIFIED","category":"PROMOTION","confidence":0.750,"receivedAt":"2026-08-12T14:32:41.268157Z","classifications":[{"id":96,"category":"PROMOTION","confidence":0.750,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T14:32:49.633689Z"}]}
