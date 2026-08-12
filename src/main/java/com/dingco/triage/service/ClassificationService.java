@@ -180,6 +180,11 @@ public class ClassificationService {
             // 자동으로 확정된 것은 주체가 사람이어도 감사한다 (D-033) — REUSED 가 여기 함께 있는
             // 이유다. 재사용은 원본 하나가 틀리면 같은 내용의 문의가 전부 틀리는데, "사람이 정했다"는
             // 사실이 신뢰의 근거가 되어 아무도 의심하지 않는다.
+            //
+            // ⚠️ 다만 REUSED 는 아직 이 경로로 오지 않는다. 리스너에 재사용 조회(1단 캐시·2단 DB)가
+            // 없어서 그 판정이 만들어지지 않고, newResult 가 REUSED 를 예외로 막고 있다.
+            // 여기 미리 적어둔 것은 배선할 때(TRI-47 잔여 · TRI-53) "감사는 이미 준비됐다"를
+            // 알리기 위해서다 — 지금 이 가지는 실행되지 않으므로 감사 테스트도 AUTO_ACCEPTED 로만 한다.
             case AUTO_ACCEPTED, REUSED -> {
                 if (auditSamplingPolicy.shouldSample()) {
                     queueRepository.save(InquiryReviewQueueItem.from(result));
