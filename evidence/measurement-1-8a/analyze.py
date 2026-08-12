@@ -99,6 +99,24 @@ def load_draft_labels():
             for row in csv.DictReader(out.splitlines())}
 
 
+def load_jsonl_or_files(raw: Path, jsonl_name, file_prefix):
+    """원자료를 읽는다 — <b>두 형식을 다 받는다.</b>
+
+    지금 형식은 한 줄에 응답 하나(`details.jsonl`)이고, 앞선 측정은 응답마다 파일을
+    따로 뒀다(`detail-<id>.json`). **옛 형식을 계속 읽을 수 있어야 한다** — 이미 커밋된
+    측정 원자료로 집계를 다시 돌릴 수 있는 것이 이 구조의 이유이기 때문이다.
+    실제로 8ⓑ 에서 집계 결함을 고친 뒤 8ⓐ 원자료로 회귀 확인을 했다.
+
+    응답의 `id` 를 키로 돌려준다 (문의 상세는 문의 id, 확정 응답은 큐 항목 id).
+    """
+    jsonl = raw / jsonl_name
+    if jsonl.exists():
+        return {str(json.loads(line)["id"]): json.loads(line)
+                for line in jsonl.read_text().splitlines() if line.strip()}
+    return {path.stem.removeprefix(file_prefix): json.loads(path.read_text())
+            for path in raw.glob(f"{file_prefix}*.json")}
+
+
 def load_runs(raw: Path, seed):
     """문의별 실행 결과 — 판정 · 확신도 · 감사 표본 여부 · 사람 확정 결과."""
     audit_queue = {}   # inquiry_id -> queue_item_id
@@ -106,6 +124,9 @@ def load_runs(raw: Path, seed):
     if queue_path.exists():
         for item in json.loads(queue_path.read_text()).get("content", []):
             audit_queue[item["inquiryId"]] = item["id"]
+
+    details = load_jsonl_or_files(raw, "details.jsonl", "detail-")
+    confirms = load_jsonl_or_files(raw, "confirms.jsonl", "confirm-")
 
     runs = []
     for line in (raw / "posted.tsv").read_text().splitlines():
@@ -115,7 +136,7 @@ def load_runs(raw: Path, seed):
             runs.append({"seed_id": seed_id, "inquiry_id": None, "posted": False})
             continue
 
-        detail = json.loads((raw / f"detail-{inquiry_id}.json").read_text())
+        detail = details.get(inquiry_id) or {}
         latest = (detail.get("classifications") or [None])[0]
         confidence = latest.get("confidence") if latest else None
 
@@ -140,9 +161,8 @@ def load_runs(raw: Path, seed):
         run["audit_sampled"] = queue_id is not None and run["verdict"] in ("AUTO_ACCEPTED", "REUSED")
         run["queue_item_id"] = queue_id if run["audit_sampled"] else None
 
-        confirm = raw / f"confirm-{queue_id}.json" if queue_id else None
-        if confirm and confirm.exists():
-            body = json.loads(confirm.read_text())
+        body = confirms.get(str(queue_id)) if queue_id else None
+        if body:
             run["final_category"] = body.get("finalCategory")
             run["matched"] = body.get("matched")
         else:

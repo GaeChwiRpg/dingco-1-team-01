@@ -36,8 +36,13 @@ MEASURE=${MEASURE:-1-8a}
 
 # 측정마다 원자료를 따로 둔다. 한 디렉토리에 섞으면 조건이 정반대인 두 실행이 같은
 # 파일 이름을 쓰게 되고, 나중에 어느 숫자가 어느 조건의 것인지 못 가린다.
-OUT=evidence/measurement-1-8a/raw
-[ "$MEASURE" = "8b" ] && OUT=evidence/measurement-8b/raw
+#
+# OUT 을 넘기면 그리로 쓴다 — 도구 자체를 시험할 때 **이미 커밋된 측정 원자료를
+# 건드리지 않기 위해서**다 (예: OUT=/tmp/check LIMIT=2 …).
+if [ -z "${OUT:-}" ]; then
+    OUT=evidence/measurement-1-8a/raw
+    [ "$MEASURE" = "8b" ] && OUT=evidence/measurement-8b/raw
+fi
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-900}   # 초. 넘으면 남은 건수를 기록하고 다음 단계로 간다
 
 # 역할별 헤더. 접수는 고객, 조회·확정은 상담원, 통계는 매니저다 — 측정이라고 한 역할로
@@ -241,11 +246,25 @@ done
 # ─────────────────────────────────────────────────────────────
 say "④ 판정 이력 수집"
 
+# 한 줄에 응답 하나씩 모은다 (JSON Lines).
+#
+# ⚠️ 앞선 판은 문의마다 파일을 하나씩 만들어 50개가 생겼다. 기능은 같았지만 원자료
+#    디렉토리가 파일 목록만으로 부담스러워졌다. **하나의 JSON 배열로 합치지는 않는다** —
+#    bash 로 배열을 만들려면 쉼표·괄호를 문자열로 이어 붙여야 하고, 중간 한 건이 실패하면
+#    파일 전체가 깨진 JSON 이 된다. 한 줄에 하나면 그 줄만 깨진다.
+#
+# 응답에 문의 id 가 이미 들어 있어(`.id`) 파일 이름으로 구분할 필요가 없다.
+: > "$OUT/details.jsonl"
 for id in $ids; do
-    curl -s "${AGENT[@]}" "$BASE_URL/api/inquiries/$id" > "$OUT/detail-$id.json"
+    # -c 로 한 줄로 눌러 담는다. 실패하면 그 줄이 비어 집계 쪽에서 걸린다.
+    curl -s "${AGENT[@]}" "$BASE_URL/api/inquiries/$id" | jq -c '.' >> "$OUT/details.jsonl"
     printf '.'
 done
 echo
+
+COLLECTED=$(grep -c . "$OUT/details.jsonl" || true)
+[ "$COLLECTED" -eq "$(echo "$ids" | wc -w | tr -d ' ')" ] \
+    || echo "⚠️ 수집이 모자란다: $COLLECTED 건" | tee -a "$OUT/conditions.txt"
 
 # 검토 큐 전체. 감사로 뽑힌 건을 알아내려면 이게 필요하다 — 큐는 사유(reason)를 안 주지만
 # (blind, D-010), 「큐에 있다 + 판정이 자동 확정이다」면 감사밖에 이유가 없다.
@@ -280,8 +299,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 
 confirmed=0
+: > "$OUT/confirms.jsonl"
 while IFS=$'\t' read -r queue_id inquiry_id; do
-    verdict=$(jq -r '.classifications[0].verdict // "?"' "$OUT/detail-$inquiry_id.json" 2>/dev/null || echo "?")
+    # 이 문의의 판정을 details.jsonl 에서 찾는다. 한 줄에 응답 하나라 select 로 고른다.
+    verdict=$(jq -r --argjson id "$inquiry_id" \
+                 'select(.id == $id) | .classifications[0].verdict // "?"' \
+                 "$OUT/details.jsonl" 2>/dev/null | head -1)
     case "$verdict" in
         AUTO_ACCEPTED|REUSED) ;;   # 감사 표본이다
         *) continue ;;             # 격리 건은 감사가 아니다
@@ -292,7 +315,7 @@ while IFS=$'\t' read -r queue_id inquiry_id; do
 
     curl -s -X PATCH "$BASE_URL/api/inquiry-review-queue/$queue_id" "${AGENT[@]}" \
          -H "Content-Type: application/json" \
-         -d "{\"finalCategory\":\"$expected\"}" > "$OUT/confirm-$queue_id.json"
+         -d "{\"finalCategory\":\"$expected\"}" | jq -c '.' >> "$OUT/confirms.jsonl"
     confirmed=$((confirmed + 1))
 done < <(jq -r '.content[] | [.id, .inquiryId] | @tsv' "$OUT/queue.json")
 

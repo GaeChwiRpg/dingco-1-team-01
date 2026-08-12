@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import subprocess
 import sys
 from pathlib import Path
+
+# 원자료를 읽는 규칙은 한 벌만 둔다 — 두 형식(jsonl / 파일별)을 받는 자리가 두 곳으로
+# 갈리면 한쪽만 고쳐지고, 그러면 같은 원자료에서 다른 숫자가 나온다.
+from analyze import load_jsonl_or_files
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"],
                            capture_output=True, text=True, check=True).stdout.strip())
@@ -59,13 +62,16 @@ def main():
     first = load_labels("inquiries-50-label-1st-junhyun.csv")
     second = load_labels("inquiries-50-label-2nd-yongtaek.csv")
 
+    # 원자료 두 형식을 다 받는다 — 읽는 규칙은 analyze.py 에 한 벌만 둔다.
+    details = load_jsonl_or_files(raw, "details.jsonl", "detail-")
+
     # 자동 확정됐는데 최종 정답과 다른 건만 본다 — 격리된 건은 사람이 어차피 다시 본다.
     wrong = []
     for line in (raw / "posted.tsv").read_text().splitlines():
         seed_id, inquiry_id = line.split("\t")
         if inquiry_id == "FAILED_TO_POST":
             continue
-        detail = json.loads((raw / f"detail-{inquiry_id}.json").read_text())
+        detail = details.get(inquiry_id) or {}
         latest = (detail.get("classifications") or [None])[0]
         if not latest or latest.get("verdict") != "AUTO_ACCEPTED":
             continue
