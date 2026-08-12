@@ -11,6 +11,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -108,6 +109,14 @@ public class ClassificationCache {
             StringRedisTemplate stringRedisTemplate,
             ObjectMapper objectMapper,
             @Value("${classification.cache.rule-version:v1}") String ruleVersion) {
+        // 형식이 틀리면 기동을 막는다 (threshold 의 D-028·검증과 같은 철학). 비거나 콜론이 섞이면
+        // 캐시 키 앞자리(v1:)가 조용히 달라져, 규칙을 안 바꿨는데도 절감이 0 으로 리셋되는 등
+        // "설정 한 줄 실수가 코드처럼 보이는" 사고가 난다. 형식은 문서·yml 이 쓰는 v1·v2… 로 고정.
+        if (ruleVersion == null || !ruleVersion.matches("v\\d+")) {
+            throw new IllegalArgumentException(
+                    "classification.cache.rule-version 은 v1, v2 … 형식이어야 한다 (현재: '"
+                            + ruleVersion + "')");
+        }
         this.classificationCacheTemplate = classificationCacheTemplate;
         this.stringRedisTemplate = stringRedisTemplate;
         this.objectMapper = objectMapper;
@@ -117,16 +126,22 @@ public class ClassificationCache {
     /**
      * 같은 키의 지난 결과를 찾는다.
      *
-     * <p><b>Redis 장애 시 miss 로 강등한다</b> (fail-open, TRI-85) — 없는 것으로 치고 {@link
-     * Optional#empty()} 를 돌려주면 호출자가 2단 DB→AI 로 이어간다.
+     * <p><b>Redis 장애나 깨진 값에는 miss 로 강등한다</b> (fail-open, TRI-85) — 없는 것으로 치고
+     * {@link Optional#empty()} 를 돌려주면 호출자가 2단 DB→AI 로 이어간다.
      *
-     * @return 있으면 값, 없거나 <b>캐시 장애면</b> {@link Optional#empty()}
+     * <p><b>{@link SerializationException} 도 함께 강등한다</b> — Redis 는 살아있는데 값이
+     * {@link CachedClassification} 로 역직렬화되지 않는 경우(스키마가 번호 승격 없이 바뀌었거나,
+     * 외부 도구가 쓴 값이거나, 불변식 위반 값). 여기서 안 잡으면 이 예외가 분류 담당까지 올라가
+     * {@code verdict=FAILED} 로 기록돼, "캐시 문제"가 "AI 문제"로 둔갑한다 — 이 티켓이 막으려는
+     * 바로 그 현상이다. 쓰기 경로(Lua)가 깨진 값을 새 AI 값으로 자가 치유하는 것과 대칭이다.
+     *
+     * @return 있으면 값, 없거나 <b>캐시 장애·깨진 값이면</b> {@link Optional#empty()}
      */
     public Optional<CachedClassification> get(String normalizedKey) {
         try {
             return Optional.ofNullable(
                     classificationCacheTemplate.opsForValue().get(redisKey(normalizedKey)));
-        } catch (DataAccessException e) {
+        } catch (DataAccessException | SerializationException e) {
             degradeToMiss("get", normalizedKey, e);
             return Optional.empty();
         }
@@ -171,16 +186,20 @@ public class ClassificationCache {
     }
 
     /**
-     * 캐시 접근이 Redis 장애로 실패하면 "없는 셈"으로 강등한다 (fail-open, TRI-85 · D-045).
+     * 캐시 접근이 실패하면 "없는 셈"으로 강등한다 (fail-open, TRI-85 · D-045).
      *
      * <p>캐시는 편의 장치일 뿐이라 죽어도 접수·분류는 2단 DB→AI 로 계속 굴러가야 한다. 대신 조용히
-     * 삼키지 않는다 — 로그로 남기고 Sentry 로 올려 장애가 보이게 한다 (D-030). 여기서 잡는 것은
-     * {@link DataAccessException}(연결 실패·타임아웃)뿐이라, 직렬화 버그({@link #writeJson} 의
-     * {@link IllegalStateException}) 같은 우리 쪽 결함은 삼켜지지 않고 그대로 드러난다.
+     * 삼키지 않는다 — 로그로 남기고 Sentry 로 올려 장애가 보이게 한다 (D-030).
+     *
+     * <p><b>어디까지 강등하는지는 경로마다 다르다.</b> 조회({@link #get})는 Redis 장애
+     * ({@link DataAccessException})와 <b>깨진 값</b>({@link SerializationException})을 둘 다 강등한다.
+     * 넣기({@link #put}·{@link #putIfNotHuman})는 {@link DataAccessException} 만 강등한다 — 넣을 값은
+     * 방금 만든 유효한 값이라, 그 직렬화가 깨지면({@link #writeJson} 의 {@link IllegalStateException})
+     * 우리 쪽 결함이므로 삼키지 않고 그대로 드러낸다.
      *
      * <p>키는 SHA-256 해시라 원문이 안 실려 로그에 남겨도 PII 가 아니다.
      */
-    private static void degradeToMiss(String op, String normalizedKey, DataAccessException e) {
+    private static void degradeToMiss(String op, String normalizedKey, RuntimeException e) {
         log.warn("캐시 {} 실패 — 없는 것으로 넘긴다 (fail-open, TRI-85). key={}", op, normalizedKey, e);
         Sentry.captureException(e);
     }
