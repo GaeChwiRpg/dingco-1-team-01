@@ -42,6 +42,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
  *
  * <p>찾는 순서(1단 캐시 → 2단 DB 1순위 → 2순위)는 {@link ClassificationReuseLookup} 안에 있다.
  * 여기서 다시 쓰지 않는 이유는 <b>같은 순서가 두 곳에 있으면 어긋나기 때문</b>이다.
+ *
+ * <p><b>재사용은 꺼져 있을 수 있다</b> ({@code classification.reuse.enabled=false}, TRI-90 · D-062).
+ * 그때는 조회가 <b>항상 비어서</b> 모든 문의가 아래 AI 갈래로 간다 — 측정 1·8ⓐ-1 을 잴 때 쓰는
+ * 상태다. <b>여기에는 그 분기가 없다.</b> 스위치를 저 안에 둔 이유는 1단·2단이 <b>함께</b> 꺼져야
+ * 하기 때문이고, 여기서 끄면 캐시 조회만 건너뛰고 DB 조회가 남는 <b>반만 꺼진 상태</b>를 만들 수
+ * 있다. 꺼져 있어도 <b>저장·캐시 넣기는 그대로 돈다</b> (D-062 ⓓ).
  */
 @Slf4j
 @Component

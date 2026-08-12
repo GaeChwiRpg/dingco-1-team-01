@@ -1,5 +1,6 @@
 package com.dingco.triage.service;
 
+import com.dingco.triage.config.ClassificationProperties;
 import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
 import com.dingco.triage.service.cache.CachedClassification;
@@ -36,6 +37,12 @@ import org.springframework.stereotype.Service;
  * <p><b>재사용을 다시 재사용하지 않는다 (체인 금지, D-033).</b> 2순위가 {@code AUTO_ACCEPTED}
  * 등치라 {@code REUSED} 를 안 준다. 1순위가 주는 것은 사람 답이라 체인이 아니라 새 원본이다 —
  * 재사용 건에 {@code final_category} 가 있다는 것은 <b>감사로 뽑혀 사람이 다시 판단했다</b>는 뜻이다.
+ *
+ * <p><b>여기가 재사용을 끄는 자리다 (TRI-90 · D-062).</b> 설정
+ * ({@code classification.reuse.enabled})이 꺼져 있으면 1단도 2단도 보지 않는다. <b>스위치를
+ * 부르는 쪽이 아니라 이 안에 둔 이유</b>는 끝났다고 볼 조건이 <b>「1단·2단이 함께 꺼진다」</b>이기
+ * 때문이다 — 부르는 쪽에서 끄면 캐시 조회만 건너뛰고 DB 조회가 남는 식으로 <b>반만 꺼진 상태</b>가
+ * 만들어질 수 있고, 그러면 측정 조건이 애매해진다. 찾는 순서를 여기 가둔 것과 같은 이유다.
  */
 @Slf4j
 @Service
@@ -44,6 +51,9 @@ public class ClassificationReuseLookup {
 
     private final ClassificationCache cache;
     private final InquiryClassificationResultRepository resultRepository;
+
+    /** 재사용을 켤지 끌지 (D-062). 기동 시 고정이라 이 빈이 사는 동안 값이 바뀌지 않는다. */
+    private final ClassificationProperties properties;
 
     /**
      * 재사용할 답을 찾는다.
@@ -60,9 +70,19 @@ public class ClassificationReuseLookup {
      *   <li><b>2단 DB 실패</b> → 여기서 잡아 AI 호출로 넘긴다. 절감은 못 하지만 분류는 된다
      * </ul>
      *
+     * <p><b>설정으로 꺼져 있으면 찾지 않는다</b> (TRI-90 · D-062). 아무것도 안 찾은 것과 결과가
+     * 같아서 부르는 쪽은 달라질 게 없다 — 그대로 AI 를 부른다.
+     *
      * @return 있으면 재사용할 답, 없으면 {@link Optional#empty()} — 부르는 쪽이 AI 를 호출한다
      */
     public Optional<CachedClassification> find(String normalizedKey) {
+        if (!properties.reuse().enabled()) {
+            // miss 와 다른 낱말을 쓴다. 같은 낱말이면 측정 6(절감률)을 읽을 때 「찾았는데 없었다」와
+            // 「아예 안 찾았다」가 로그에서 한 덩어리가 되고, 그러면 절감이 0 인 이유가
+            // 정규화 탓인지 스위치 탓인지 사후에 구분되지 않는다.
+            log.debug("reuse_disabled key={} — 설정으로 꺼져 있어 AI 를 부른다 (D-062)", normalizedKey);
+            return Optional.empty();
+        }
         try {
             return lookup(normalizedKey);
         } catch (RuntimeException e) {
