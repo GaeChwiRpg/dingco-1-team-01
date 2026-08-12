@@ -1,0 +1,1 @@
+{"id":55,"content":"사업자등록번호와 본사 주소를 알려주세요. 서류 제출에 필요합니다.","channel":"EMAIL","status":"UNCLASSIFIED","category":"ETC","confidence":0.650,"receivedAt":"2026-08-12T13:37:52.763271Z","classifications":[{"id":55,"category":"ETC","confidence":0.650,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:39:12.995151Z"}]}

@@ -1,0 +1,1 @@
+{"id":42,"content":"[날짜] 이벤트에 응모했는데 당첨자 발표가 언제인가요?","channel":"EMAIL","status":"CLASSIFIED","category":"PROMOTION","confidence":0.850,"receivedAt":"2026-08-12T13:37:52.422155Z","classifications":[{"id":40,"category":"PROMOTION","confidence":0.850,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:38:53.319435Z"}]}

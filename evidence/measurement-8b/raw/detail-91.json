@@ -1,0 +1,1 @@
+{"id":91,"content":"적립금 [금액]이 있는데 어디서 쓰는지 안 보여요.","channel":"WEB","status":"CLASSIFIED","category":"SERVICE_USAGE","confidence":0.800,"receivedAt":"2026-08-12T14:32:41.296457Z","classifications":[{"id":88,"category":"SERVICE_USAGE","confidence":0.800,"verdict":"REUSED","finalCategory":null,"model":"reused:39","attemptCount":1,"createdAt":"2026-08-12T14:32:46.817889Z"}]}

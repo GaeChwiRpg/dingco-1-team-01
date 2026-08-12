@@ -210,7 +210,7 @@ public class StatsService {
         long reviewed = reviewedRows.size();
         long mismatched = countMismatched(reviewedRows);
         List<ConfidenceBucket> buckets = confidenceBuckets(reviewedRows);
-        return new AutoAcceptedAudit(eligibleTotal, sampledTotal, rate(sampledTotal, eligibleTotal),
+        return new AutoAcceptedAudit(eligibleTotal, sampledTotal, nullableRate(sampledTotal, eligibleTotal),
                 reviewed, mismatched, rate(mismatched, reviewed), buckets);
     }
 
@@ -218,7 +218,7 @@ public class StatsService {
             long eligibleTotal, long sampledTotal, List<AuditReviewRow> reviewedRows) {
         long reviewed = reviewedRows.size();
         long mismatched = countMismatched(reviewedRows);
-        return new VerdictAudit(eligibleTotal, sampledTotal, rate(sampledTotal, eligibleTotal),
+        return new VerdictAudit(eligibleTotal, sampledTotal, nullableRate(sampledTotal, eligibleTotal),
                 reviewed, mismatched, rate(mismatched, reviewed));
     }
 
@@ -266,6 +266,16 @@ public class StatsService {
 
     private static double rate(long numerator, long denominator) {
         return denominator == 0 ? 0.0 : (double) numerator / denominator;
+    }
+
+    /**
+     * {@code actualSampleRate} 전용 — 모집단({@code denominator})이 0 이면 {@code null} (TRI-66).
+     * {@link #rate} 와 갈라둔 이유는 나머지 비율(불일치율·구간별 정확도)은 분모가 0 이어도
+     * {@code 0.0} 이 맞는 값이지만, 여기는 "못 잰 것"과 "0 인 것"을 반드시 구분해야 하기
+     * 때문이다 — 안 갈라 쓰면 표본 누락 신호가 조용히 묻힌다.
+     */
+    private static Double nullableRate(long numerator, long denominator) {
+        return denominator == 0 ? null : (double) numerator / denominator;
     }
 
     private Map<Verdict, Long> verdictCounts() {
@@ -352,7 +362,8 @@ public class StatsService {
     /**
      * 계약 §7 {@code audit} 블록의 값 구조. {@code configuredSampleRate} 는 두 하위 블록이
      * 공유한다 — 감사 표본 비율은 {@code autoAccepted}/{@code reused} 를 가리지 않고 단일값이다
-     * (D-005).
+     * (D-005). <b>판정마다 다른 비율을 줄 수 있는 것처럼 보이면 안 된다</b> — 그것은 폐기된
+     * 카테고리별 차등(D-006)과 같은 오해를 부른다.
      */
     public record Audit(double configuredSampleRate, AutoAcceptedAudit autoAccepted, VerdictAudit reused) {
     }
@@ -360,8 +371,12 @@ public class StatsService {
     /**
      * {@code audit.autoAccepted}. {@code byConfidenceBucket} 이 이 프로젝트의 결론이 나오는 자리다 —
      * "AI 가 X 라고 신고한 것들의 실제 정확도".
+     *
+     * @param actualSampleRate {@code eligibleTotal} 이 0 이면 {@code null} (TRI-66) — 모집단이
+     *     없어서 못 잰 것과 실측 비율이 0 인 것은 다르다. {@code 0.0} 으로 채우면 "뽑힐 게
+     *     있었는데 하나도 안 뽑혔다"(표본 누락 신호)와 구분되지 않는다(D-022 와 같은 논리)
      */
-    public record AutoAcceptedAudit(long eligibleTotal, long sampledTotal, double actualSampleRate,
+    public record AutoAcceptedAudit(long eligibleTotal, long sampledTotal, Double actualSampleRate,
             long reviewed, long mismatched, double misclassificationRate,
             List<ConfidenceBucket> byConfidenceBucket) {
     }
@@ -369,8 +384,11 @@ public class StatsService {
     /**
      * {@code audit.reused}. {@code byConfidenceBucket} 이 없다 — 재사용 건은 비교할 AI 확신도가
      * 없다(사람 답을 재사용한 것은 {@code confidence} 자체가 null, D-033).
+     *
+     * @param actualSampleRate {@link AutoAcceptedAudit#actualSampleRate} 와 같은 이유로
+     *     {@code eligibleTotal} 이 0 이면 {@code null}
      */
-    public record VerdictAudit(long eligibleTotal, long sampledTotal, double actualSampleRate,
+    public record VerdictAudit(long eligibleTotal, long sampledTotal, Double actualSampleRate,
             long reviewed, long mismatched, double misclassificationRate) {
     }
 

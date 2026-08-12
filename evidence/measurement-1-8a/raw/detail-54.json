@@ -1,0 +1,1 @@
+{"id":54,"content":"채용 공고 관련해서 문의드려요. 지원 마감이 언제인가요?","channel":"EMAIL","status":"CLASSIFIED","category":"ETC","confidence":0.850,"receivedAt":"2026-08-12T13:37:52.741797Z","classifications":[{"id":52,"category":"ETC","confidence":0.850,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:39:10.050142Z"}]}

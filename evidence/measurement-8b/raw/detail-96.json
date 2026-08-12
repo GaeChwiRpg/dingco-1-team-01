@@ -1,0 +1,1 @@
+{"id":96,"content":"웹에서 알림 설정을 끄고 싶은데 어디에 있나요?","channel":"WEB","status":"CLASSIFIED","category":"SERVICE_USAGE","confidence":0.880,"receivedAt":"2026-08-12T14:32:41.493087Z","classifications":[{"id":93,"category":"SERVICE_USAGE","confidence":0.880,"verdict":"REUSED","finalCategory":null,"model":"reused:57","attemptCount":1,"createdAt":"2026-08-12T14:32:47.563653Z"}]}

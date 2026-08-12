@@ -1,0 +1,1 @@
+{"id":70,"content":"카드 명세를 보니 주문은 한 건인데 두 번 청구됐습니다. 확인해주세요.","channel":"EMAIL","status":"CLASSIFIED","category":"PAYMENT","confidence":0.900,"receivedAt":"2026-08-12T14:32:40.548795Z","classifications":[{"id":69,"category":"PAYMENT","confidence":0.900,"verdict":"REUSED","finalCategory":null,"model":"reused:20","attemptCount":1,"createdAt":"2026-08-12T14:32:40.556162Z"}]}

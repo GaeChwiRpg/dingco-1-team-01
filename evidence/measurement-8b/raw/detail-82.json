@@ -1,0 +1,1 @@
+{"id":82,"content":"가입할 때 쓴 전화번호를 [연락처] 로 바꾸고 싶어요.","channel":"APP","status":"CLASSIFIED","category":"ACCOUNT","confidence":null,"receivedAt":"2026-08-12T14:32:41.026017Z","classifications":[{"id":79,"category":"ACCOUNT","confidence":null,"verdict":"REUSED","finalCategory":null,"model":"reused:31","attemptCount":1,"createdAt":"2026-08-12T14:32:44.727849Z"}]}

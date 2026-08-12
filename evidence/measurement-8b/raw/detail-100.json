@@ -1,0 +1,1 @@
+{"id":100,"content":"이런 식으로 운영하시면 안 되죠. 정말 실망스럽습니다.","channel":"WEB","status":"UNCLASSIFIED","category":"COMPLAINT","confidence":0.600,"receivedAt":"2026-08-12T14:32:41.602545Z","classifications":[{"id":102,"category":"COMPLAINT","confidence":0.600,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T14:32:52.683594Z"}]}

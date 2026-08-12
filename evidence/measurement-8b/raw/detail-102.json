@@ -1,0 +1,1 @@
+{"id":102,"content":"포장 상태가 매번 엉망입니다. 그냥 알고나 계시라고 씁니다.","channel":"EMAIL","status":"CLASSIFIED","category":"COMPLAINT","confidence":0.850,"receivedAt":"2026-08-12T14:32:41.658137Z","classifications":[{"id":99,"category":"COMPLAINT","confidence":0.850,"verdict":"REUSED","finalCategory":null,"model":"reused:49","attemptCount":1,"createdAt":"2026-08-12T14:32:50.924567Z"}]}

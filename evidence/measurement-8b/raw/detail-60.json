@@ -1,0 +1,1 @@
+{"id":60,"content":"주문한 지 하루 지났는데 아직 발송 전이라고만 뜨네요. 출발 예정일 좀 알려주세요.","channel":"WEB","status":"CLASSIFIED","category":"DELIVERY","confidence":0.850,"receivedAt":"2026-08-12T14:32:40.259375Z","classifications":[{"id":60,"category":"DELIVERY","confidence":0.850,"verdict":"REUSED","finalCategory":null,"model":"reused:10","attemptCount":1,"createdAt":"2026-08-12T14:32:40.270874Z"}]}

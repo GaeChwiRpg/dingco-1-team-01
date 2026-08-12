@@ -1,0 +1,1 @@
+{"id":56,"content":"언론 취재 요청드립니다. 홍보 담당자 연결 부탁드립니다.","channel":"EMAIL","status":"UNCLASSIFIED","category":"ETC","confidence":0.750,"receivedAt":"2026-08-12T13:37:52.785278Z","classifications":[{"id":54,"category":"ETC","confidence":0.750,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:39:12.065856Z"}]}

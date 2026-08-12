@@ -58,14 +58,21 @@ public record StatsResponse(
      */
     public record Audit(double configuredSampleRate, AutoAccepted autoAccepted, Reused reused) {
 
-        /** {@code audit.autoAccepted} — 이 프로젝트의 결론이 나오는 자리({@code byConfidenceBucket}). */
-        public record AutoAccepted(long eligibleTotal, long sampledTotal, double actualSampleRate,
+        /**
+         * {@code audit.autoAccepted} — 이 프로젝트의 결론이 나오는 자리({@code byConfidenceBucket}).
+         *
+         * <p>{@code actualSampleRate} 는 {@code eligibleTotal} 이 0 이면 {@code null} 이다
+         * (TRI-66) — 모집단이 없어서 못 잰 것과 실측 비율이 0 인 것은 다르다. {@code 0.0} 으로
+         * 채우면 "뽑힐 게 있었는데 하나도 안 뽑혔다"(표본 누락 신호)와 구분되지 않는다(D-022 와
+         * 같은 논리).
+         */
+        public record AutoAccepted(long eligibleTotal, long sampledTotal, Double actualSampleRate,
                 long reviewed, long mismatched, double misclassificationRate,
                 List<ConfidenceBucket> byConfidenceBucket) {
         }
 
         /** {@code audit.reused} — {@code byConfidenceBucket} 이 없다(비교할 AI 확신도가 없다). */
-        public record Reused(long eligibleTotal, long sampledTotal, double actualSampleRate,
+        public record Reused(long eligibleTotal, long sampledTotal, Double actualSampleRate,
                 long reviewed, long mismatched, double misclassificationRate) {
         }
 

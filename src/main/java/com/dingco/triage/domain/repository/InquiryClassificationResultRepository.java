@@ -113,6 +113,11 @@ public interface InquiryClassificationResultRepository
      *
      * <p>이 저장소 헤더에 P3 소유로 명시된 "감사 집계"의 일부다. 판정 행 하나가 분류 시도 1건과
      * 대응하므로, 여기서 세는 것이 {@code classification.inquiriesTotal} 의 모집단이 된다.
+     *
+     * <p><b>{@code audit.*.eligibleTotal}(TRI-66 · D-012)도 여기서 나온다</b> — 필터 없이 판정
+     * 전체를 세어 verdict 별로 나누면, {@code AUTO_ACCEPTED}·{@code REUSED} 버킷만 꺼내 쓰는
+     * 것과 {@code WHERE verdict IN (...)} 로 미리 좁혀 세는 것이 <b>같은 verdict 에 대해서는
+     * 수학적으로 같은 값</b>이다 — 감사 전용 쿼리를 따로 두지 않는다.
      */
     @Query("""
             select r.verdict as verdict, count(r) as count
@@ -121,7 +126,13 @@ public interface InquiryClassificationResultRepository
             """)
     List<VerdictCount> countByVerdict();
 
-    /** 판정별 집계 프로젝션. */
+    /**
+     * 판정별 집계 프로젝션.
+     *
+     * <p>해당 판정의 행이 하나도 없으면 <b>키 자체가 안 나온다</b> — 0 으로 채워 돌려주지 않는다.
+     * 없는 것과 0 인 것을 구분해야 하는 자리라({@code eligibleTotal} 이 0 이면 비율을 낼 수
+     * 없다) 채우는 판단은 읽는 쪽이 한다.
+     */
     interface VerdictCount {
         Verdict getVerdict();
 

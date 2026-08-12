@@ -394,8 +394,16 @@ X-User-Role: AGENT
 
 > 운영 통계 (`ROLE_MANAGER`). 적체 · 분류 성공률 · **감사 결과**. TTL 10s 캐시.
 
-> **현재 구현 상태 (TRI-72 · TRI-67 · TRI-68)**: `backlog`·`classification`·`aiCallSavings`·
-> `cache`·`audit` 다섯 블록 모두 실제로 나간다.
+> **현재 구현 상태 (TRI-72 · TRI-67 · TRI-68 · TRI-66)**: `backlog`·`classification`·
+> `aiCallSavings`·`cache`·`audit` 다섯 블록 모두 실제로 나간다. `audit`은 자동 확정·재사용
+> 각각의 「뽑힐 수 있었던 수 · 실제로 뽑힌 수 · 실측 비율」(TRI-66)에 더해, 뽑힌 건을 사람이
+> 다시 봐서 실제로 틀렸는지까지(`reviewed`·`mismatched`·`misclassificationRate`·
+> `byConfidenceBucket`, TRI-68)를 함께 낸다.
+>
+> ⚠️ **`actualSampleRate`는 뽑힐 수 있었던 건이 하나도 없으면 `null`이다.** `0.0`으로 채우지
+> 않는다 — `0.0`은 "뽑힐 게 있었는데 하나도 안 뽑혔다"라는 뜻이고 그건 **표본 누락의 신호**인데,
+> 아직 아무 건도 안 들어온 상태가 같은 얼굴로 보이면 없는 장애를 보게 된다 (`confidence`에 `0`을
+> 안 채우는 D-022와 같은 이유).
 >
 > **"TTL 10s 캐시"가 안 걸리는 값이 하나 있다.** `classification` 블록 안의 `stuckReceived` 는
 > 캐시를 안 거치고 요청마다 새로 계산한다 — 같은 블록 안의 나머지 필드(`inquiriesTotal` 등)는
@@ -511,4 +519,6 @@ X-User-Role: AGENT
 | v1.4 | 2026-08-06 | **공용 예외 처리 지점 구현 (TRI-29)** — 공통 오류 표에 **500 `INTERNAL_ERROR`** 추가. `fieldErrors` 원소 필드명이 `reason` 임을 코드와 대조 확정(기존 표기 유지, 구현 쪽 오타를 계약에 맞춰 수정) | TRI-25~30 |
 | v1.5 | 2026-08-07 | **값 검증 4종 구현 반영 (TRI-49·50)** — ⓐ §3 `model` 예시를 `claude-haiku-4-5-20251001` → **`claude-sonnet-5`** 로 정정. D-024 확정값과 어긋나 있었고, 모델 id 는 **측정 결과에 붙는 조건**이라 계약대로 구현하면 D-024 의 선정 근거가 무너진다 ⓑ `verdict = FAILED` 의 값 검증 항목에 **실패 사유 5종은 구조화 로그로만 남고 응답·스키마에 나가지 않음**을 명시 — 사유를 응답에 실으면 blind(D-010)와 무관하게 컬럼이 늘어난다 | TRI-49·50 |
 | v1.6 | 2026-08-11 | **통계·정책 조회 구현 반영 (TRI-67·68·69 완료)** — §7 「현재 구현 상태」 갱신: `backlog`·`classification`·`aiCallSavings`·`audit`(`autoAccepted`/`reused` 분리 + 신뢰도 구간별 집계) 전체가 이제 실제로 나간다. `cache` 만 아직 미구현 — 부품(TRI-40·41·84)은 있지만 실제 분류 흐름에서 불러 쓰는 코드(TRI-53, 김준현)가 없어 잴 지점이 없다. §6 `threshold`·`audit.sampleRate` 도 실제로 나간다 — `audit.sampleRate` 는 `ClassificationProperties.audit`(TRI-64·65, PR #50)에 의존해 그 변경을 함께 반영했다. `GET /api/policies` 는 이미 계약된 §6 그대로 구현됐다(TRI-69) | TRI-67·68·69 |
+| v1.7 | 2026-08-12 | **재사용 on/off 스위치를 정책 조회에 노출 (D-062)** — §6 `GET /api/policies` 응답에 `reuse.enabled` 추가(`ClassificationProperties.reuse`, 기본 `true`). `threshold`·`audit.sampleRate` 와 같은 이유로 읽기 전용 — 실행 중 바뀌면 측정 1·8ⓐ-1 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다 | TRI-69 |
+| v1.8 | 2026-08-13 | **`audit` 블록 중복 구현을 통합 (TRI-66 · TRI-68)** — develop 에 TRI-66(감사 실측 비율: `eligibleTotal`·`sampledTotal`·`actualSampleRate`·`configuredSampleRate`)이 독립적으로 먼저 올라가 있었다. TRI-68(본 계약의 완전판 — 위 넷에 `reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket` 를 더한 것)로 흡수 통합한다. 계산 로직을 대조해 두 구현이 같은 verdict 버킷에 대해 동일한 값을 낸다는 것을 확인했고, TRI-66 쪽 실측 결과(PR #64·#65)는 재측정 없이 그대로 유효하다. TRI-66 설계 중 **`eligibleTotal` 이 0 이면 `actualSampleRate` 를 `null` 로 두는 처리**(D-022 와 같은 논리)는 이번에 함께 반영했다 | TRI-66 · TRI-68 |
 <!-- 변경 시 한 줄씩 추가 -->

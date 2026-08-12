@@ -101,7 +101,9 @@ class StatsServiceTest extends RedisContainerSupport {
 
         StatsService.Audit audit = statsService.audit();
         assertThat(audit.autoAccepted().eligibleTotal()).isZero();
-        assertThat(audit.autoAccepted().actualSampleRate()).isZero();
+        assertThat(audit.autoAccepted().actualSampleRate())
+                .as("모집단이 0 이면 비율을 낼 수 없다 — 0.0 으로 채우면 표본 누락 신호와 구분이 안 된다 (TRI-66)")
+                .isNull();
         assertThat(audit.autoAccepted().misclassificationRate()).isZero();
         assertThat(audit.autoAccepted().byConfidenceBucket()).isEmpty();
         assertThat(audit.reused().eligibleTotal()).isZero();
