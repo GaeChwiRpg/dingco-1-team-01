@@ -135,7 +135,8 @@ public class ClassificationService {
      *
      * <p><b>{@code @Transactional} 이 네 번째로 붙은 자리다.</b> 헌법은 ①②③ 세 자리만 두라고 했는데,
      * 이것은 <b>새 트랜잭션이 아니라 ②의 다른 입구</b>다 — 안쪽 로직({@link #persist})을 그대로
-     * 공유하고 상태 전이·감사 규칙도 같다. 근거는 PR 본문에 적는다.
+     * 공유하고 상태 전이·감사 규칙도 같다. <b>근거는 D-063 에 있다</b> — PR 본문에만 적으면
+     * 시간이 지났을 때 코드와 함께 읽히지 않는다 (CodeRabbit 지적).
      *
      * @param reusable 재사용할 답. {@code sourceResultId} 는 <b>원본</b> 결과 id 다 — 재사용 행
      *                 자신의 id 가 아니다. 그 보장은 조회 쪽이 한다 (체인 금지, D-033)
