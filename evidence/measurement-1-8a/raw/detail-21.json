@@ -1,0 +1,1 @@
+{"id":21,"content":"카드 결제가 계속 실패해요. 다른 카드로 해도 똑같습니다.","channel":"APP","status":"CLASSIFIED","category":"PAYMENT","confidence":0.880,"receivedAt":"2026-08-12T13:37:51.863428Z","classifications":[{"id":22,"category":"PAYMENT","confidence":0.880,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:38:06.164693Z"}]}

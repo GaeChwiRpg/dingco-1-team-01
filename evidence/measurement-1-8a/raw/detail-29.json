@@ -1,0 +1,1 @@
+{"id":29,"content":"비밀번호를 잊어버려서 로그인이 안 돼요. 재설정 메일이 안 옵니다.","channel":"WEB","status":"CLASSIFIED","category":"ACCOUNT","confidence":0.920,"receivedAt":"2026-08-12T13:37:52.066039Z","classifications":[{"id":28,"category":"ACCOUNT","confidence":0.920,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T13:38:12.731115Z"}]}

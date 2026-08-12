@@ -1,0 +1,1 @@
+{"id":57,"content":"매장 주차장 이용 시간이 어떻게 되나요?","channel":"PHONE","status":"UNCLASSIFIED","category":"SERVICE_USAGE","confidence":0.550,"receivedAt":"2026-08-12T13:37:52.808133Z","classifications":[{"id":56,"category":"SERVICE_USAGE","confidence":0.550,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":2,"createdAt":"2026-08-12T13:39:29.755489Z"}]}
