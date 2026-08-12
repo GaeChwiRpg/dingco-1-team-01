@@ -2,12 +2,16 @@ package com.dingco.triage.service.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.sentry.Sentry;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,10 +22,14 @@ import org.springframework.stereotype.Component;
  * hit rate 는 항상 절감률 이하다. 이 클래스는 그중 <b>1단(Redis)</b> 만 담당한다 — 2단(DB)은
  * {@code InquiryClassificationResultRepository}(TRI-41)다.
  *
- * <p><b>키에 규칙 번호를 접두어로 붙인다</b> ({@code v1:}). 정규화 규칙은 측정 6 을 보고 조이기로
- * 이미 정해져 있어(D-031 재평가), 번호가 없으면 규칙을 조여도 옛 규칙으로 만든 답이 계속
- * 재사용된다. <b>번호 승격과 캐시 장애 대응(캐시가 죽어도 접수·분류는 계속)은 TRI-85</b> 가
- * 이 위에 얹는다.
+ * <p><b>키에 규칙 번호를 접두어로 붙인다</b> ({@code v1:}, 설정 {@code classification.cache.rule-version}).
+ * 정규화 규칙은 측정 6 을 보고 조이기로 이미 정해져 있어(D-031 재평가), 번호가 없으면 규칙을
+ * 조여도 옛 규칙으로 만든 답이 계속 재사용된다. <b>규칙을 바꿀 때 이 번호를 함께 올리면</b> 키
+ * 앞자리가 달라져 옛 답이 자동으로 안 잡힌다 (TRI-85).
+ *
+ * <p><b>캐시가 죽어도 접수·분류는 계속된다 (fail-open, TRI-85 · D-045).</b> 캐시는 편의 장치일
+ * 뿐이라, Redis 장애로 조회·저장이 실패하면 <b>없는 것으로 치고 넘어간다</b> — 2단 DB→AI 로
+ * 절감 경로가 그대로 이어진다. 대신 조용히 삼키지 않고 로그·Sentry 로 드러낸다 (D-030).
  *
  * <p><b>넣기는 두 가지다.</b>
  * <ul>
@@ -37,8 +45,8 @@ import org.springframework.stereotype.Component;
  * redis 설정으로 건다 (TRI-84). <b>TTL 로 상한을 대신하지 않는다</b>: 캐시가 비는 시점이 시계에
  * 달리면 측정 6·11 이 실행마다 다른 값을 낸다.
  */
+@Slf4j
 @Component
-@RequiredArgsConstructor
 public class ClassificationCache {
 
     /**
@@ -47,14 +55,6 @@ public class ClassificationCache {
      * <p>6 공통 필수 기능 매핑의 캐시 이름 {@code classification:byNormalizedKey} 를 그대로 쓴다.
      */
     static final String KEY_NAMESPACE = "classification:byNormalizedKey:";
-
-    /**
-     * 정규화 규칙 번호. 규칙을 바꿀 때 이 번호를 올리면 옛 규칙으로 만든 답이 자동으로 안 잡힌다.
-     *
-     * <p><b>이 상수의 승격은 TRI-85 소관이다</b> — 여기서는 첫 규칙을 {@code v1} 으로 못박아 두기만
-     * 한다. TRI-85 가 붙으면 규칙 변경 시 번호를 올리고 옛 답이 안 나오는지 확인한다.
-     */
-    static final String RULE_VERSION = "v1";
 
     /**
      * ②의 조건부 넣기 — <b>보기와 쓰기를 한 덩어리(원자적)로</b> 한다 (D-048).
@@ -96,13 +96,55 @@ public class ClassificationCache {
     private final ObjectMapper objectMapper;
 
     /**
+     * 정규화 규칙 번호 (설정 {@code classification.cache.rule-version}, 기본 {@code v1}).
+     *
+     * <p>규칙을 바꿀 때 이 값을 올리면 캐시 키 앞자리({@code v1:})가 달라져 옛 규칙으로 만든 답이
+     * 자동으로 안 잡힌다. <b>기동 시 고정</b>이고 실행 중에 못 바꾼다 — 바뀌면 절감률(측정 6·11)이
+     * 어느 규칙에서 나온 것인지 사후에 구분되지 않는다(threshold 의 D-028 과 같은 층위).
+     */
+    private final String ruleVersion;
+
+    public ClassificationCache(
+            RedisTemplate<String, CachedClassification> classificationCacheTemplate,
+            StringRedisTemplate stringRedisTemplate,
+            ObjectMapper objectMapper,
+            @Value("${classification.cache.rule-version:v1}") String ruleVersion) {
+        // 형식이 틀리면 기동을 막는다 (threshold 의 D-028·검증과 같은 철학). 비거나 콜론이 섞이면
+        // 캐시 키 앞자리(v1:)가 조용히 달라져, 규칙을 안 바꿨는데도 절감이 0 으로 리셋되는 등
+        // "설정 한 줄 실수가 코드처럼 보이는" 사고가 난다. 형식은 문서·yml 이 쓰는 v1·v2… 로 고정.
+        if (ruleVersion == null || !ruleVersion.matches("v\\d+")) {
+            throw new IllegalArgumentException(
+                    "classification.cache.rule-version 은 v1, v2 … 형식이어야 한다 (현재: '"
+                            + ruleVersion + "')");
+        }
+        this.classificationCacheTemplate = classificationCacheTemplate;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.objectMapper = objectMapper;
+        this.ruleVersion = ruleVersion;
+    }
+
+    /**
      * 같은 키의 지난 결과를 찾는다.
      *
-     * @return 있으면 값, 없으면 {@link Optional#empty()}
+     * <p><b>Redis 장애나 깨진 값에는 miss 로 강등한다</b> (fail-open, TRI-85) — 없는 것으로 치고
+     * {@link Optional#empty()} 를 돌려주면 호출자가 2단 DB→AI 로 이어간다.
+     *
+     * <p><b>{@link SerializationException} 도 함께 강등한다</b> — Redis 는 살아있는데 값이
+     * {@link CachedClassification} 로 역직렬화되지 않는 경우(스키마가 번호 승격 없이 바뀌었거나,
+     * 외부 도구가 쓴 값이거나, 불변식 위반 값). 여기서 안 잡으면 이 예외가 분류 담당까지 올라가
+     * {@code verdict=FAILED} 로 기록돼, "캐시 문제"가 "AI 문제"로 둔갑한다 — 이 티켓이 막으려는
+     * 바로 그 현상이다. 쓰기 경로(Lua)가 깨진 값을 새 AI 값으로 자가 치유하는 것과 대칭이다.
+     *
+     * @return 있으면 값, 없거나 <b>캐시 장애·깨진 값이면</b> {@link Optional#empty()}
      */
     public Optional<CachedClassification> get(String normalizedKey) {
-        return Optional.ofNullable(
-                classificationCacheTemplate.opsForValue().get(redisKey(normalizedKey)));
+        try {
+            return Optional.ofNullable(
+                    classificationCacheTemplate.opsForValue().get(redisKey(normalizedKey)));
+        } catch (DataAccessException | SerializationException e) {
+            degradeToMiss("get", normalizedKey, e);
+            return Optional.empty();
+        }
     }
 
     /**
@@ -110,21 +152,56 @@ public class ClassificationCache {
      *
      * <p>③(사람 확정)의 넣기가 이것이다 — 사람 답은 조건 없이 덮는다 (D-036). ②의 조건부 넣기
      * ("기존이 사람 답이면 덮지 않기")는 원자성이 필요해 별도 메서드 {@link #putIfNotHuman} 로 있다.
+     *
+     * <p><b>Redis 장애 시 아무것도 안 하고 넘어간다</b> (fail-open, TRI-85). 캐시에 못 넣어도 판정
+     * 행은 DB 에 이미 저장돼 있어 다음 조회는 2단 DB 가 잡는다 — 잃는 것은 1단 속도뿐이다.
      */
     public void put(String normalizedKey, CachedClassification value) {
-        classificationCacheTemplate.opsForValue().set(redisKey(normalizedKey), value);
+        try {
+            classificationCacheTemplate.opsForValue().set(redisKey(normalizedKey), value);
+        } catch (DataAccessException e) {
+            degradeToMiss("put", normalizedKey, e);
+        }
     }
 
     /**
      * 값을 넣되 <b>기존이 사람 답({@code source=HUMAN})이면 덮지 않는다</b>. 보기와 쓰기를 원자적으로
      * 한 덩어리로 처리한다 (D-048). ②(AI 자동 확정, TRI-53)의 넣기가 이것이다.
      *
-     * @return 실제로 썼으면 {@code true}, 기존 사람 답을 지키느라 안 썼으면 {@code false}
+     * <p><b>Redis 장애 시 안 쓰고 {@code false} 를 돌려준다</b> (fail-open, TRI-85). 캐시에 못 넣어도
+     * 판정 행은 DB 에 이미 저장돼 있어 다음 조회는 2단 DB 가 잡는다.
+     *
+     * @return 실제로 썼으면 {@code true}, 기존 사람 답을 지키느라 또는 <b>캐시 장애로</b> 안 썼으면
+     *     {@code false}
      */
     public boolean putIfNotHuman(String normalizedKey, CachedClassification value) {
-        Long wrote = stringRedisTemplate.execute(
-                PUT_IF_NOT_HUMAN, List.of(redisKey(normalizedKey)), writeJson(value));
-        return wrote != null && wrote == 1L;
+        try {
+            Long wrote = stringRedisTemplate.execute(
+                    PUT_IF_NOT_HUMAN, List.of(redisKey(normalizedKey)), writeJson(value));
+            return wrote != null && wrote == 1L;
+        } catch (DataAccessException e) {
+            degradeToMiss("putIfNotHuman", normalizedKey, e);
+            return false;
+        }
+    }
+
+    /**
+     * 캐시 접근이 실패하면 "없는 셈"으로 강등한다 (fail-open, TRI-85 · D-045).
+     *
+     * <p>캐시는 편의 장치일 뿐이라 죽어도 접수·분류는 2단 DB→AI 로 계속 굴러가야 한다. 대신 조용히
+     * 삼키지 않는다 — 로그로 남기고 Sentry 로 올려 장애가 보이게 한다 (D-030).
+     *
+     * <p><b>어디까지 강등하는지는 경로마다 다르다.</b> 조회({@link #get})는 Redis 장애
+     * ({@link DataAccessException})와 <b>깨진 값</b>({@link SerializationException})을 둘 다 강등한다.
+     * 넣기({@link #put}·{@link #putIfNotHuman})는 {@link DataAccessException} 만 강등한다 — 넣을 값은
+     * 방금 만든 유효한 값이라, 그 직렬화가 깨지면({@link #writeJson} 의 {@link IllegalStateException})
+     * 우리 쪽 결함이므로 삼키지 않고 그대로 드러낸다.
+     *
+     * <p>키는 SHA-256 해시라 원문이 안 실려 로그에 남겨도 PII 가 아니다.
+     */
+    private static void degradeToMiss(String op, String normalizedKey, RuntimeException e) {
+        log.warn("캐시 {} 실패 — 없는 것으로 넘긴다 (fail-open, TRI-85). key={}", op, normalizedKey, e);
+        Sentry.captureException(e);
     }
 
     private String writeJson(CachedClassification value) {
@@ -138,7 +215,7 @@ public class ClassificationCache {
     }
 
     /** 이름공간 + 규칙 번호를 붙인 실제 Redis 키. */
-    static String redisKey(String normalizedKey) {
-        return KEY_NAMESPACE + RULE_VERSION + ":" + normalizedKey;
+    String redisKey(String normalizedKey) {
+        return KEY_NAMESPACE + ruleVersion + ":" + normalizedKey;
     }
 }

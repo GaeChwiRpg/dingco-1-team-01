@@ -66,7 +66,7 @@ public class ClassificationReuseLookup {
      * <p>실패는 두 층으로 나뉘고 <b>대처가 다르다.</b>
      *
      * <ul>
-     *   <li><b>1단 캐시 실패</b> → 2단 DB 로 넘어간다. 절감이 유지된다 ({@link #fromCache})
+     *   <li><b>1단 캐시 실패</b> → 캐시가 스스로 miss 로 떨어뜨린다 (fail-open, TRI-85). 2단 DB 로 넘어가 절감이 유지된다
      *   <li><b>2단 DB 실패</b> → 여기서 잡아 AI 호출로 넘긴다. 절감은 못 하지만 분류는 된다
      * </ul>
      *
@@ -98,7 +98,9 @@ public class ClassificationReuseLookup {
 
     /** 찾는 순서 그 자체. 실패 처리는 {@link #find} 가 감싼다. */
     private Optional<CachedClassification> lookup(String normalizedKey) {
-        Optional<CachedClassification> cached = fromCache(normalizedKey);
+        // 1단 캐시. Redis 장애·깨진 값은 캐시가 스스로 miss 로 강등한다 (fail-open, TRI-85) —
+        // 여기서 예외를 감쌀 필요가 없다. 2단 DB 실패만 find() 의 try-catch 가 받는다.
+        Optional<CachedClassification> cached = cache.get(normalizedKey);
         if (cached.isPresent()) {
             log.debug("reuse_hit tier=CACHE key={}", normalizedKey);
             return cached;
@@ -128,29 +130,5 @@ public class ClassificationReuseLookup {
 
         log.debug("reuse_miss key={}", normalizedKey);
         return Optional.empty();
-    }
-
-    /**
-     * 1단 캐시 조회. <b>실패하면 못 찾은 것으로 본다.</b>
-     *
-     * <p><b>임시 조치다 (TRI-85 가 제대로 한다).</b> {@code ClassificationCache} 는 지금 Redis 가
-     * 죽으면 예외를 던지는데, 그대로 두면 <b>캐시 장애가 분류 실패({@code verdict=FAILED})로
-     * 기록된다.</b> 그러면 측정 2 의 사유별 분포에 「AI 문제」와 「캐시 문제」가 섞여서, 나중에
-     * 분포를 봐도 무엇을 고쳐야 하는지 알 수 없다.
-     *
-     * <p>여기서 삼키는 대신 <b>2단 DB 조회가 그대로 남는다</b> — 캐시가 죽어도 절감은 유지되고
-     * 조회가 조금 느려질 뿐이다. 로그를 남기는 이유는 이 상태가 <b>조용히 지나가면 안 되기</b>
-     * 때문이다: 캐시가 계속 죽어 있으면 hit rate 가 0 인데 절감률은 살아 있는 모양이 되고,
-     * 그건 D-014 가 두 지표를 나눠 놓은 이유와 정확히 맞닿는다.
-     */
-    private Optional<CachedClassification> fromCache(String normalizedKey) {
-        try {
-            return cache.get(normalizedKey);
-        } catch (RuntimeException e) {
-            // 로그만 찍고 끝내는 것이 아니다 — miss 로 떨어뜨려 2단으로 넘긴다는 처리를 한다 (D-030).
-            log.warn("reuse_cache_unavailable key={} — 2단 DB 조회로 넘어간다 (TRI-85 전 임시 처리)",
-                    normalizedKey, e);
-            return Optional.empty();
-        }
     }
 }

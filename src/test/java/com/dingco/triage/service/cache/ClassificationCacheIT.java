@@ -16,6 +16,7 @@ import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.data.redis.DataRedisTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * 1단 캐시의 Redis 왕복 (TRI-40). 값이 JSON 으로 넣고 꺼내지는지, 조건 없는 {@code put} 이 실제로
@@ -33,6 +34,9 @@ class ClassificationCacheIT extends RedisContainerSupport {
 
     @Autowired
     private ClassificationCache cache;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @BeforeEach
     void flush(@Autowired RedisConnectionFactory connectionFactory) {
@@ -80,9 +84,21 @@ class ClassificationCacheIT extends RedisContainerSupport {
     }
 
     @Test
+    @DisplayName("Redis 는 살아있어도 값이 깨져 역직렬화 안 되면 예외 대신 empty(miss) — fail-open")
+    void get_corruptValue_returnsEmpty() {
+        // HUMAN 인데 confidence 가 있는 불변식 위반 값. 정상 팩토리로는 못 만들지만 외부 도구나
+        // 구버전이 같은 키에 써넣을 수 있다. 역직렬화가 canonical 생성자에서 터지는데(D-033),
+        // 이때 get 이 miss 로 강등하지 않으면 분류가 FAILED 로 둔갑한다 (F1).
+        stringRedisTemplate.opsForValue().set(cache.redisKey(KEY),
+                "{\"category\":\"DELIVERY\",\"confidence\":0.9,\"source\":\"HUMAN\",\"sourceResultId\":7}");
+
+        assertThat(cache.get(KEY)).isEqualTo(Optional.empty());
+    }
+
+    @Test
     @DisplayName("실제 키에 이름공간과 규칙 번호(v1)가 붙는다")
     void redisKey_hasNamespaceAndVersion() {
-        assertThat(ClassificationCache.redisKey("abc"))
+        assertThat(cache.redisKey("abc"))
                 .isEqualTo("classification:byNormalizedKey:v1:abc");
     }
 }
