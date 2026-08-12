@@ -26,6 +26,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.interceptor.SimpleKey;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -73,6 +76,12 @@ class ClassificationAuditSamplingIT {
 
     @Autowired
     private InquiryReviewQueueRepository queueRepository;
+
+    @Autowired
+    private StatsService statsService;
+
+    @Autowired
+    private CacheManager cacheManager;
 
     private Inquiry givenReceivedInquiry() {
         String marker = "감사표본테스트 " + UUID.randomUUID();
@@ -157,5 +166,40 @@ class ClassificationAuditSamplingIT {
         assertThat(queueOf(inquiry)).singleElement()
                 .extracting(InquiryReviewQueueItem::getReason)
                 .isEqualTo(QueueReason.CLASSIFY_FAILED);
+    }
+
+    @Test
+    @DisplayName("감사로 뽑혀 큐에 들어가면 적체 통계가 곧바로 갱신된다 — 10초를 기다리지 않는다")
+    void auditSampleRefreshesBacklogStats() {
+        // 이 케이스는 두 갈래가 합쳐지면서 <b>새로 생긴</b> 자리다 (TRI-65 감사 삽입 ↔ TRI-67 통계
+        // 캐시). 어느 한쪽만 보고 만들면 안 덮인다 — 감사 삽입은 큐를 늘리는데, 늘어난 것을
+        // 화면에 보이게 하는 것은 저쪽 몫이라 서로 상대가 했겠거니 하고 비게 된다.
+
+        // 1) 먼저 값을 한 번 읽어 캐시를 채운다.
+        long before = statsService.backlog().total();
+
+        // 2) ⚠️ 캐시가 정말 채워졌는지 확인하고 넘어간다. 이 줄이 없으면, 캐시가 꺼져 있어
+        //    매번 DB 를 새로 세는 상황에서도 아래 단언이 통과해 버린다 — 그러면 이 테스트는
+        //    evict 를 지워도 안 터지는, 아무것도 못 잡는 테스트가 된다.
+        Cache cache = cacheManager.getCache("stats:summary");
+        assertThat(cache).as("통계 캐시가 있어야 이 테스트에 의미가 있다").isNotNull();
+        assertThat(cache.get(SimpleKey.EMPTY))
+                .as("읽은 값이 캐시에 담겨야 「비워지는지」를 잴 수 있다").isNotNull();
+
+        // 3) 자동 확정 한 건. 이 클래스는 감사 비율이 1.0 이라 반드시 뽑혀 큐로 간다.
+        Inquiry inquiry = givenReceivedInquiry();
+        classificationService.verifyAndPersist(
+                inquiry.getId(),
+                AiParsedClassification.classified(InquiryCategory.DELIVERY, aboveThreshold()),
+                raw(), 1);
+
+        assertThat(queueOf(inquiry)).singleElement()
+                .extracting(InquiryReviewQueueItem::getReason)
+                .isEqualTo(QueueReason.AUDIT_SAMPLE);
+
+        // 4) 커밋 후 비우기가 돌았으므로 다시 세어 온다. 안 비웠으면 before 가 그대로 나온다.
+        assertThat(statsService.backlog().total())
+                .as("감사 표본도 검토 목록을 늘린다 — 늘어난 만큼 통계에 바로 보여야 한다")
+                .isEqualTo(before + 1);
     }
 }

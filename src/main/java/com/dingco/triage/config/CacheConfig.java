@@ -1,9 +1,7 @@
 package com.dingco.triage.config;
 
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.dingco.triage.service.StatsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
-import com.fasterxml.jackson.databind.jsontype.PolymorphicTypeValidator;
 import java.time.Duration;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
@@ -11,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
 
@@ -31,27 +29,32 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  * {@link ObjectMapper} 를 <b>복사해서</b> 쓴다 — 원본을 그대로 건드리면 이 설정이 HTTP 응답
  * JSON 직렬화에도 새어 들어간다.
  *
- * <p><b>복사본에 다형 타이핑(default typing)을 켠다 — 실제로 재현한 버그다.</b> 캐시에 담는
- * 값(예: {@code Backlog})은 record 라 전부 {@code final} 인데, 타이핑이 꺼져 있으면 저장할 때
- * 타입 정보({@code @class})를 안 남긴다. 처음 쓸 때는 문제없이 넘어가지만, TTL(10초) 안에
- * 같은 통계를 다시 읽으면 타입을 몰라 {@code LinkedHashMap} 으로 잘못 복원되고
- * {@code ClassCastException} 으로 500 이 난다.
+ * <p><b>담는 타입을 미리 못박는다 — 「무엇이든 담을 수 있는 캐시」로 만들지 않는다.</b>
+ * {@code stats:summary} 에 들어가는 값은 {@link StatsService.Backlog} 하나뿐이므로, 꺼낼 때
+ * 무슨 타입인지 <b>이미 알고 있다.</b> 그래서 값 안에 타입 이름을 적어 두는 방식(다형 타이핑)이
+ * 아니라 <b>타입을 지정한 직렬화기</b>({@link Jackson2JsonRedisSerializer})를 쓴다.
  *
- * <p>⚠️ {@code DefaultTyping.NON_FINAL} 로는 안 고쳐진다 — 그 옵션은 record 처럼
- * {@code final} 인 타입엔 애초에 타입 정보를 안 붙인다. {@code EVERYTHING} 이어야 record 에도
- * 붙는다.
+ * <p>이 선택은 아래 두 문제를 <b>동시에</b> 없앤다 — 둘 다 실제로 재현했다.
  *
- * <p>재현 방법: {@code NON_FINAL} 로 설정 → {@code backlog()} 호출(캐시 저장) → TTL(10초) 안에
- * 같은 메서드 재호출(캐시 조회) → {@code ClassCastException: class java.util.LinkedHashMap
- * cannot be cast to class ...StatsService$Backlog}.
+ * <ol>
+ *   <li><b>꺼낼 때 엉뚱한 타입이 되는 것.</b> 타입 정보 없이 담으면 record 가
+ *       {@code LinkedHashMap} 으로 복원돼 {@code ClassCastException} 으로 500 이 난다.
+ *       타입을 지정하면 담을 때가 아니라 <b>꺼낼 때 그 타입으로 읽으므로</b> 애초에 안 생긴다
+ *   <li><b>타입 이름을 적어 두면 그게 공격 통로가 되는 것.</b> 값 안의 타입 이름을 그대로 믿고
+ *       역직렬화하면, Redis 에 쓸 수 있는 공격자가 그 이름을 바꿔치기해 클래스패스의 아무
+ *       클래스나 만들어내게 할 수 있다 (CodeRabbit 지적, CWE-502). <b>이름을 아예 안 적으면
+ *       믿을 것도 없다</b>
+ * </ol>
  *
- * <p>⚠️ <b>타입 검증기는 스프링 기본값({@code getPolymorphicTypeValidator()})을 그대로 쓰지
- * 않는다</b> (CodeRabbit 지적, CWE-502). 기본값은 아무 타입이나 허용하는
- * {@code LaissezFaireSubTypeValidator} 라, {@code EVERYTHING} 과 같이 쓰면 <b>Redis 에 쓰기
- * 권한을 가진 공격자가 {@code @class} 값을 조작해 클래스패스의 아무 클래스나 역직렬화시킬 수
- * 있다</b> — 잘 알려진 Jackson RCE 경로다. 대신 이 캐시가 실제로 담는
- * {@code StatsService} 의 중첩 record 들만 허용하는 좁은 allow-list
- * ({@link BasicPolymorphicTypeValidator})를 쓴다.
+ * <p>⚠️ <b>다형 타이핑 + 좁은 허용 목록</b>으로는 이 둘을 같이 못 잡는다. 허용 목록을
+ * {@code StatsService} 중첩 타입으로만 좁히면 {@code Backlog} 안에 든 {@code EnumMap} 과
+ * {@code Long} 까지 거부돼 <b>두 번째 조회가 항상 실패한다.</b> 그렇다고 {@code java.util}·
+ * {@code java.lang} 을 열면 좁힌 의미가 옅어진다. 담는 타입이 하나로 정해져 있을 때는
+ * 다형 타이핑 자체가 필요 없는 장치다.
+ *
+ * <p><b>담는 타입이 늘어나면</b> 캐시 이름을 나눠 각각 타입을 지정한다 (계약 §7 의
+ * {@code aiCallSavings}·{@code cache}·{@code audit} 블록이 붙을 때). 한 캐시에 여러 타입을
+ * 섞기 시작하면 다시 다형 타이핑이 필요해지고, 그 순간 위 2번이 돌아온다.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableCaching
@@ -62,21 +65,15 @@ public class CacheConfig {
     @Bean
     RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory, ObjectMapper objectMapper) {
         ObjectMapper cacheObjectMapper = objectMapper.copy();
-        // stats:summary 에 실제로 담기는 값만 허용한다 — StatsService 의 중첩 record 들
-        // (Backlog 등, 앞으로 붙을 Classification·AiCallSavings·Audit 도 전부 여기 소속이다).
-        // 검증 없는 기본 검증기를 그대로 쓰면 아무 클래스나 역직렬화할 수 있게 된다 (CWE-502).
-        PolymorphicTypeValidator typeValidator = BasicPolymorphicTypeValidator.builder()
-                .allowIfSubType("com.dingco.triage.service.StatsService$")
-                .build();
-        cacheObjectMapper.activateDefaultTyping(
-                typeValidator, ObjectMapper.DefaultTyping.EVERYTHING, JsonTypeInfo.As.PROPERTY);
-        RedisSerializer<Object> jsonSerializer = new GenericJackson2JsonRedisSerializer(cacheObjectMapper);
-        RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer));
+        RedisSerializer<StatsService.Backlog> backlogSerializer =
+                new Jackson2JsonRedisSerializer<>(cacheObjectMapper, StatsService.Backlog.class);
+        RedisCacheConfiguration statsConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(Duration.ofSeconds(10))
+                .serializeValuesWith(
+                        RedisSerializationContext.SerializationPair.fromSerializer(backlogSerializer));
 
         return RedisCacheManager.builder(connectionFactory)
-                .cacheDefaults(defaultConfig)
-                .withCacheConfiguration(STATS_SUMMARY_CACHE, defaultConfig.entryTtl(Duration.ofSeconds(10)))
+                .withCacheConfiguration(STATS_SUMMARY_CACHE, statsConfig)
                 .build();
     }
 }
