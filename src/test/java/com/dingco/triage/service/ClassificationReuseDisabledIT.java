@@ -80,7 +80,14 @@ class ClassificationReuseDisabledIT {
                 9400L, "재사용스위치 " + UUID.randomUUID(), Channel.WEB, normalizedKey, Instant.now()));
     }
 
-    /** 같은 키로 이미 자동 확정된 답을 심는다 — 켜져 있었다면 2단이 이걸 찾아 재사용한다. */
+    /**
+     * 같은 키로 이미 자동 확정된 답을 심는다 — 켜져 있었다면 2단이 이걸 찾아 재사용한다.
+     *
+     * <p><b>이 한 줄이 트랜잭션 ②를 실제로 돌린다</b> — 판정 저장 + 커밋 후 캐시 넣기까지. 이름이
+     * {@code given...} 이라 준비만 하는 것처럼 보이지만, {@code stillWritesToCacheWhileDisabled}
+     * 에서는 <b>이것이 재는 대상 그 자체</b>다. AI 리뷰가 "넣기를 유발하는 코드가 없다"고 읽은
+     * 자리라 적어둔다 — 없었다면 그 테스트의 {@code verify} 가 통과할 수 없다.
+     */
     private void givenAutoAcceptedAnswerFor(String normalizedKey) {
         Inquiry earlier = givenReceivedInquiry(normalizedKey);
         classificationService.verifyAndPersist(
@@ -101,11 +108,15 @@ class ClassificationReuseDisabledIT {
         // 통과하는 테스트가 된다.
         assertThat(resultRepository.findLatestAutoAccepted(key)).isPresent();
 
+        // 바로 윗줄과 이 줄을 붙여 읽으면 그것이 곧 「2단이 안 돌았다」는 증거다 — 돌았다면
+        // 같은 쿼리가 같은 답을 줘서 비어 있을 수가 없다. 그래서 2단은 따로 verify 하지 않는다
+        // (AI 리뷰 제안). 저 리포지토리는 진짜 빈이라 verify 자체가 안 되기도 한다.
         assertThat(reuseLookup.find(key)).isEmpty();
 
-        // 1단도 안 봤다. 여기서 보는 이유는 이 경로가 실제로 find 를 지나기 때문이다 —
-        // find 를 부르지 않는 테스트에서 이 단언을 하면 캐시를 읽는 코드가 여기밖에 없어서
-        // 스위치를 지워도 통과한다 (헌법 감사 지적).
+        // 1단은 위와 같은 방식으로 못 본다 — 캐시를 모의 객체로 뒀으니 읽었어도 빈 값이라
+        // 결과가 같다. 그래서 여기만 호출 여부로 확인한다. 이 단언이 뜻을 가지는 이유는
+        // 이 경로가 실제로 find 를 지나기 때문이다 — find 를 부르지 않는 테스트에 두면
+        // 캐시를 읽는 코드가 거기밖에 없어서 스위치를 지워도 통과한다 (헌법 감사 지적).
         verify(cache, never()).get(any());
     }
 

@@ -117,8 +117,18 @@ public record ClassificationProperties(
     public record Reuse(Boolean enabled) {
 
         public Reuse {
-            // 블록은 있는데 enabled 만 빠진 경우다. record 라 primitive 로 받으면 이때 조용히
-            // false 가 되는데, 그건 「안 적었으니 끈다」라서 위 @param 이 막으려는 상태 그대로다.
+            // ⚠️ 지금 설정 파일로는 이 자리에 못 온다 — 실험으로 확인했다 (CodeRabbit 지적).
+            //
+            // 이 record 의 컴포넌트가 enabled 하나뿐이라, 스프링이 Reuse 를 만들려면 enabled 가
+            // 있어야 한다. 없으면 Reuse 자체가 안 만들어져 바깥 생성자의 「블록 없음」 분기로 간다.
+            // classification.reuse.other-day 같은 모르는 값을 적어도 마찬가지다.
+            //
+            // 그런데도 두는 이유는 컴포넌트가 하나 더 늘어나는 순간 도달하기 때문이다. 그때
+            // enabled 를 안 적으면 여기로 null 이 들어오는데, primitive 로 받았으면 그 순간
+            // 조용히 false 가 된다 — 위 @param 이 막으려는 상태 그대로다.
+            //
+            // 「지금은 안 도는 가지」임을 테스트도 그대로 적는다 — ClassificationReusePropertyTest
+            // 는 이 기본값을 바인딩이 아니라 record 를 직접 만들어 확인한다.
             if (enabled == null) {
                 enabled = true;
             }
