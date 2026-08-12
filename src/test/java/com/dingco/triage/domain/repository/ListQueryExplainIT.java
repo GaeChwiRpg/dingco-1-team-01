@@ -25,7 +25,7 @@ import org.springframework.test.context.ActiveProfiles;
  * 인덱스를 이름만 바꿔 또 만들면 중복이라 쓰기 비용만 는다(D-018 계보). 그래서 이 티켓의 알맹이는
  * <b>이미 있는 인덱스의 계획을 실측으로 확인</b>하는 것이다 — 인덱스 <b>DROP 전/후</b>를 둘 다 뜬다.
  *
- * <p><b>돌리는 법</b> — 10만 건을 심어 느리므로 스위치로 켠다. 출력을 evidence 에 옮긴다:
+ * <p><b>실행방법</b> — 10만 건을 심어 느리므로 스위치로 켠다. 출력을 evidence 에 옮긴다:
  * <pre>{@code
  * EXPLAIN_MEASURE=true ./gradlew test --tests '*ListQueryExplainIT'
  * }</pre>

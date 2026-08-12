@@ -58,7 +58,49 @@
 JPQL을 임시로 만들어 재실행하면 된다(같은 값이 결정적으로 나온다 — Hibernate 통계는 실행 환경이
 아니라 실행된 쿼리 수 자체를 센다).
 
-## 남은 것 (TRI-57 범위 밖)
+## 10만 건 — `@EntityGraph` vs 프로젝션 (측정 5ⓖ, TRI-87)
 
-응답에 나가는 값은 6개뿐이라 "처음부터 6개 칸만 읽는" 방법(DTO 프로젝션)이 `@EntityGraph`보다
-빠를 수 있다. 두 방법을 나란히 재는 것은 **TRI-87**이다.
+> 위에서 남긴 질문에 대한 답이다. N+1은 `@EntityGraph`로 이미 없앴지만(SQL 1회 고정), 응답에
+> 나가는 값은 6개뿐이라 처음부터 6칸만 읽는 프로젝션이 더 빠를 수 있다는 질문은 그대로였다.
+
+### 실측 값 (2026-08-13, rows=100,000, 각 5회 평균)
+
+`InquiryReviewQueueRepository.search`(`@EntityGraph`, 기존)와 새로 추가한
+`searchProjected`(6칼럼만 JPQL로 직접 뽑는 프로젝션)를 같은 조건(`status='PENDING'`, 페이지
+크기 20)으로 각각 5번 호출해 Hibernate `Statistics.getPrepareStatementCount()`와 걸린 시간을
+같이 쟀다.
+
+| 방법 | 호출당 SQL 문 수 | 평균 응답 시간 |
+| --- | --- | --- |
+| `@EntityGraph` (통째로 읽기) | 2회 | 644ms |
+| 프로젝션 (6칸만 읽기) | 2회 | 399ms |
+
+(SQL 문이 둘 다 2회인 이유: 목록 쿼리 1 + `Page`가 붙이는 `COUNT` 쿼리 1. 10만 건 중 20건만
+보여주므로 — 결과 건수가 페이지 크기와 같아 `COUNT` 생략 최적화 경계에 안 걸린다 — 두 방식
+모두 `COUNT`가 붙는다. TRI-57 평가 때는 일부러 페이지 크기보다 작은 건수로 이 경계를 피했지만,
+여기서는 10만 건 규모의 실제 조건을 그대로 쓴다.)
+
+### 판정
+
+- **쿼리 개수는 동일**(2회)하다 — 프로젝션이 빠른 이유는 왕복 횟수를 줄여서가 아니다.
+- **응답 시간은 프로젝션이 약 38% 빠르다**(644ms → 399ms, 5회 평균 245ms 절약). `@EntityGraph`는
+  큐·문의·분류결과 3개 테이블의 컬럼을 전부 엔티티로 매핑하고 지연 로딩 프록시까지 구성하는 반면,
+  프로젝션은 응답에 실제 필요한 6칸만 바로 매핑한다 — 이 매핑·객체 생성 비용 차이로 보인다.
+- **채택**: 프로젝션(`searchProjected`)을 최종으로 쓴다. 쿼리 수는 같고 응답 시간만 확실히 줄어
+  손해 볼 이유가 없다. 다만 이 PR에서는 `search`를 지우지 않고 **`searchProjected`를 controller/
+  service 가 실제로 쓰도록 교체**하는 작업이 별도로 남는다 — 이 평가 자체는 "어느 쪽이 빠른가"만
+  재는 것이 목적이라 교체는 후속 작업으로 분리한다.
+- **한계**: 절대 시간(644ms/399ms)은 이번 측정 환경(Windows + Docker Desktop, I/O가 느림)의
+  영향을 크게 받아 운영 환경보다 부풀려져 있을 가능성이 높다. **상대 차이(38% 빠름)**를 결론의
+  근거로 삼는다.
+
+### 재현법
+
+```bash
+$env:EXPLAIN_MEASURE = 'true'   # PowerShell. bash 는 EXPLAIN_MEASURE=true
+./gradlew test --tests '*ReviewQueueEntityGraphVsProjectionIT'
+```
+
+결과는 `build/review-queue-projection-report.md`에 남는다 (커밋 대상 아님 — `build/` 산출물).
+10만 건 시드는 `ReviewQueueDeepPageExplainIT`와 같은 조건(`inquiry_review_queue`에 10만 건
+이상 있으면 건너뜀)을 공유한다.

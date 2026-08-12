@@ -18,6 +18,10 @@ public class MySqlTestContainer {
     @Bean
     @ServiceConnection
     MySQLContainer<?> mysqlContainer() {
-        return new MySQLContainer<>(DockerImageName.parse("mysql:8.0"));
+        // rewriteBatchedStatements 없이는 JDBC batch insert 가 실제로는 한 건씩 나가 대량 시드가
+        // 극도로 느려진다(측정 5 류의 10만 건 IT 에서 실측 확인, TRI-87). multi-row INSERT 로
+        // 합쳐 보내게 하는 표준 성능 옵션이라 다른 테스트에 부작용은 없다.
+        return new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))
+                .withUrlParam("rewriteBatchedStatements", "true");
     }
 }
