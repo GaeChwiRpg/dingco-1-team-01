@@ -12,10 +12,13 @@ name: team-pr-guard
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    # PR 본문 검증이므로 새 커밋만 추가되는 synchronize 이벤트는 재검증하지 않는다.
+    types: [opened, edited, reopened]
 
 jobs:
   validate-pr-body:
+    # CodeRabbit의 자동 본문 편집에는 러너를 배정하지 않는다.
+    if: ${{ github.actor != 'coderabbitai[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

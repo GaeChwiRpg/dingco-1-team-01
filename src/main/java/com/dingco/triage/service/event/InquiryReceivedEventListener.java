@@ -1,8 +1,11 @@
 package com.dingco.triage.service.event;
 
 import com.dingco.triage.config.AsyncConfig;
+import com.dingco.triage.service.ClassificationReuseLookup;
 import com.dingco.triage.service.ClassificationService;
 import com.dingco.triage.service.ContentMasker;
+import com.dingco.triage.service.cache.CachedClassification;
+import java.util.Optional;
 import com.dingco.triage.service.ai.ClassifyAttempt;
 import com.dingco.triage.service.ai.RetryingAiClassifier;
 import lombok.RequiredArgsConstructor;
@@ -29,14 +32,33 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * <p><b>여기에는 트랜잭션이 없다.</b> {@code @Async} 로 넘어온 이 메서드는 접수 트랜잭션과 아무
  * 관계가 없고, 저장 묶음 ②는 {@code verifyAndPersist} 안에서 새로 열린다.
  *
- * <p><b>아직 AI 호출 갈래만 있다.</b> 캐시(1단)·DB(2단) 재사용 조회는 P1 의 TRI-40·41 이 올라온
- * 뒤 이 위에 들어간다. 지금 자리를 미리 만들어두지 않은 이유는 계약 C 의 값 구조를 P2 가
- * 먼저 확정해버리는 셈이 되기 때문이다 — 그건 세 담당자 합의 사항이다.
+ * <p><b>갈래는 둘이다 — 재사용이 먼저다 (D-031).</b>
+ *
+ * <pre>
+ * 재사용 조회 ─ 찾음 ─→ AI 를 부르지 않고 REUSED 로 ②
+ *      ↓ 못 찾음
+ * 가리기 → AI 호출 → 값 검증 → ②
+ * </pre>
+ *
+ * <p>찾는 순서(1단 캐시 → 2단 DB 1순위 → 2순위)는 {@link ClassificationReuseLookup} 안에 있다.
+ * 여기서 다시 쓰지 않는 이유는 <b>같은 순서가 두 곳에 있으면 어긋나기 때문</b>이다.
+ *
+ * <p><b>재사용은 꺼져 있을 수 있다</b> ({@code classification.reuse.enabled=false}, TRI-90 · D-062).
+ * 그때는 조회가 <b>항상 비어서</b> 모든 문의가 아래 AI 갈래로 간다 — 측정 1·8ⓐ-1 을 잴 때 쓰는
+ * 상태다. <b>여기에는 그 분기가 없다.</b> 스위치를 저 안에 둔 이유는 1단·2단이 <b>함께</b> 꺼져야
+ * 하기 때문이고, 여기서 끄면 캐시 조회만 건너뛰고 DB 조회가 남는 <b>반만 꺼진 상태</b>를 만들 수
+ * 있다. 꺼져 있어도 <b>저장·캐시 넣기는 그대로 돈다</b> (D-062 ⓓ).
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 class InquiryReceivedEventListener {
+
+    /**
+     * 같은 내용의 답이 이미 있는지 찾는다 (TRI-47). <b>AI 호출보다 먼저 부른다</b> — 이게 이
+     * 시스템이 AI 호출을 아끼는 유일한 경로다 (D-031).
+     */
+    private final ClassificationReuseLookup reuseLookup;
 
     private final ContentMasker contentMasker;
 
@@ -64,6 +86,17 @@ class InquiryReceivedEventListener {
     @Async(AsyncConfig.CLASSIFY_EXECUTOR)
     @TransactionalEventListener
     public void onInquiryReceived(InquiryReceivedEvent event) {
+        // ── 재사용 조회가 AI 호출보다 먼저다 (D-031 2단 절감 경로).
+        //
+        // 찾으면 AI 를 아예 부르지 않는다. 순서(1단 캐시 → 2단 DB 1순위 → 2순위)는 저 안에
+        // 가둬 뒀다 — 여기서 순서를 다시 쓰면 두 곳이 어긋날 수 있다.
+        Optional<CachedClassification> reusable = reuseLookup.find(event.normalizedKey());
+        if (reusable.isPresent()) {
+            // 마스킹도 건너뛴다 — 가리는 이유는 AI 로 내보내기 위해서인데 안 내보낸다.
+            classificationService.persistReuse(event.inquiryId(), reusable.get());
+            return;
+        }
+
         // 개인정보를 가리고 보낸다. 가리는 규칙은 정규화와 같은 구현을 쓴다 (D-040) —
         // 두 벌이면 한쪽만 조여져서 화면에는 가려지는데 프롬프트에는 남는다.
         String maskedContent = contentMasker.mask(event.content());
