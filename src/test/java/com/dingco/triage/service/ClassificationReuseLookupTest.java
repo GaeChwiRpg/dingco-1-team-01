@@ -106,13 +106,14 @@ class ClassificationReuseLookupTest {
         @Test
         @DisplayName("캐시가 죽어도 2단 DB 로 넘어간다 — 분류가 통째로 멈추지 않는다")
         void fallsBackToDatabaseWhenCacheIsDown() {
-            when(cache.get(KEY)).thenThrow(new RuntimeException("Redis 연결 실패"));
+            // TRI-85 후: 캐시가 죽으면 ClassificationCache 가 스스로 miss(빈 결과)로 강등한다
+            // (fail-open). 소비 측은 그 빈 결과를 받아 2단 DB 로 이어가야 한다 — 확인 대상이
+            // 「예외 전파」에서 「빈 결과 처리」로 바뀌었을 뿐, 검증하려는 성질은 같다.
+            when(cache.get(KEY)).thenReturn(Optional.empty());
             when(resultRepository.findLatestHumanConfirmed(KEY)).thenReturn(
                     Optional.of(resultWithId(11L, InquiryCategory.PAYMENT, new BigDecimal("0.900"),
                             InquiryCategory.PAYMENT)));
 
-            // 예외가 밖으로 나가면 캐시 장애가 verdict=FAILED 로 기록되고, 측정 2 의 사유별
-            // 분포에 「AI 문제」와 「캐시 문제」가 섞인다.
             assertThat(lookup.find(KEY)).isPresent();
             verify(resultRepository).findLatestHumanConfirmed(KEY);
         }
