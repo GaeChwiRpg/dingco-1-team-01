@@ -1,0 +1,1 @@
+{"classification":{"stuckReceived":0},"backlog":{"total":33,"byReason":{"LOW_CONFIDENCE":30,"CLASSIFY_FAILED":3},"oldestPendingAt":"2026-08-12T13:38:00.997432Z"},"audit":{"configuredSampleRate":0.05,"autoAccepted":{"eligibleTotal":41,"sampledTotal":7,"actualSampleRate":0.171},"reused":{"eligibleTotal":32,"sampledTotal":3,"actualSampleRate":0.094}}}

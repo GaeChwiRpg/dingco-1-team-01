@@ -1,0 +1,1 @@
+{"id":62,"content":"택배가 문 앞에 없는데 배송완료로 되어 있어요. [연락처] 로 연락 주세요.","channel":"PHONE","status":"CLASSIFIED","category":"DELIVERY","confidence":null,"receivedAt":"2026-08-12T14:32:40.320627Z","classifications":[{"id":62,"category":"DELIVERY","confidence":null,"verdict":"REUSED","finalCategory":null,"model":"reused:13","attemptCount":1,"createdAt":"2026-08-12T14:32:40.330214Z"}]}

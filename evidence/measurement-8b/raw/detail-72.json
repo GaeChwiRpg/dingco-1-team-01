@@ -1,0 +1,1 @@
+{"id":72,"content":"무통장 입금으로 바꾸고 싶은데 결제 수단 변경이 되나요?","channel":"WEB","status":"UNCLASSIFIED","category":"PAYMENT","confidence":0.750,"receivedAt":"2026-08-12T14:32:40.611377Z","classifications":[{"id":72,"category":"PAYMENT","confidence":0.750,"verdict":"NEEDS_REVIEW","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T14:32:43.702518Z"}]}

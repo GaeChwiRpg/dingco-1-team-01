@@ -12,9 +12,14 @@
 #   ⑤ 감사 확정   감사로 뽑힌 건을 PATCH 로 확정 (8ⓐ-2 는 여기서 나온다)
 #
 # 사용법:
-#   evidence/measurement-1-8a/run.sh              전량 50건 (본 측정)
+#   evidence/measurement-1-8a/run.sh              측정 1·8ⓐ — 재사용 **끄고** (전량 50건)
+#   MEASURE=8b evidence/measurement-1-8a/run.sh   측정 8ⓑ  — 재사용 **켜고**
 #   LIMIT=3 evidence/measurement-1-8a/run.sh      앞 3건만 (시험 실행)
 #   BASE_URL=http://localhost:8080 evidence/measurement-1-8a/run.sh
+#
+# ⚠️ 두 측정은 조건이 정반대다. 8ⓐ 는 AI 가 답한 건을 재려고 재사용을 끄고, 8ⓑ 는
+#    재사용된 건을 재려고 켠다. **한쪽 조건으로 다른 쪽을 재면 분모가 0 이 되거나
+#    표본이 줄어드는데 둘 다 눈에 잘 안 띈다** — 그래서 스크립트가 모드별로 막는다.
 #
 # ⚠️ LIMIT 은 「하네스가 끝까지 도는지」를 보려고 두는 것이지 측정을 줄이려는 게 아니다.
 #    3건으로는 확신도 구간이 안 채워지고 감사 표본은 거의 확실히 0 이라, 그 결과로
@@ -27,7 +32,12 @@ cd "$(git rev-parse --show-toplevel)"
 BASE_URL=${BASE_URL:-http://localhost:8080}
 APP_CONTAINER=${APP_CONTAINER:-dingco-1-team-01-app-1}
 SEED=src/test/resources/seed/inquiries-50.csv
+MEASURE=${MEASURE:-1-8a}
+
+# 측정마다 원자료를 따로 둔다. 한 디렉토리에 섞으면 조건이 정반대인 두 실행이 같은
+# 파일 이름을 쓰게 되고, 나중에 어느 숫자가 어느 조건의 것인지 못 가린다.
 OUT=evidence/measurement-1-8a/raw
+[ "$MEASURE" = "8b" ] && OUT=evidence/measurement-8b/raw
 WAIT_TIMEOUT=${WAIT_TIMEOUT:-900}   # 초. 넘으면 남은 건수를 기록하고 다음 단계로 간다
 
 # 역할별 헤더. 접수는 고객, 조회·확정은 상담원, 통계는 매니저다 — 측정이라고 한 역할로
@@ -63,10 +73,29 @@ curl -sf -o /dev/null "$BASE_URL/actuator/health" || die "앱이 안 뜬다: $BA
 # 아직 없어서 앱에게 직접 물을 방법이 없다. 손으로 적으면 틀릴 수 있고, 틀린 조건은
 # 숫자를 통째로 무효로 만든다.
 REUSE=$(docker exec "$APP_CONTAINER" printenv CLASSIFICATION_REUSE_ENABLED 2>/dev/null || echo "")
-if [ "$REUSE" != "false" ]; then
-    cat >&2 <<EOF
+REUSE=${REUSE:-true}   # 설정 안 됐으면 켜짐이 기본이다 (D-062)
 
-재사용이 꺼져 있지 않다 (CLASSIFICATION_REUSE_ENABLED='${REUSE:-설정 안 됨}').
+if [ "$MEASURE" = "8b" ]; then
+    # 8ⓑ 는 정반대 조건이다 — 재사용된 건이 틀린 비율을 재므로 켜져 있어야 한다.
+    # 꺼진 채로 돌리면 REUSED 판정이 하나도 안 생겨 "잰 것이 없다"가 된다.
+    if [ "$REUSE" != "true" ]; then
+        cat >&2 <<EOF
+
+측정 8ⓑ 인데 재사용이 꺼져 있다 (CLASSIFICATION_REUSE_ENABLED='$REUSE').
+
+  8ⓑ 는 「재사용해서 확정된 건이 틀린 비율」이다. 꺼두면 REUSED 판정이 하나도
+  안 생겨서 분모가 0 이 된다 — 잰 것이 없는데 잰 것처럼 보인다.
+
+  켜는 법 (환경변수 없이 띄우면 켜짐이 기본이다):
+    docker compose up -d --force-recreate app
+EOF
+        die "재사용을 켜고 다시 실행한다"
+    fi
+else
+    if [ "$REUSE" != "false" ]; then
+        cat >&2 <<EOF
+
+재사용이 꺼져 있지 않다 (CLASSIFICATION_REUSE_ENABLED='$REUSE').
 
   켜진 채로 재면 같은 내용의 문의가 AI 를 건너뛴다. 50건 중 뜻이 같은 묶음이 12건
   있어서, 정답과 대조할 표본이 조용히 줄어든다 (D-043 ⓒ). 8ⓐ-1 은 "자동 확정된 건이
@@ -76,8 +105,11 @@ if [ "$REUSE" != "false" ]; then
     CLASSIFICATION_REUSE_ENABLED=false docker compose up -d --force-recreate app
 
   ⚠️ 실행 중에는 못 바꾼다 (D-028). 반드시 재기동해야 한다.
+
+  ※ 재사용을 켜고 재는 측정 8ⓑ 를 하려면: MEASURE=8b 로 실행한다
 EOF
-    die "재사용을 끄고 다시 실행한다"
+        die "재사용을 끄고 다시 실행한다"
+    fi
 fi
 
 MODEL=$(docker exec "$APP_CONTAINER" printenv ANTHROPIC_MODEL 2>/dev/null || echo "")
@@ -94,8 +126,13 @@ SAMPLE_RATE=${SAMPLE_RATE:-$(yml_value sample-rate)}
 # 실제로 쓰인 모델 id 는 AI 응답이 말한 값이라, 아래 값은 「설정」이고 ④에서 모으는
 # classifications[].model 이 「실제」다. 둘이 다르면 analyze.py 가 경고한다.
 {
+    echo "측정             : $MEASURE"
     echo "실행 시각        : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "재사용(reuse)    : $REUSE   ← 반드시 false"
+    if [ "$MEASURE" = "8b" ]; then
+        echo "재사용(reuse)    : $REUSE   ← 8ⓑ 는 반드시 true"
+    else
+        echo "재사용(reuse)    : $REUSE   ← 측정 1·8ⓐ 는 반드시 false"
+    fi
     echo "모델(설정값)     : $MODEL"
     echo "자동확정 기준값  : $THRESHOLD"
     echo "감사 비율(설정)  : $SAMPLE_RATE"

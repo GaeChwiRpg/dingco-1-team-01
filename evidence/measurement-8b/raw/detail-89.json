@@ -1,0 +1,1 @@
+{"id":89,"content":"쿠폰을 넣었는데 할인이 적용이 안 돼요.","channel":"WEB","status":"CLASSIFIED","category":"PROMOTION","confidence":0.850,"receivedAt":"2026-08-12T14:32:41.229433Z","classifications":[{"id":86,"category":"PROMOTION","confidence":0.850,"verdict":"REUSED","finalCategory":null,"model":"reused:51","attemptCount":1,"createdAt":"2026-08-12T14:32:46.539496Z"}]}

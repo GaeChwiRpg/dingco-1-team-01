@@ -184,7 +184,7 @@ def print_conditions(raw: Path, runs):
         verdicts.items(), key=lambda kv: str(kv[0]))))
 
     reused = verdicts.get("REUSED", 0)
-    if reused:
+    if reused and "8b" not in text:
         print(f"\n⚠️ 재사용 판정이 {reused}건 있다. 재사용을 끄고 재야 하는데 켜져 있었거나,"
               f"\n   끄기 전에 들어간 건이 섞였다. 8ⓐ-1 의 분모가 줄어든 상태다 (D-043 ⓒ).")
     not_posted = [r for r in runs if not r["posted"]]
@@ -262,6 +262,64 @@ def print_measure_8a2(runs, wrong_total):
     print("   · 확정에 넣은 답은 정답지다. 「완벽한 감사자」를 가정한 값이고,")
     print("     상담원의 판단 오차는 반영되지 않았다 (그건 측정 12 소관)")
     print("   · 8ⓐ-1 과 8ⓐ-2 의 차이가 곧 「5% 샘플링이 놓치는 몫」이다")
+
+
+def print_measure_8b(runs):
+    """측정 8ⓑ — 재사용해서 확정된 건이 틀린 비율.
+
+    <b>8ⓐ 와 절대 합치지 않는다 (D-033).</b> 8ⓐ 는 「AI 답 vs 사람 답」 비교이지만
+    재사용 건에는 <b>비교할 AI 답이 없다</b> — 그 문의에 대해 AI 를 부른 적이 없기 때문이다.
+    """
+    reused = [r for r in runs if r.get("verdict") == "REUSED"]
+    if not reused:
+        return
+
+    title("[8ⓑ] 재사용해서 확정된 건이 틀린 비율")
+    print("⚠️ 8ⓐ 와 합치지 않는다 (D-033). 재사용 건에는 비교할 AI 답이 없다 —")
+    print("   그 문의에 대해 AI 를 부른 적이 없기 때문이다.\n")
+
+    wrong = [r for r in reused if r["category"] != r["expected"]]
+    print(f"재사용으로 확정된 수 : {len(reused)}")
+    print(f"그중 틀린 수         : {len(wrong)}")
+    print(f"오분류율             : {fmt(rate(len(wrong), len(reused)))}")
+
+    if wrong:
+        print("\n틀린 건 (seed id: 재사용한 답 → 정답)")
+        for r in sorted(wrong, key=lambda x: x["seed_id"]):
+            print(f"  {r['seed_id']:>3}: {r['category']} → {r['expected']}")
+        print("\n  원인이 둘일 수 있고 이 표만으로는 안 갈린다.")
+        print("   ① 원본이 틀렸다 — 한 번 틀린 답이 같은 내용 전부로 퍼졌다")
+        print("   ② 정규화 키가 과도 병합했다 — 다른 문의가 한 키로 묶여 엉뚱한 답을 물려받았다")
+        print("   ②는 원본이 멀쩡해도 일어나고, 그때는 8ⓐ 에 아무 흔적도 안 남는다.")
+        print("   가리려면 각 건의 model 컬럼(원본 결과 id)을 따라가 원본의 정오를 본다.")
+
+    # 사람 답을 재사용한 건은 confidence 가 null 이다 (D-033). AI 답 재사용과 섞이면
+    # "사람이 정한 답도 틀리더라"와 "AI 답이 퍼지더라"가 한 숫자가 된다.
+    from_human = [r for r in reused if r["confidence"] is None]
+    if from_human:
+        wrong_h = [r for r in from_human if r["category"] != r["expected"]]
+        print(f"\n그중 사람 답을 재사용한 건: {len(from_human)}건 · 틀린 {len(wrong_h)}건"
+              f" · {fmt(rate(len(wrong_h), len(from_human)))}")
+        print("  「사람이 정했다」는 사실이 신뢰의 근거가 되어 아무도 의심하지 않는 자리다 (D-033).")
+
+
+def print_8b_comparison(runs, reference):
+    """8ⓐ 와 8ⓑ 를 나란히 둔다 — 재사용이 오류를 증폭하는지 보는 자리."""
+    reused = [r for r in runs if r.get("verdict") == "REUSED"]
+    if not reused or reference is None:
+        return
+
+    title("[8ⓐ vs 8ⓑ] 재사용이 오류를 증폭하고 있나")
+    wrong = sum(1 for r in reused if r["category"] != r["expected"])
+    rate_8b = rate(wrong, len(reused))
+    print(f"8ⓐ (자동 확정, 지난 측정): {fmt(reference)}")
+    print(f"8ⓑ (재사용, 이번 측정)   : {fmt(rate_8b)}")
+    print("\n계약 §7 이 정해둔 읽는 법:")
+    print("  8ⓑ ≈ 8ⓐ  → 재사용이 정확도를 떨어뜨리지 않는다. AI 호출을 아낀 만큼 이득")
+    print("  8ⓑ > 8ⓐ  → 재사용이 오류를 증폭하고 있다는 신호다.")
+    print("             그때는 사람 확정 재사용을 끄는 것이 재평가 조건이다")
+    print("\n⚠️ 두 값은 다른 실행에서 나왔다. 같은 조건이 아니므로 차이를 그대로")
+    print("   「증폭분」이라고 부르지 않는다 — 조건이 정반대라 한 번에 못 잰다.")
 
 
 def print_draft_comparison(runs, draft):
@@ -373,15 +431,29 @@ def print_audit_rate(raw: Path, runs):
         print("\n⚠️ stats-before.json 이 없어 누적분을 뺄 수 없다 — 위 값은 DB 전체 누적이다")
         return
 
-    prev = (json.loads(before.read_text()).get("audit") or {}).get("autoAccepted") or {}
-    curr = audit.get("autoAccepted") or {}
-    if prev.get("eligibleTotal") is None:
+    prev_audit = json.loads(before.read_text()).get("audit") or {}
+    if not prev_audit:
         print("\n⚠️ 측정 전 스냅샷에 audit 이 없다(앱이 그때는 TRI-66 이전 판이었다)")
         return
 
-    delta_eligible = curr.get("eligibleTotal", 0) - prev.get("eligibleTotal", 0)
-    delta_sampled = curr.get("sampledTotal", 0) - prev.get("sampledTotal", 0)
-    print(f"\n이번 실행분(측정 후 − 측정 전): 자동확정 {delta_eligible}건 중 {delta_sampled}건 뽑힘"
+    # ⚠️ 두 블록을 **합쳐서** 뺀다 (8ⓑ 실행에서 드러난 결함).
+    #
+    # 앞선 판은 autoAccepted 만 비교했다. 재사용을 켜고 재면 감사 표본이 reused 쪽에서
+    # 나오는데, 그러면 「큐 기준 3건 vs 통계 기준 0건」으로 어긋난 것처럼 보인다 —
+    # 장치가 멀쩡한데 고장 신호를 내는 것이라, 진짜 어긋남과 구분되지 않는다.
+    delta_eligible = delta_sampled = 0
+    parts = []
+    for key, label in (("autoAccepted", "자동확정"), ("reused", "재사용")):
+        prev, curr = prev_audit.get(key) or {}, audit.get(key) or {}
+        de = curr.get("eligibleTotal", 0) - prev.get("eligibleTotal", 0)
+        ds = curr.get("sampledTotal", 0) - prev.get("sampledTotal", 0)
+        delta_eligible += de
+        delta_sampled += ds
+        if de:
+            parts.append(f"{label} {de}건 중 {ds}건")
+
+    print(f"\n이번 실행분(측정 후 − 측정 전): {' · '.join(parts) or '없음'}")
+    print(f"  합계: {delta_eligible}건 중 {delta_sampled}건 뽑힘"
           f" → {fmt(rate(delta_sampled, delta_eligible))}")
 
     # 두 경로로 센 값이 어긋나면 어느 한쪽이 틀린 것이다. 한쪽만 있으면 어긋난 줄도 모른다.
@@ -397,6 +469,8 @@ def print_audit_rate(raw: Path, runs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw", default=str(Path(__file__).parent / "raw"))
+    parser.add_argument("--compare-8a", type=float, default=None,
+                        help="지난 8ⓐ 오분류율. 주면 8ⓑ 와 나란히 놓고 증폭 여부를 본다")
     args = parser.parse_args()
 
     raw = Path(args.raw)
@@ -410,6 +484,8 @@ def main():
     print_measure_1(runs)
     wrong_total = print_measure_8a1(runs)
     print_measure_8a2(runs, wrong_total)
+    print_measure_8b(runs)
+    print_8b_comparison(runs, args.compare_8a)
     print_draft_comparison(runs, load_draft_labels())
     print_two_baselines(runs, load_second_labels())
     print_boundary(runs)

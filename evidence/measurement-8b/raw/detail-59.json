@@ -1,0 +1,1 @@
+{"id":59,"content":"어제 주문했는데 아직 배송 시작이 안 됐어요. 언제 출발하나요?","channel":"APP","status":"CLASSIFIED","category":"DELIVERY","confidence":null,"receivedAt":"2026-08-12T14:32:40.228885Z","classifications":[{"id":59,"category":"DELIVERY","confidence":null,"verdict":"REUSED","finalCategory":null,"model":"reused:7","attemptCount":1,"createdAt":"2026-08-12T14:32:40.239514Z"}]}

@@ -1,0 +1,1 @@
+{"id":81,"content":"회원 탈퇴하고 싶습니다. 어디서 하는지 알려주세요.","channel":"WEB","status":"CLASSIFIED","category":"ACCOUNT","confidence":0.950,"receivedAt":"2026-08-12T14:32:40.997387Z","classifications":[{"id":85,"category":"ACCOUNT","confidence":0.950,"verdict":"AUTO_ACCEPTED","finalCategory":null,"model":"claude-sonnet-5","attemptCount":1,"createdAt":"2026-08-12T14:32:46.530004Z"}]}
