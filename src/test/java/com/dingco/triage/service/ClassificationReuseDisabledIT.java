@@ -83,10 +83,21 @@ class ClassificationReuseDisabledIT {
     /**
      * 같은 키로 이미 자동 확정된 답을 심는다 — 켜져 있었다면 2단이 이걸 찾아 재사용한다.
      *
-     * <p><b>이 한 줄이 트랜잭션 ②를 실제로 돌린다</b> — 판정 저장 + 커밋 후 캐시 넣기까지. 이름이
-     * {@code given...} 이라 준비만 하는 것처럼 보이지만, {@code stillWritesToCacheWhileDisabled}
-     * 에서는 <b>이것이 재는 대상 그 자체</b>다. AI 리뷰가 "넣기를 유발하는 코드가 없다"고 읽은
-     * 자리라 적어둔다 — 없었다면 그 테스트의 {@code verify} 가 통과할 수 없다.
+     * <p><b>이 메서드가 트랜잭션 ②를 실제로 돌린다.</b> 지나는 길은 이렇다.
+     *
+     * <pre>
+     * classificationService.verifyAndPersist(...)   ← 판정 + 저장 (트랜잭션 ②)
+     *   └ 커밋 후 ClassificationPersistedEvent 발행
+     *       └ ClassificationPersistedEventListener 가 cache.putIfNotHuman(...)
+     * </pre>
+     *
+     * <p>이름이 {@code given...} 이라 준비만 하는 것처럼 보이지만,
+     * {@code stillWritesToCacheWhileDisabled} 에서는 <b>이것이 재는 대상 그 자체</b>다. AI 리뷰가
+     * "넣기를 유발하는 코드가 없다"고 읽은 자리라 적어둔다 — 없었다면 그 테스트의
+     * {@code verify(cache).putIfNotHuman(...)} 이 통과할 수 없다.
+     *
+     * <p>⚠️ 이 길에 {@code persistReuse}(재사용 저장)는 <b>없다.</b> 재사용이 꺼져 있어 재사용
+     * 판정 자체가 안 생기기 때문이다 — 꺼진 동안 캐시를 채우는 것은 <b>AI 경로</b>다 (D-062 ⓓ).
      */
     private void givenAutoAcceptedAnswerFor(String normalizedKey) {
         Inquiry earlier = givenReceivedInquiry(normalizedKey);
