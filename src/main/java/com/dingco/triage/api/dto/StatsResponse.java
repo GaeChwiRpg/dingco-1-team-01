@@ -2,27 +2,24 @@ package com.dingco.triage.api.dto;
 
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.service.StatsService;
-import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /**
  * {@code GET /api/stats}에서 반환하는 운영 통계 데이터.
  *
- * 분류 상태와 검토 큐 적체 정보를 담는다.
- *
- * 아직 구현되지 않은 통계는 0이나 빈 값으로 넣지 않고,
- * 실제로 계산할 수 있는 값만 응답에 포함한다.
+ * <p><b>지금 상태 — 계약 §7 다섯 블록이 모두 나간다 (TRI-72 · TRI-67 · TRI-68).</b>
  */
-public record StatsResponse(Classification classification, Backlog backlog, Audit audit) {
+public record StatsResponse(
+        Classification classification, Backlog backlog, AiCallSavings aiCallSavings, Cache cache, Audit audit) {
 
     /**
-     * 문의 분류 관련 통계.
-     *
-     * 현재는 RECEIVED 상태에서 오래 머물러 있는
-     * 문의 개수를 제공한다.
+     * 계약 §7 의 {@code classification} 블록 (TRI-68 · TRI-72). {@code autoAccepted} 는
+     * {@code AUTO_ACCEPTED} 와 {@code REUSED} 를 합친 값이다.
      */
-    public record Classification(long stuckReceived) {
+    public record Classification(long inquiriesTotal, long autoAccepted, long needsReview,
+            long failed, double autoAcceptRate, long stuckReceived) {
     }
 
     /**
@@ -41,75 +38,96 @@ public record StatsResponse(Classification classification, Backlog backlog, Audi
     }
 
     /**
-     * 감사 장치가 설정한 만큼 실제로 돌고 있는지 (TRI-66 · D-012).
-     *
-     * configuredSampleRate는 설정한 비율,
-     * autoAccepted / reused는 각 경로에서 실제로 몇 건이 뽑혔는지다.
-     *
-     * <b>두 경로를 합치지 않는다</b> (D-033). 자동 확정은 AI가 답한 것이고
-     * 재사용은 지난 답을 다시 쓴 것이라, 합치면 한쪽만 표본이 새고 있어도
-     * 평균에 묻혀 안 보인다.
-     *
-     * 감사가 몇 건을 잡아냈고 그중 몇 건이 틀렸는지(계약 §7의 reviewed·mismatched·
-     * misclassificationRate·byConfidenceBucket)는 여기 없다 — 그건 측정 8ⓐ의 몫이다.
-     * 아직 안 만든 값을 0으로 채우지 않는다.
+     * 계약 §7 의 {@code aiCallSavings} 블록 (TRI-68). {@code cache.hitRate} 와는 별개 지표다
+     * (D-014) — 캐시 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불린다.
      */
-    public record Audit(
-            BigDecimal configuredSampleRate,
-            Sampling autoAccepted,
-            Sampling reused) {
+    public record AiCallSavings(long inquiriesReceived, long aiCallsMade, double savingsRate) {
     }
 
     /**
-     * 한 경로의 감사 실적.
-     *
-     * eligibleTotal은 뽑힐 수 있었던 전체 건수,
-     * sampledTotal은 실제로 뽑힌 건수,
-     * actualSampleRate는 그 둘의 비(소수 셋째 자리)다.
-     *
-     * <b>actualSampleRate가 configuredSampleRate와 크게 벌어지면
-     * 표본 삽입이 누락되고 있다는 신호다.</b> 표본이 누락되면 측정 8의 오분류율에서
-     * 분모가 조용히 줄어드는데, 이 세 값이 없으면 줄었다는 사실 자체가 안 보인다.
-     *
-     * 뽑힐 수 있었던 건이 아직 하나도 없으면 actualSampleRate는 null이다 —
-     * 0.0으로 채우면 "뽑힐 게 있었는데 하나도 안 뽑혔다"와 구분되지 않는다.
+     * 계약 §7 의 {@code cache} 블록 (TRI-68 · D-014). {@code hitRate} 는 1단(Redis) 만의
+     * 결과라 캐시 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불리므로 {@code aiCallSavings.savingsRate}
+     * 이하로 나오는 게 보통이지만, {@code hitRate} 는 인메모리 누적(재기동마다 리셋)이고
+     * {@code savingsRate} 는 DB 누적이라 <b>집계 기간이 어긋나면(재기동 직후 등) 이 관계가
+     * 깨질 수 있다</b> — 항상 성립하는 부등식으로 가정하지 않는다.
      */
-    public record Sampling(
-            long eligibleTotal,
-            long sampledTotal,
-            BigDecimal actualSampleRate) {
+    public record Cache(double hitRate, long hits, long misses) {
     }
 
     /**
-     * 서비스에서 조회한 통계 데이터를
-     * API 응답 형태로 변환한다.
+     * 계약 §7 의 {@code audit} 블록 (TRI-68 · D-033). {@code autoAccepted} 와 {@code reused} 를
+     * 합치지 않는다 — {@code reused} 에는 비교할 AI 답이 없다.
+     */
+    public record Audit(double configuredSampleRate, AutoAccepted autoAccepted, Reused reused) {
+
+        /**
+         * {@code audit.autoAccepted} — 이 프로젝트의 결론이 나오는 자리({@code byConfidenceBucket}).
+         *
+         * <p>{@code actualSampleRate} 는 {@code eligibleTotal} 이 0 이면 {@code null} 이다
+         * (TRI-66) — 모집단이 없어서 못 잰 것과 실측 비율이 0 인 것은 다르다. {@code 0.0} 으로
+         * 채우면 "뽑힐 게 있었는데 하나도 안 뽑혔다"(표본 누락 신호)와 구분되지 않는다(D-022 와
+         * 같은 논리).
+         */
+        public record AutoAccepted(long eligibleTotal, long sampledTotal, Double actualSampleRate,
+                long reviewed, long mismatched, double misclassificationRate,
+                List<ConfidenceBucket> byConfidenceBucket) {
+        }
+
+        /** {@code audit.reused} — {@code byConfidenceBucket} 이 없다(비교할 AI 확신도가 없다). */
+        public record Reused(long eligibleTotal, long sampledTotal, Double actualSampleRate,
+                long reviewed, long mismatched, double misclassificationRate) {
+        }
+
+        /** 신뢰도 구간 1개의 대조 결과. {@code range} 는 {@code "0.8-0.9"} 형식. */
+        public record ConfidenceBucket(String range, long reviewed, long mismatched, double actualAccuracy) {
+        }
+    }
+
+    /**
+     * 서비스에서 조회한 통계 데이터를 API 응답 형태로 변환한다.
      *
      * @param stuckReceived 오래 처리되지 않은 문의 수
      * @param backlog 검토 큐 적체 정보
-     * @param auditRates 감사 장치가 설정대로 돌고 있는지
+     * @param classification 판정 집계 정보
+     * @param aiCallSavings AI 호출 절감 정보
+     * @param cache 1단 캐시 hit/miss 정보
+     * @param audit 감사 대조 정보
      * @return API에서 반환할 통계 응답
      */
-    public static StatsResponse of(
-            long stuckReceived,
-            StatsService.Backlog backlog,
-            StatsService.AuditRates auditRates) {
-
+    public static StatsResponse of(long stuckReceived, StatsService.Backlog backlog,
+            StatsService.Classification classification, StatsService.AiCallSavings aiCallSavings,
+            StatsService.CacheStats cache, StatsService.Audit audit) {
         return new StatsResponse(
-                new Classification(stuckReceived),
-                new Backlog(
-                        backlog.total(),
-                        backlog.byReason(),
-                        backlog.oldestPendingAt()),
+                new Classification(
+                        classification.inquiriesTotal(),
+                        classification.autoAccepted(),
+                        classification.needsReview(),
+                        classification.failed(),
+                        classification.autoAcceptRate(),
+                        stuckReceived),
+                new Backlog(backlog.total(), backlog.byReason(), backlog.oldestPendingAt()),
+                new AiCallSavings(
+                        aiCallSavings.inquiriesReceived(), aiCallSavings.aiCallsMade(), aiCallSavings.savingsRate()),
+                new Cache(cache.hitRate(), cache.hits(), cache.misses()),
                 new Audit(
-                        auditRates.configuredSampleRate(),
-                        sampling(auditRates.autoAccepted()),
-                        sampling(auditRates.reused())));
+                        audit.configuredSampleRate(),
+                        toAutoAccepted(audit.autoAccepted()),
+                        toReused(audit.reused())));
     }
 
-    private static Sampling sampling(StatsService.Sampling source) {
-        return new Sampling(
-                source.eligibleTotal(),
-                source.sampledTotal(),
-                source.actualSampleRate());
+    private static Audit.AutoAccepted toAutoAccepted(StatsService.AutoAcceptedAudit source) {
+        return new Audit.AutoAccepted(
+                source.eligibleTotal(), source.sampledTotal(), source.actualSampleRate(),
+                source.reviewed(), source.mismatched(), source.misclassificationRate(),
+                source.byConfidenceBucket().stream()
+                        .map(b -> new Audit.ConfidenceBucket(
+                                b.range(), b.reviewed(), b.mismatched(), b.actualAccuracy()))
+                        .toList());
+    }
+
+    private static Audit.Reused toReused(StatsService.VerdictAudit source) {
+        return new Audit.Reused(
+                source.eligibleTotal(), source.sampledTotal(), source.actualSampleRate(),
+                source.reviewed(), source.mismatched(), source.misclassificationRate());
     }
 }

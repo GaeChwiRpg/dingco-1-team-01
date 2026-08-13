@@ -1,4 +1,4 @@
-# API-CONTRACT v1.7
+# API-CONTRACT v1.8
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -8,8 +8,9 @@
 > **v1.3 은 값 표기와 마스킹 시점(D-039·D-040)** — `confidence: null` 을 치환하지 않는다, 마스킹본은 저장하지 않는다.
 > **v1.4 는 공용 예외 처리 지점 구현 반영(TRI-29)** — 공통 오류 표에 500(`INTERNAL_ERROR`) 추가.
 > **v1.5 는 값 검증 4종 구현 반영(TRI-49·50)** — §3 `model` 예시를 D-024 확정값(`claude-sonnet-5`)으로 정정, 실패 사유 5종은 로그로만 남음을 명시.
-> **v1.6 은 검토 대기 문의 통계 구현(TRI-67)** — §7 `backlog` 통계가 실제 API 응답에 포함된다. 현재 검토 대기 중인 문의 수, 검토 대기 사유별 건수, 가장 오래 기다리고 있는 문의의 시간을 확인할 수 있다.
-> **v1.7 은 감사 장치 자체를 감사하는 값 구현(TRI-66)** — §7 `audit` 에 설정 비율과 실측 비율이 나간다. 자동 확정과 재사용을 따로 내고(D-033), 뽑힐 수 있었던 수·뽑힌 수를 비율과 함께 준다. 모집단이 0 이면 비율은 `null` 이다.
+> **v1.6 은 통계·정책 조회 구현 반영(TRI-67·68·69 완료)** — §7 `backlog`·`classification`·`aiCallSavings`·`audit`(autoAccepted/reused 분리 + 신뢰도 구간별 집계) 이 실제로 나가기 시작함을, §6 `threshold`·`audit.sampleRate` 가 실제로 나가기 시작함을 명시. `cache` 만 아직 TRI-53 이 없어 남는다.
+> **v1.7 은 재사용 on/off 스위치 노출(D-062)** — §6 `GET /api/policies` 에 `reuse.enabled` 추가. 측정 1·8ⓐ-1(재사용 없이 잰 오분류율) 이 어느 조건에서 나온 것인지 화면에서 확인할 수 있다. 기동 시 고정, 실행 중 변경 API 없음 — `threshold`·`audit.sampleRate` 와 같은 이유(D-028).
+> **v1.8 은 `audit` 블록 중복 구현 통합(TRI-66 · TRI-68)** — develop 에 독립적으로 먼저 올라가 있던 TRI-66(감사 실측 비율)을 TRI-68(완전판)로 흡수, `actualSampleRate` 의 `eligibleTotal=0` → `null` 처리 반영. §7 `cache.hitRate` 가 `aiCallSavings.savingsRate` 이하라는 서술이 항상 성립하는 보장이 아님을 정정(재기동 직후 두 값의 집계 기간이 어긋날 수 있음). **코드리뷰 반영 2차** — `aiCallSavings.savingsRate` 계산식을 `reused / inquiriesReceived` 로 정정(대기중인 RECEIVED 문의가 절감으로 잘못 세어지던 것을 바로잡음, 코드리뷰 지적). `reuse.enabled=false` 면 `cache.hits`·`misses` 가 갱신되지 않아 `hits=0`·`misses=0` 이 트래픽 없음과 재사용 비활성화 중 무엇인지 `GET /api/policies` 의 `reuse.enabled` 와 함께 읽어야 함을 명시.
 
 ## 형식 원칙
 
@@ -358,6 +359,8 @@ X-User-Role: AGENT
 
 > **판정 설정 조회** (`ROLE_MANAGER`). Phase 2 는 **읽기 전용**이다.
 
+> **현재 구현 상태 (TRI-69)**: `threshold`·`audit.sampleRate`·`reuse.enabled` 모두 실제로 나간다.
+
 **응답**: `200 OK`
 
 ```json
@@ -365,16 +368,20 @@ X-User-Role: AGENT
   "threshold": 0.8,
   "audit": {
     "sampleRate": 0.05
+  },
+  "reuse": {
+    "enabled": true
   }
 }
 ```
 
-**Phase 2 에서 읽기 전용인 이유 (D-028)** — 출처는 `application.yml` (`classification.threshold`, `classification.audit.sample-rate`) 이고 변경은 재기동을 동반한다.
+**Phase 2 에서 읽기 전용인 이유 (D-028)** — 출처는 `application.yml` (`classification.threshold`, `classification.audit.sample-rate`, `classification.reuse.enabled`) 이고 변경은 재기동을 동반한다.
 
 | 필드 | 의미 | 왜 읽기 전용인가 |
 | --- | --- | --- |
 | `threshold` | 자동 확정 기준 신뢰도 (0.8) | 판정 기준이 실행 중에 바뀌면 측정 1·8 의 결과가 어느 기준에서 나온 것인지 사후에 구분되지 않는다 |
 | `audit.sampleRate` | 자동 확정 건 중 감사 표본 추출 비율 (0.05) | **측정 8 의 모집단을 정하는 값**이다. 실행 중 변경을 허용하면 `GET /api/stats` 의 `actualSampleRate` 괴리가 "표본 누락"인지 "설정 변경"인지 갈리지 않아, 감사 장치를 감사하려던 D-012 의 목적이 무너진다 |
+| `reuse.enabled` | 재사용(1단 캐시·2단 DB) on/off. 기본 `true` (D-062) | **측정 1·8ⓐ-1 은 재사용을 끈 상태에서 재는 값**이다. 실행 중 변경을 허용하면 `threshold`·`audit.sampleRate` 와 같은 이유로 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다. 껐다 켜도 캐시에 넣는 것(②)은 계속되고 **조회만** 건너뛴다 |
 
 > **카테고리별 임계값(`policies` 배열)과 `PATCH /api/policies/{category}` 는 삭제됐다.** 팀 스코프 조정으로 D-006 이 폐기되면서 `classification_policy` 테이블과 함께 사라졌다 (D-031). Phase 3 항목 B·C.
 >
@@ -388,23 +395,34 @@ X-User-Role: AGENT
 
 > 운영 통계 (`ROLE_MANAGER`). 적체 · 분류 성공률 · **감사 결과**. TTL 10s 캐시.
 
-> **지금 구현 상태 (TRI-72 · TRI-67 · TRI-66)**: 아래 JSON은 나중에 다 만들어졌을 때의 모습이다. 지금 실제로 볼 수 있는 건 세 가지다.
+> **현재 구현 상태 (TRI-72 · TRI-67 · TRI-68 · TRI-66)**: `backlog`·`classification`·
+> `aiCallSavings`·`cache`·`audit` 다섯 블록 모두 실제로 나간다. `audit`은 자동 확정·재사용
+> 각각의 「뽑힐 수 있었던 수 · 실제로 뽑힌 수 · 실측 비율」(TRI-66)에 더해, 뽑힌 건을 사람이
+> 다시 봐서 실제로 틀렸는지까지(`reviewed`·`mismatched`·`misclassificationRate`·
+> `byConfidenceBucket`, TRI-68)를 함께 낸다.
 >
-> | 블록 | 무엇을 보여주나 |
-> | --- | --- |
-> | `classification.stuckReceived` | 접수만 되고 오래도록 분류되지 않은 문의 수 |
-> | `backlog` | 지금 검토 대기 중인 문의 수, 대기 사유별 건수, 가장 오래 기다린 문의의 시간 |
-> | **`audit`** (TRI-66) | **감사가 설정한 만큼 실제로 돌고 있는지** — 설정 비율(`configuredSampleRate`)과, 자동 확정·재사용 각각의 「뽑힐 수 있었던 수 · 실제로 뽑힌 수 · 실측 비율」 |
+> ⚠️ **`actualSampleRate`는 뽑힐 수 있었던 건이 하나도 없으면 `null`이다.** `0.0`으로 채우지
+> 않는다 — `0.0`은 "뽑힐 게 있었는데 하나도 안 뽑혔다"라는 뜻이고 그건 **표본 누락의 신호**인데,
+> 아직 아무 건도 안 들어온 상태가 같은 얼굴로 보이면 없는 장애를 보게 된다 (`confidence`에 `0`을
+> 안 채우는 D-022와 같은 이유).
 >
-> 나머지(`aiCallSavings`·`cache`·`classification`의 다른 카운트)는 각 담당자가 끝나는 대로 붙인다. 아직 안 만든 건 `0`이나 빈 값으로 채우지 않고 응답에서 그냥 뺀다 — 안 만든 걸 만든 것처럼 보이지 않기 위해서다.
+> **"TTL 10s 캐시"가 안 걸리는 값이 하나 있다.** `classification` 블록 안의 `stuckReceived` 는
+> 캐시를 안 거치고 요청마다 새로 계산한다 — 같은 블록 안의 나머지 필드(`inquiriesTotal` 등)는
+> 최대 10초 지난 값일 수 있는데 `stuckReceived` 만 항상 지금 시각 기준이다. 유실 의심 건수라
+> 지연 표시가 없어야 해서다(D-017).
 >
-> ⚠️ **`audit` 안이 다 찬 것은 아니다.** 뽑힌 건을 사람이 다시 봐서 **실제로 틀렸더라**까지(`reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket`)는 측정 8ⓐ의 몫이라 아직 없다. 지금 `audit`이 답하는 것은 **그 측정의 분모를 믿어도 되는가** 하나다.
+> **`cache` 는 애플리케이션 기동 이후 누적값이다.** Redis 가 재시작돼 캐시 내용이 비어도 이 숫자는
+> 그대로다 — 반대로 앱을 재기동하면 0 부터 다시 센다. `hitRate` 는 1단(Redis) 만의 결과이고
+> `aiCallSavings.savingsRate` 는 DB 누적값이라(D-014), **둘의 집계 기간·모집단이 다르다.**
+> 앱을 오래 안 재기동한 정상 상태에서는 캐시가 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불리므로
+> `hitRate` 가 `savingsRate` 이하로 나오는 게 보통이지만, **재기동 직후처럼 두 값의 집계 기간이
+> 어긋나 있으면 이 관계가 깨질 수 있다** — 항상 성립하는 부등식으로 읽지 않는다.
 >
-> ⚠️ **`actualSampleRate`는 뽑힐 수 있었던 건이 하나도 없으면 `null`이다.** `0.0`으로 채우지 않는다 — `0.0`은 "뽑힐 게 있었는데 하나도 안 뽑혔다"라는 뜻이고 그건 **표본 누락의 신호**인데, 아직 아무 건도 안 들어온 상태가 같은 얼굴로 보이면 없는 장애를 보게 된다 (`confidence`에 `0`을 안 채우는 D-022와 같은 이유).
->
-> **"TTL 10s 캐시"는 응답 전체가 아니라 `backlog`에만 적용된다.** `classification.stuckReceived`는 캐시를 안 거치고 요청마다 새로 계산한다.
+> **`reuse.enabled=false` 면 `hits`·`misses` 가 갱신되지 않는다.** 재사용 자체를 끈 것이라 1단
+> 캐시 조회 경로를 안 타기 때문이다. 이 상태에서 `hits=0`·`misses=0` 은 "캐시 트래픽이 없다"가
+> 아니라 "재사용을 껐다"는 뜻일 수 있다 — `GET /api/policies` 의 `reuse.enabled` 와 함께 읽는다.
 
-**응답**: `200 OK` (완성형 목표 — 위 「지금 구현 상태」 참조)
+**응답**: `200 OK`
 
 ```json
 {
@@ -461,7 +479,12 @@ X-User-Role: AGENT
 >
 > `audit.autoAccepted.byConfidenceBucket` 이 이 프로젝트의 결론이 나오는 자리다 — "AI 가 0.85 라고 한 것들의 **실제** 정확도". **여기 수치는 전부 형식 예시이며, 확정값은 본인 실측으로만 기록한다** (`CLAUDE.md` AI 검증 규칙).
 >
-> `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014, 근거는 D-031 이 교체): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 2단 경로 전체다.** 캐시 miss 여도 DB 에 같은 정규화 키의 이전 결과가 있으면 AI 를 부르지 않으므로 `hitRate < savingsRate` 가 정상이다. 한 객체 안에 두면 같은 현상의 두 표현으로 오독된다.
+> `cache.hitRate` 를 `aiCallSavings` 밖으로 분리한 이유 (D-014, 근거는 D-031 이 교체): **캐시는 DB 조회를 줄이고, AI 호출을 줄이는 것은 2단 경로 전체다.** 캐시 miss 여도 DB 에 같은 정규화 키의 이전 결과가 있으면 AI 를 부르지 않으므로 `hitRate` 가 `savingsRate` 이하로 나오는 게 보통이지만, `hitRate` 는 인메모리 누적(재기동마다 리셋)이고 `savingsRate` 는 DB 누적이라 집계 기간이 어긋나면(예: 재기동 직후) 이 관계가 깨질 수 있다 — 항상 성립하는 부등식은 아니다. 한 객체 안에 두면 이 차이가 같은 현상의 두 표현으로 오독된다.
+>
+> `aiCallSavings.aiCallsMade` 는 새 카운터 없이 판정 행에서 그대로 읽는다 — `verdict = REUSED` 만
+> AI 를 안 부른 경로이고(D-033), 나머지 세 판정(`AUTO_ACCEPTED`·`NEEDS_REVIEW`·`FAILED`)은 전부
+> 최소 한 번은 AI 를 불렀기에 생긴 행이다. 재시도로 여러 번 부른 것까지 세는 값이 아니다 —
+> "재사용으로 몇 건을 아꼈나"를 답하는 값이지 "네트워크 호출이 총 몇 번 나갔나"가 아니다.
 >
 > `eligibleTotal` / `actualSampleRate` / `configuredSampleRate` 는 **감사 장치 자체를 감사**하기 위한 필드다 (D-012). 표본 삽입이 누락되면 `misclassificationRate` 의 분모가 조용히 줄어 측정 8 이 왜곡되므로, 설정값과 실측 비율의 괴리를 항상 확인할 수 있게 한다.
 >
@@ -502,6 +525,7 @@ X-User-Role: AGENT
 | v1.3 | 2026-08-05 | **AI 리뷰 2차 반영 — 값 표기와 마스킹 시점** ⓐ `confidence: null` 의 두 의미(`FAILED` / 사람 확정 재사용)와 **필드 생략(권한 없음) vs `null`(값 없음)** 구분 명시. `0`·`"-"` 치환 금지 (D-039) ⓑ 마스킹본은 저장하지 않고 **내보낼 때 계산**, AI 전송 전 마스킹과 같은 구현 공유 (D-040) | #12 |
 | v1.4 | 2026-08-06 | **공용 예외 처리 지점 구현 (TRI-29)** — 공통 오류 표에 **500 `INTERNAL_ERROR`** 추가. `fieldErrors` 원소 필드명이 `reason` 임을 코드와 대조 확정(기존 표기 유지, 구현 쪽 오타를 계약에 맞춰 수정) | TRI-25~30 |
 | v1.5 | 2026-08-07 | **값 검증 4종 구현 반영 (TRI-49·50)** — ⓐ §3 `model` 예시를 `claude-haiku-4-5-20251001` → **`claude-sonnet-5`** 로 정정. D-024 확정값과 어긋나 있었고, 모델 id 는 **측정 결과에 붙는 조건**이라 계약대로 구현하면 D-024 의 선정 근거가 무너진다 ⓑ `verdict = FAILED` 의 값 검증 항목에 **실패 사유 5종은 구조화 로그로만 남고 응답·스키마에 나가지 않음**을 명시 — 사유를 응답에 실으면 blind(D-010)와 무관하게 컬럼이 늘어난다 | TRI-49·50 |
-| v1.6 | 2026-08-11 | **검토 대기 문의 통계 구현 (TRI-67)** — §7 「현재 구현 상태」 갱신: `backlog` 통계가 실제 API 응답에 포함된다. 현재 검토 대기 중인 문의 수, 검토 대기 사유별 건수, 가장 오래 기다리고 있는 문의의 시간을 확인할 수 있다. `classification`·`aiCallSavings`·`cache`·`audit`은 아직 미구현 | TRI-67 |
-| v1.7 | 2026-08-12 | **감사 장치 자체를 감사하는 값 구현 (TRI-66)** — §7 「지금 구현 상태」에 `audit` 추가. 설정 비율과 실측 비율을 **자동 확정·재사용 따로**(D-033) 내보낸다. ⓐ 비율만 두지 않고 **분자·분모(`sampledTotal`·`eligibleTotal`)를 함께** 낸다 — 비율은 반올림 뒤라 그것만으로는 "20건 중 1건"인지 "2000건 중 100건"인지 구분되지 않는다 ⓑ 모집단이 0이면 `actualSampleRate`는 **`null`** (D-022와 같은 이유) ⓒ `audit` 안의 오분류 집계(`reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket`)는 **측정 8ⓐ 소관이라 아직 없음**을 명시 | TRI-66 |
+| v1.6 | 2026-08-11 | **통계·정책 조회 구현 반영 (TRI-67·68·69 완료)** — §7 「현재 구현 상태」 갱신: `backlog`·`classification`·`aiCallSavings`·`audit`(`autoAccepted`/`reused` 분리 + 신뢰도 구간별 집계) 전체가 이제 실제로 나간다. `cache` 만 아직 미구현 — 부품(TRI-40·41·84)은 있지만 실제 분류 흐름에서 불러 쓰는 코드(TRI-53, 김준현)가 없어 잴 지점이 없다. §6 `threshold`·`audit.sampleRate` 도 실제로 나간다 — `audit.sampleRate` 는 `ClassificationProperties.audit`(TRI-64·65, PR #50)에 의존해 그 변경을 함께 반영했다. `GET /api/policies` 는 이미 계약된 §6 그대로 구현됐다(TRI-69) | TRI-67·68·69 |
+| v1.7 | 2026-08-12 | **재사용 on/off 스위치를 정책 조회에 노출 (D-062)** — §6 `GET /api/policies` 응답에 `reuse.enabled` 추가(`ClassificationProperties.reuse`, 기본 `true`). `threshold`·`audit.sampleRate` 와 같은 이유로 읽기 전용 — 실행 중 바뀌면 측정 1·8ⓐ-1 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다 | TRI-69 |
+| v1.8 | 2026-08-13 | **`audit` 블록 중복 구현을 통합 (TRI-66 · TRI-68)** — develop 에 TRI-66(감사 실측 비율: `eligibleTotal`·`sampledTotal`·`actualSampleRate`·`configuredSampleRate`)이 독립적으로 먼저 올라가 있었다. TRI-68(본 계약의 완전판 — 위 넷에 `reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket` 를 더한 것)로 흡수 통합한다. 계산 로직을 대조해 두 구현이 같은 verdict 버킷에 대해 동일한 값을 낸다는 것을 확인했고, TRI-66 쪽 실측 결과(PR #64·#65)는 재측정 없이 그대로 유효하다. TRI-66 설계 중 **`eligibleTotal` 이 0 이면 `actualSampleRate` 를 `null` 로 두는 처리**(D-022 와 같은 논리)는 이번에 함께 반영했다 | TRI-66 · TRI-68 |
 <!-- 변경 시 한 줄씩 추가 -->

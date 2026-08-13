@@ -5,8 +5,9 @@ import com.dingco.triage.domain.InquiryClassificationResult;
 import com.dingco.triage.domain.repository.InquiryClassificationResultRepository;
 import com.dingco.triage.service.cache.CachedClassification;
 import com.dingco.triage.service.cache.ClassificationCache;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -43,10 +44,14 @@ import org.springframework.stereotype.Service;
  * 부르는 쪽이 아니라 이 안에 둔 이유</b>는 끝났다고 볼 조건이 <b>「1단·2단이 함께 꺼진다」</b>이기
  * 때문이다 — 부르는 쪽에서 끄면 캐시 조회만 건너뛰고 DB 조회가 남는 식으로 <b>반만 꺼진 상태</b>가
  * 만들어질 수 있고, 그러면 측정 조건이 애매해진다. 찾는 순서를 여기 가둔 것과 같은 이유다.
+ *
+ * <p><b>1단(Redis) hit/miss 를 여기서 센다 (TRI-68 · D-014).</b> {@code cache.get} 을 실제로
+ * 부르는 유일한 자리라 — hit rate 는 <b>2단 DB 조회 전</b>, 1단만의 결과다. 재사용이 꺼져 있으면
+ * (위) {@code cache.get} 자체를 안 부르므로 카운터도 안 움직인다 — "찾아봤는데 없었다"와
+ * "안 찾아봤다"를 같은 숫자로 섞으면 hit rate 가 스위치 상태에 따라 뜻이 달라진다.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ClassificationReuseLookup {
 
     private final ClassificationCache cache;
@@ -54,6 +59,19 @@ public class ClassificationReuseLookup {
 
     /** 재사용을 켤지 끌지 (D-062). 기동 시 고정이라 이 빈이 사는 동안 값이 바뀌지 않는다. */
     private final ClassificationProperties properties;
+
+    private final Counter cacheHits;
+    private final Counter cacheMisses;
+
+    public ClassificationReuseLookup(ClassificationCache cache,
+            InquiryClassificationResultRepository resultRepository,
+            ClassificationProperties properties, MeterRegistry meterRegistry) {
+        this.cache = cache;
+        this.resultRepository = resultRepository;
+        this.properties = properties;
+        this.cacheHits = meterRegistry.counter("triage.cache.classification.hits");
+        this.cacheMisses = meterRegistry.counter("triage.cache.classification.misses");
+    }
 
     /**
      * 재사용할 답을 찾는다.
@@ -102,9 +120,11 @@ public class ClassificationReuseLookup {
         // 여기서 예외를 감쌀 필요가 없다. 2단 DB 실패만 find() 의 try-catch 가 받는다.
         Optional<CachedClassification> cached = cache.get(normalizedKey);
         if (cached.isPresent()) {
+            cacheHits.increment();
             log.debug("reuse_hit tier=CACHE key={}", normalizedKey);
             return cached;
         }
+        cacheMisses.increment();
 
         // 1순위 — 사람이 확정한 답. 사람 답이 AI 답보다 신뢰도가 높다 (D-033).
         //
@@ -130,5 +150,21 @@ public class ClassificationReuseLookup {
 
         log.debug("reuse_miss key={}", normalizedKey);
         return Optional.empty();
+    }
+
+    /**
+     * 1단(Redis) 캐시 hit 누적 건수 — 계약 §7 {@code cache.hits} (TRI-68).
+     *
+     * <p>애플리케이션 기동 이후 누적값이다. Redis 와 달리 이 카운터는 인메모리(Micrometer) 라
+     * <b>앱을 재기동하면 0 부터 다시 센다</b> — Redis 재시작으로 캐시 내용은 비어도 이 숫자는
+     * 그대로인 것과 반대다.
+     */
+    public long cacheHitCount() {
+        return (long) cacheHits.count();
+    }
+
+    /** 1단(Redis) 캐시 miss 누적 건수 — 계약 §7 {@code cache.misses} (TRI-68). */
+    public long cacheMissCount() {
+        return (long) cacheMisses.count();
     }
 }

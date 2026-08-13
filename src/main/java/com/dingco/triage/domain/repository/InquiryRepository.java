@@ -226,4 +226,16 @@ public interface InquiryRepository extends Repository<Inquiry, Long> {
                AND i.receivedAt <= :cutoff
             """)
     long countStuckReceived(@Param("cutoff") Instant cutoff);
+
+    /**
+     * 접수 전건 — 계약 §7 {@code aiCallSavings.inquiriesReceived} 의 모집단 (TRI-68).
+     *
+     * <p>상태를 가리지 않고 센다. AI 절감률은 "받은 문의 대비 실제로 AI 를 부른 횟수"를 보는
+     * 값이라, 아직 분류를 기다리는 중({@code RECEIVED})인 문의도 분모에서 빠지면 안 된다.
+     *
+     * <p><b>가드레일(D-045(1)) 대상이 아니다.</b> {@link #countStuckReceived} 와 같은 층위 —
+     * 돌려주는 것이 문의 내용이 아니라 개수(long)다.
+     */
+    @Query("SELECT COUNT(i) FROM Inquiry i")
+    long countAll();
 }
