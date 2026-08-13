@@ -14,6 +14,7 @@
 >
 > **새로 잰 것이 아니다.** ①③④ 는 측정 1·8ⓐ·8ⓑ 를 돌릴 때 저장한 **원자료를 다시 집계**한
 > 값이고, ②⑤ 는 테스트를 돌려 얻었다. **AI 를 다시 부르지 않았다.**
+> 원자료 경로: `evidence/measurement-1-8a/raw` · `evidence/measurement-8b/raw`
 
 ## 한 줄로
 
@@ -44,6 +45,9 @@
 | `NEEDS_REVIEW` | 15 | → | `LOW_CONFIDENCE` | **15** |
 | `AUTO_ACCEPTED` | 3 | | `CLASSIFY_FAILED` | **0** |
 | `FAILED` | 0 | | **합계** | **18** (0.360) |
+
+> 재사용 켬에서 `REUSED` 32건은 AI 호출 없이 과거 확정 답을 재사용한 건이라
+> `AUTO_ACCEPTED`(3건)와 별개로 센다.
 
 **줄어든 것은 감사 표본과 못 읽은 건이지 격리가 아니다.**
 
