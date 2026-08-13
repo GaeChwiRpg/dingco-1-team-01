@@ -1,8 +1,119 @@
+# AI 문의 분류 검증 파이프라인
+
+> 고객 문의를 AI 가 자동 분류하되, **AI 가 스스로 확신한다고 말한 결과도 다시 의심하는** 서버입니다.
+> 
 > 이 레포는 **1기** 의 **1기-team-01** 팀 프로젝트 레포입니다.
-> 멤버: @agbink, @whitejh, @techietaek
-> 운영용 SoT: https://github.com/GaeChwiRpg/devcamp-team-submission-sample — 빈 템플릿 12개 채우면서 진행하세요.
->
-> ⚠️ **아래 본문은 안내 템플릿 그대로입니다.** 우리 팀의 실제 작업 안내는 **[`ONBOARDING.md`](./ONBOARDING.md)** 를 보세요 — 로컬 환경 셋업(Docker Desktop 버전 제약 포함), 작업 시작부터 PR 머지까지의 순서, 문서 지도.
+> 1기 team-01 · @agbink · @whitejh · @techietaek
+
+**한 줄로** — 문의를 AI 가 분류하고 ① 확신 못 한 건은 사람에게 넘기고 ② **확신한 건도 20건에 1건을 몰래 뽑아 사람이 다시 봅니다.** 그리고 **AI 답과 사람 답이 다른 비율을 숫자로 냅니다.**
+
+## 무엇을 알아냈나
+
+정답을 미리 붙여둔 문의 **50건**을 실제로 넣어 확인했습니다.
+
+```text
+문의 50건
+   32건  AI 가 "확신한다"며 사람을 안 거치고 확정   ← 아무도 다시 안 본다
+   15건  AI 가 자신 없다고 해서 사람에게
+    3건  AI 가 답을 못 줌 (3번 재시도 후 사람에게)
+
+그 32건 중 3건이 오답.  그중 하나는 AI 가 "95% 확신한다"고 말한 건이었습니다.
+```
+
+| 무엇 | 값 | 어디 |
+| --- | --- | --- |
+| **AI 가 확신하면서 틀린 비율** | **0.094** (32건 중 3건) | [`evidence/measurement-1-8a.md`](./evidence/measurement-1-8a.md) |
+| 20건에 1건 감사가 잡아낸 몫 | **0.333** — 3건 중 1건. **2건은 놓쳤다** | 〃 |
+| 지난 답을 다시 쓴 건의 오답률 | **0.062** — 재사용이 오류를 **증폭하지 않았다** | [`measurement-8b.md`](./evidence/measurement-8b.md) |
+| AI 호출을 얼마나 아꼈나 | **0.490** (1000건 기준) · 캐시 적중 0.454 | [`measurement-6-11-actual.md`](./evidence/measurement-6-11-actual.md) |
+| 접수 응답 속도 (목표 0.1초) | **6.4~8.8초 — 목표를 못 넘었다** | [`api-response-time.md`](./evidence/api-response-time.md) |
+
+> **못 넘은 목표도 그대로 적습니다.** 접수가 느린 것은 **대기열이 찼을 때 문의를 버리지 않고
+> 접수한 요청이 대신 분류를 떠안게 한 대가**입니다(D-045 ⑤) — *"느려지는 건 보이지만 사라지는
+> 건 안 보인다"* 를 택한 결과이고, `PRD.md` §9 가 미리 예견한 트레이드오프입니다.
+
+## 어떻게 도나
+
+```text
+① 접수                                      ② 분류 (다른 스레드)
+고객 ─POST /api/inquiries─> 문의 저장 ─신호─> ├ 1단 캐시 조회 (정규화 키)
+                              │              ├ 2단 DB 조회   ┐ 있으면 AI 안 부름
+                        202 즉시 응답        └ 없으면 AI 호출 ┘
+                     (AI 를 기다리지 않음)          │
+                                                    ↓
+                                        확신도 >= 0.8 ?
+                                    ┌───────┴────────┐
+                                   예               아니오
+                                    │                │
+                          자동 확정 (아무도 안 봄)   검토 목록으로
+                                    │                     │
+                          20건에 1건 몰래 뽑기 ──────────>─┤
+                                                          ↓
+                                              ③ 상담원이 확정 (PATCH)
+                                                          │
+                                          사람 답으로 캐시 덮어쓰기 ─┐
+                                                                     ↓
+                                          같은 문의가 또 오면 올바른 답
+```
+
+**검증이 두 겹입니다.** 1차(확신도)만으로는 **AI 가 자신 있게 틀린 건을 절대 못 잡습니다** — 위 3건이 그 증거입니다.
+
+## 자동 확정 기준값을 `0.8` 로 둔 근거
+
+**정답이 있어서 고른 값이 아니라, 고른 뒤 재보고 고칠 초기값입니다.**
+
+| | 내용 |
+| --- | --- |
+| **왜 실행 중에 못 바꾸나** | 도중에 바뀌면 *"이 결과가 어느 기준에서 나온 것인지"* 를 사후에 구분할 수 없습니다. 그래서 기동 시 고정입니다 (D-028) |
+| **바꾸면 어떻게 되나 (계산값)** | `0.5` → 자동 확정 47건 · 사람이 볼 건 **0** / `0.8` → 32건 · 15건 / `0.9` → 16건 · 31건 |
+| **왜 세 값으로 각각 안 쟀나** | 카테고리별 차등(D-006)이 폐기되며 대조군 측정도 함께 사라졌습니다. **한 번 돌린 결과에서 구간별 집계로 역산**했고, 계산값임을 evidence 에 밝혔습니다 |
+| **다시 볼 조건** | 자동 확정 구간에서 오분류가 **0 으로 나오면** 감사가 잡을 것이 없어 결론을 못 읽습니다 → 그때 기준값을 낮춰 다시 잽니다 |
+
+**AI 가 확신도 `0.5` 미만을 한 번도 안 냈습니다.** 그래서 `0.5` 로 낮추면 **사람이 볼 건이 0** 이 되어 1차 겹이 통째로 사라집니다.
+
+## 돌려보기
+
+```bash
+cp .env.example .env      # ANTHROPIC_API_KEY 를 채웁니다 (없어도 뜹니다)
+docker compose up -d      # mysql · redis · app
+
+curl -X POST http://localhost:8080/api/inquiries \
+  -H "Content-Type: application/json" -H "X-User-Id: 5001" -H "X-User-Role: CUSTOMER" \
+  -d '{"content":"3일째 배송중이라고만 뜨는데 언제 오나요?","channel":"WEB"}'
+
+curl -H "X-User-Id: 7001" -H "X-User-Role: AGENT" \
+  "http://localhost:8080/api/inquiry-review-queue?status=PENDING" | jq
+```
+
+⚠️ **Docker Desktop 버전 제약이 있습니다** — [`ONBOARDING.md`](./ONBOARDING.md) 를 먼저 보세요.
+
+## 문서 지도
+
+| 궁금한 것 | 어디 |
+| --- | --- |
+| **처음 합류했다** | [`ONBOARDING.md`](./ONBOARDING.md) — 환경 셋업부터 PR 머지까지 |
+| 모르는 단어가 나왔다 | [`GLOSSARY.md`](./GLOSSARY.md) — 「0. 5분 요약」부터 |
+| 무엇을 만드는지 (자세히) | [`PRD.md`](./PRD.md) |
+| **왜 그렇게 정했는지** | [`DECISIONS.md`](./DECISIONS.md) — D-001~. **기존 항목을 고치지 않고 후속으로 덮습니다** |
+| 코딩 규칙 · 작업 경계 | [`CLAUDE.md`](./CLAUDE.md) — 팀 헌법 |
+| API 규격 | [`API-CONTRACT.md`](./API-CONTRACT.md) |
+| 테이블·엔티티 구조 | [`DOMAIN-MODEL.md`](./DOMAIN-MODEL.md) |
+| **잰 숫자와 그 한계** | [`evidence/`](./evidence/) |
+| 밖에 보여줄 한 장 요약 | [`PROJECT-BRIEF.md`](./PROJECT-BRIEF.md) |
+
+## 이 프로젝트가 지키는 것
+
+- **재보지 않은 수치를 만들지 않습니다.** 모르는 값은 *"재보기 전에는 모른다"* 로 둡니다
+- **AI 가 틀린 사례를 지우지 않고 모읍니다** — [`evidence/failure-cases.md`](./evidence/failure-cases.md) (26건)
+- **폐기된 결정도 안 지웁니다.** 왜 틀렸었는지가 남아야 같은 실수를 안 합니다
+- **못 넘은 목표를 못 넘었다고 적습니다** — 위 속도 측정이 그 예입니다
+
+---
+
+<details>
+<summary><b>부트캠프 제출 템플릿 안내 (원본 그대로 보존)</b></summary>
+
+> 운영용 SoT: https://github.com/GaeChwiRpg/devcamp-team-submission-sample
 
 # Dev Camp Team Submission Sample
 
@@ -123,3 +234,5 @@ Week 8에서 개인이 6 요소(claude.md / Commands / Hooks / 페목형제 / Co
 - API 계약 변경 이력 추적 가능
 - AI 보조 기능 검증 메모 포함
 - 팀 통합 로그에 단계별 담당자 + 진행 상태
+
+</details>
