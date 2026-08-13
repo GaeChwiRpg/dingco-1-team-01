@@ -86,6 +86,8 @@ domain/
 **`raw_response` 는 실패했을 때만 원인을 갈라줍니다.** 성공한 건에도 응답이 있으면 그대로
 저장되기 때문에, **`verdict` 를 먼저 보고 읽어야 합니다.**
 
+**`verdict` → `raw_response`/`model` 읽는 표**
+
 | `verdict` | `raw_response` | `model` | 어떻게 읽나 |
 | --- | --- | --- | --- |
 | `AUTO_ACCEPTED` · `NEEDS_REVIEW` | 받은 응답 그대로 | 모델명 | 정상. 프롬프트를 고칠 때 참고한다 |
@@ -145,6 +147,9 @@ KEY (normalized_key, created_at DESC)          -- 2단 절감 경로: 같은 키
 KEY (status, received_at)                      -- GET /api/inquiries: 상태 + 기간 + 정렬
 KEY (status, current_category, received_at)    -- 위 + 종류 필터 동시 사용
 
+-- (status, received_at)는 (status, current_category, received_at)의 앞부분이라
+-- 종류 필터가 없는 조회가 이 인덱스를 재사용합니다. 둘 다 남긴 이유는 별도 측정 참조
+
 -- inquiry_classification_result
 KEY (inquiry_id, created_at DESC)              -- 문의 하나의 가장 최근 판정
 KEY (verdict, confidence)                      -- 감사 대조: 확신도 구간별 집계 (측정 8)
@@ -163,18 +168,23 @@ KEY (status, created_at)                       -- 검토 목록: 대기 중인 �
 (status, current_category, received_at)   ← 종류 필터가 있는 조회
 ```
 
-인덱스는 **앞에서부터 이어지는 만큼만** 쓸 수 있습니다. 그래서 **두 번째 것 하나만 두면**,
+인덱스는 **앞에서부터 이어지는 만큼만** 쓸 수 있습니다. (실측: `evidence/measurement-5-list-query-explain.md`)
+
+그래서 **두 번째 것 하나만 두면**,
 종류 필터가 없는 조회는 `status` 까지만 쓰고 **`received_at` 의 기간·정렬은 인덱스를 못 탑니다**
-(`current_category` 를 건너뛸 수 없기 때문입니다). ⚠️ **두 번째가 첫 번째를 포함하지 않습니다** —
+(`current_category` 를 건너뛸 수 없기 때문입니다). 
+
+⚠️ **두 번째가 첫 번째를 포함하지 않습니다** —
 `(status, received_at)` 는 `(status, current_category, received_at)` 의 앞부분이 아닙니다.
 
 ⚠️ **위 두 인덱스는 「운영 매니저가 보는 전체 목록」용입니다.** 고객이 자기 문의만 보는 조회는
 `customer_id` 조건이 하나 더 붙는데, **세 인덱스 중 어느 것도 `customer_id` 로 시작하지
 않습니다.** 그 조회의 실행 계획은 **아직 안 쟀습니다** — 못 쟀다고 적어둡니다.
 
+> 측정 예정: `EXPLAIN` 결과와 함께 `customer_id` 선두 인덱스 추가 여부를 다음 PR에서 결정.
 > **언제 어떻게 잴 건가** — 고객 조회(`customer_id` + 상태 + 기간 + 정렬)에 `EXPLAIN` 을 걸어
-> `type` 과 `rows`, `Using filesort` 여부를 봅니다. **`filesort` 가 뜨고 `rows` 가 전체 건수에
-> 가까우면** `(customer_id, received_at)` 선행 인덱스를 올립니다. 다만 **재기 전에는 안 올립니다**
+> `type` 과 `rows`, `Using filesort` 여부를 봅니다. 
+> **`filesort` 가 뜨고 `rows` 가 전체 건수에  가까우면** `(customer_id, received_at)` 선행 인덱스를 올립니다. 다만 **재기 전에는 안 올립니다**
 > — 이득을 확인하기 전에 쓰기 비용을 얹지 않습니다 (D-018 이 남긴 논거).
 
 **어느 evidence 가 무엇의 근거인지**
