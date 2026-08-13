@@ -20,7 +20,6 @@ import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
 import com.dingco.triage.service.event.ClassificationPersistedEvent;
 import com.dingco.triage.support.MySqlTestContainer;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -68,7 +67,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 판」을 갈라 놓아야 D-012 를 정확히 읽을 수 있다 (실패 사례 26).
  *
  * <p><b>세는 방법은 TRI-66 의 필드를 그대로 쓴다</b> — {@link StatsService#audit()} 의
- * {@code eligibleTotal}(뽑힐 수 있었던 수) 과 {@code sampledTotal}(실제로 큐에 들어간 수).
+ * {@code autoAccepted.eligibleTotal}(뽑힐 수 있었던 수) 과 {@code sampledTotal}(실제로 큐에 들어간 수).
  * 이 테스트를 위한 새 집계를 만들지 않는다. 만들면 <b>재는 자가 재는 대상을 겸하게 되어</b>
  * 실제 운영에서 쓰는 숫자와 실험의 숫자가 갈린다.
  *
@@ -131,6 +130,11 @@ class AuditOutsideTransactionIT {
         jdbcTemplate.update("DELETE FROM inquiry_review_queue");
         jdbcTemplate.update("DELETE FROM inquiry_classification_result");
         jdbcTemplate.update("DELETE FROM inquiries");
+        // audit() 는 @Cacheable(stats:summary:audit, TTL 10초) 라 행만 지우면 이전 테스트가
+        // 마지막에 읽어 채워 둔 집계가 그대로 남는다 — 캐시도 함께 비워 이번 테스트가 실제
+        // 현재 상태를 읽게 한다 (StatsServiceTest 와 같은 처리). 옛 auditRates() 는 캐시가
+        // 없어 이 비우기가 필요 없었다.
+        statsService.evictSummary();
         outsideEnqueuer.reset();
         // audit() 는 @Cacheable(AUDIT_CACHE) 다 — 안 비우면 이전 테스트가 캐시에 남긴 값을
         // 이번 테스트가 그대로 돌려받는다 (표본 수가 이전 테스트 것과 뒤섞여 보인다).

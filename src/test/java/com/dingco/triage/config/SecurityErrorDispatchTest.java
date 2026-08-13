@@ -26,10 +26,18 @@ import org.springframework.test.context.ActiveProfiles;
  * 걸려 익명 처리되고, 원래 나가야 할 404 가 401 로 가려진다. 그래서 여기서는 실제 내장 톰캣을
  * 띄우는 {@code webEnvironment = RANDOM_PORT} 로 검증한다.
  *
- * <p><b>검증에 쓰는 경로는 "MANAGER 허용 + 아직 컨트롤러 없음" 이면 무엇이든 된다.</b> 예전엔
- * {@code /api/stats} 를 썼지만 TRI-72 로 컨트롤러가 생겨 200 을 반환하게 됐으므로, 아직 미착수인
- * {@code /api/policies}(GET, {@code ROLE_MANAGER} — 계약 §6, 컨트롤러 없음) 로 옮겼다. 이 경로도
- * 착수되면 같은 이유로 다른 미착수 MANAGER 경로로 옮긴다.
+ * <p><b>검증에 쓰는 경로는 "인증은 통과 + 컨트롤러 없음" 이면 된다.</b> 예전엔 {@code /api/stats}
+ * 를 썼다가 TRI-72 로 컨트롤러가 생겨 {@code /api/policies} 로 옮겼는데, 그마저 TRI-69(PR #69)로
+ * 컨트롤러가 생겨 200 을 반환하게 됐다. <b>이제 계약상 MANAGER 전용 endpoint 는 둘 다 착수돼
+ * 「MANAGER 허용 + 컨트롤러 없음」 조합이 남지 않는다.</b> 그래서 <b>매핑되지 않을 합성 경로</b>
+ * ({@code /api/no-such-endpoint})를 쓴다 — {@code SecurityConfig} 의 구체 규칙에 안 걸려
+ * {@code anyRequest().authenticated()} 로 떨어지고, MANAGER 헤더로 인증은 통과하므로 재현하려는
+ * 상황(권한은 통과, 핸들러는 없음)이 그대로 성립한다. 이 경로에는 앞으로도 컨트롤러가 생기지
+ * 않으므로 다시 옮길 일이 없다.
+ *
+ * <p>재현하는 버그 자체는 <b>역할 종류와 무관</b>하다 — 인증만 통과하면 핸들러 없음의 {@code /error}
+ * 재디스패치가 {@code authenticated()} 에 걸려 404 가 401 로 가려지느냐가 핵심이라, MANAGER 로
+ * 인증한 미매핑 경로 하나로 충분하다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -47,7 +55,7 @@ class SecurityErrorDispatchTest {
         headers.add("X-User-Role", "MANAGER");
 
         ResponseEntity<String> response = restTemplate.exchange(
-                "/api/policies", HttpMethod.GET, new HttpEntity<>(headers), String.class);
+                "/api/no-such-endpoint", HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
         assertThat(response.getStatusCode())
                 .as("권한은 통과했으니 401(인증 안 됨)이 아니라 404(핸들러 없음)여야 한다")
