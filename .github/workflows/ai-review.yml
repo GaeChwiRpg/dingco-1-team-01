@@ -29,7 +29,7 @@ jobs:
   review:
     # opt-in 변수를 job 레벨에서 확인해 키가 없는 팀에 러너가 배정되지 않게 한다.
     if: ${{ vars.ENABLE_AI_REVIEW == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gaechwirpg-mac]
     steps:
       - name: Check API key
         id: gate

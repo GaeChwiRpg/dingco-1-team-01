@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gaechwirpg-mac]
     # compose 를 부르는 스텝이 기동 말고도 있다 (로그 수집·정리).
     # 이 값들을 기동 스텝에만 걸면 docker compose down 이 변수를 못 찾아 실패하므로 job 레벨에 둔다.
     env:
