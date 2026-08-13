@@ -5,8 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.support.MySqlTestContainer;
+import com.dingco.triage.support.ReviewQueueSeedSupport;
 import jakarta.persistence.EntityManagerFactory;
-import java.util.List;
+import java.util.stream.LongStream;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,51 +65,7 @@ class ReviewQueueEntityGraphVsProjectionIT {
 
     @BeforeEach
     void seedOnce() {
-        Integer existing = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM inquiry_review_queue", Integer.class);
-        if (existing != null && existing >= N) {
-            return;
-        }
-        // FK 역순으로 비운다 (inquiry_review_queue → inquiry_classification_result → inquiries).
-        jdbcTemplate.update("DELETE FROM inquiry_review_queue");
-        jdbcTemplate.update("DELETE FROM inquiry_classification_result");
-        jdbcTemplate.update("DELETE FROM inquiries");
-
-        long baseMillis = java.time.Instant.parse("2026-06-01T00:00:00Z").toEpochMilli();
-
-        jdbcTemplate.update("""
-                INSERT INTO inquiries
-                    (customer_id, content, channel, normalized_key, status,
-                     current_category, current_confidence, received_at, created_at, updated_at)
-                VALUES (1, '측정용 문의', 'WEB', 'k-projection-seed', 'CLASSIFIED',
-                        'ETC', 0.900, ?, ?, ?)
-                """, new java.sql.Timestamp(baseMillis), new java.sql.Timestamp(baseMillis),
-                new java.sql.Timestamp(baseMillis));
-        Long inquiryId = jdbcTemplate.queryForObject(
-                "SELECT id FROM inquiries ORDER BY id DESC LIMIT 1", Long.class);
-
-        jdbcTemplate.update("""
-                INSERT INTO inquiry_classification_result
-                    (inquiry_id, category, confidence, model, verdict, attempt_count, created_at)
-                VALUES (?, 'ETC', 0.900, 'measurement', 'AUTO_ACCEPTED', 1, ?)
-                """, inquiryId, new java.sql.Timestamp(baseMillis));
-        Long resultId = jdbcTemplate.queryForObject(
-                "SELECT id FROM inquiry_classification_result ORDER BY id DESC LIMIT 1", Long.class);
-
-        for (int start = 0; start < N; start += BATCH) {
-            int end = Math.min(start + BATCH, N);
-            List<Object[]> rows = new java.util.ArrayList<>(BATCH);
-            for (int i = start; i < end; i++) {
-                java.sql.Timestamp createdAt = new java.sql.Timestamp(baseMillis + (long) i * 60_000L);
-                rows.add(new Object[]{inquiryId, resultId, "AUDIT_SAMPLE", "PENDING", createdAt});
-            }
-            jdbcTemplate.batchUpdate("""
-                    INSERT INTO inquiry_review_queue
-                        (inquiry_id, classification_result_id, reason, status, created_at, version)
-                    VALUES (?, ?, ?, ?, ?, 0)
-                    """, rows);
-        }
-        jdbcTemplate.execute("ANALYZE TABLE inquiry_review_queue");
+        ReviewQueueSeedSupport.seedIfNeeded(jdbcTemplate, N, BATCH, "k-projection-seed");
     }
 
     private Statistics statistics() {
@@ -129,38 +86,44 @@ class ReviewQueueEntityGraphVsProjectionIT {
             queueRepository.searchProjected(QueueStatus.PENDING, null, null, pageable).getContent();
         }
 
+        // 평균만 남기면 실행마다 편차가 큰지 알 수 없다 — 실행별 시간을 따로 기록해 최소/최대도
+        // 같이 남긴다 (코드리뷰 지적, PR #72).
+        long[] egTimes = new long[TIMED_RUNS];
         long egQueries = 0;
-        long egStart = System.nanoTime();
         Page<InquiryReviewQueueItem> lastEgPage = null;
         for (int i = 0; i < TIMED_RUNS; i++) {
             statistics.clear();
+            long start = System.nanoTime();
             lastEgPage = queueRepository.search(QueueStatus.PENDING, null, null, pageable);
             drainEntities(lastEgPage);
+            egTimes[i] = (System.nanoTime() - start) / 1_000_000;
             egQueries += statistics.getPrepareStatementCount();
         }
-        long egElapsedMillis = (System.nanoTime() - egStart) / 1_000_000 / TIMED_RUNS;
         long egQueriesPerCall = egQueries / TIMED_RUNS;
 
+        long[] pTimes = new long[TIMED_RUNS];
         long pQueries = 0;
-        long pStart = System.nanoTime();
         Page<InquiryReviewQueueRepository.ReviewQueueItemProjection> lastProjPage = null;
         for (int i = 0; i < TIMED_RUNS; i++) {
             statistics.clear();
+            long start = System.nanoTime();
             lastProjPage = queueRepository.searchProjected(QueueStatus.PENDING, null, null, pageable);
             lastProjPage.getContent(); // 프로젝션은 엔티티가 아니라 LAZY 필드가 없다 — 결과만 받으면 끝
+            pTimes[i] = (System.nanoTime() - start) / 1_000_000;
             pQueries += statistics.getPrepareStatementCount();
         }
-        long pElapsedMillis = (System.nanoTime() - pStart) / 1_000_000 / TIMED_RUNS;
         long pQueriesPerCall = pQueries / TIMED_RUNS;
 
         String result = """
-                # 측정 5ⓖ — GET /api/inquiry-review-queue EntityGraph vs 프로젝션 (rows=%d, %d회 평균)
+                # 측정 5ⓖ — GET /api/inquiry-review-queue EntityGraph vs 프로젝션 (rows=%d, %d회)
 
-                | 방법 | 호출당 SQL 문 수 | 평균 응답 시간(ms) |
-                | --- | --- | --- |
-                | @EntityGraph (통째로 읽기) | %d | %d |
-                | 프로젝션 (6칸만 읽기) | %d | %d |
-                """.formatted(N, TIMED_RUNS, egQueriesPerCall, egElapsedMillis, pQueriesPerCall, pElapsedMillis);
+                | 방법 | 호출당 SQL 문 수 | 평균(ms) | 최소(ms) | 최대(ms) |
+                | --- | --- | --- | --- | --- |
+                | @EntityGraph (통째로 읽기) | %d | %d | %d | %d |
+                | 프로젝션 (6칸만 읽기) | %d | %d | %d | %d |
+                """.formatted(N, TIMED_RUNS,
+                egQueriesPerCall, avg(egTimes), min(egTimes), max(egTimes),
+                pQueriesPerCall, avg(pTimes), min(pTimes), max(pTimes));
         System.out.println(result);
         writeReport(result);
 
@@ -168,6 +131,18 @@ class ReviewQueueEntityGraphVsProjectionIT {
         assertThat(lastEgPage.getContent()).hasSize(PAGE_SIZE);
         assertThat(lastProjPage.getContent()).hasSize(PAGE_SIZE);
         assertThat(lastProjPage.getContent().get(0).getId()).isEqualTo(lastEgPage.getContent().get(0).getId());
+    }
+
+    private static long avg(long[] v) {
+        return (long) LongStream.of(v).average().orElse(0);
+    }
+
+    private static long min(long[] v) {
+        return LongStream.of(v).min().orElse(0);
+    }
+
+    private static long max(long[] v) {
+        return LongStream.of(v).max().orElse(0);
     }
 
     /** LAZY 필드를 건드려 지연 로딩을 실제로 유발시킨다 (TRI-57 패턴과 동일). */

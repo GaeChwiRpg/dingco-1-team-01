@@ -3,6 +3,7 @@ package com.dingco.triage.domain.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.dingco.triage.support.MySqlTestContainer;
+import com.dingco.triage.support.ReviewQueueSeedSupport;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,54 +54,7 @@ class ReviewQueueDeepPageExplainIT {
 
     @BeforeEach
     void seedOnce() {
-        Integer existing = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM inquiry_review_queue", Integer.class);
-        if (existing != null && existing >= N) {
-            return;
-        }
-        // FK 역순으로 비운다 (inquiry_review_queue → inquiry_classification_result → inquiries).
-        jdbcTemplate.update("DELETE FROM inquiry_review_queue");
-        jdbcTemplate.update("DELETE FROM inquiry_classification_result");
-        jdbcTemplate.update("DELETE FROM inquiries");
-
-        long baseMillis = java.time.Instant.parse("2026-06-01T00:00:00Z").toEpochMilli();
-
-        // 큐 항목은 FK 로 inquiry·classification_result 를 반드시 가리켜야 한다(계약 B).
-        // 이 측정은 큐 자체의 실행 계획만 보므로, 부모 행은 1건씩만 만들어 전부 같은 곳을 가리키게 한다.
-        jdbcTemplate.update("""
-                INSERT INTO inquiries
-                    (customer_id, content, channel, normalized_key, status,
-                     current_category, current_confidence, received_at, created_at, updated_at)
-                VALUES (1, '측정용 문의', 'WEB', 'k-explain-seed', 'CLASSIFIED',
-                        'ETC', 0.900, ?, ?, ?)
-                """, new java.sql.Timestamp(baseMillis), new java.sql.Timestamp(baseMillis),
-                new java.sql.Timestamp(baseMillis));
-        Long inquiryId = jdbcTemplate.queryForObject(
-                "SELECT id FROM inquiries ORDER BY id DESC LIMIT 1", Long.class);
-
-        jdbcTemplate.update("""
-                INSERT INTO inquiry_classification_result
-                    (inquiry_id, category, confidence, model, verdict, attempt_count, created_at)
-                VALUES (?, 'ETC', 0.900, 'measurement', 'AUTO_ACCEPTED', 1, ?)
-                """, inquiryId, new java.sql.Timestamp(baseMillis));
-        Long resultId = jdbcTemplate.queryForObject(
-                "SELECT id FROM inquiry_classification_result ORDER BY id DESC LIMIT 1", Long.class);
-
-        for (int start = 0; start < N; start += BATCH) {
-            int end = Math.min(start + BATCH, N);
-            List<Object[]> rows = new java.util.ArrayList<>(BATCH);
-            for (int i = start; i < end; i++) {
-                // created_at 을 분 단위로 흩어 오래된 순 정렬·오프셋이 의미를 갖게 한다.
-                java.sql.Timestamp createdAt = new java.sql.Timestamp(baseMillis + (long) i * 60_000L);
-                rows.add(new Object[]{inquiryId, resultId, "AUDIT_SAMPLE", "PENDING", createdAt});
-            }
-            jdbcTemplate.batchUpdate("""
-                    INSERT INTO inquiry_review_queue
-                        (inquiry_id, classification_result_id, reason, status, created_at, version)
-                    VALUES (?, ?, ?, ?, ?, 0)
-                    """, rows);
-        }
-        jdbcTemplate.execute("ANALYZE TABLE inquiry_review_queue");
+        ReviewQueueSeedSupport.seedIfNeeded(jdbcTemplate, N, BATCH, "k-explain-seed");
     }
 
     @Test
