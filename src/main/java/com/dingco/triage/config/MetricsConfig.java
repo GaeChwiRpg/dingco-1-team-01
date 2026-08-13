@@ -20,8 +20,20 @@ import org.springframework.context.annotation.Configuration;
  * (계약 §8 의 {@code triage.queue.backlog} 처럼 {@code stats:summary} 캐시를 경유시키는 것은 별도
  * 지표의 몫이고, 이 지표에는 붙이지 않는다.)
  *
- * <p>이 프로젝트의 <b>첫 gauge</b> 다. 지표가 늘면 이 config 가 함께 담는다 —
- * {@code MonitoringProperties} 가 관측 <b>설정</b>을 모으듯 여기는 관측 <b>계기</b>를 모은다.
+ * <p>지표가 늘면 이 config 가 함께 담는다 — {@code MonitoringProperties} 가 관측 <b>설정</b>을
+ * 모으듯 여기는 관측 <b>계기</b>를 모은다.
+ *
+ * <p><b>{@code triage.queue.backlog} · {@code triage.classification.success.rate} 를 함께 등록한다
+ * (TRI-70).</b> 둘 다 gauge 이고 {@link StatsService} 의 <b>10초 캐시({@code @Cacheable})를 경유</b>해
+ * 읽는다 — 스크랩마다 전수 COUNT 를 다시 돌지 않도록 한다(계약 §8, "{@code stats:summary} 캐시
+ * 경유"). {@code stuck_received} 만 캐시 없이 단순 COUNT 를 직접 도는데, 이는 그 지표가
+ * {@code now} 기준이라 캐시하면 방치 탐지가 최대 10초 늦어지기 때문이다(그쪽 javadoc 참조).
+ *
+ * <p><b>{@code triage.ai.calls}(실제 AI 호출 counter) 와 {@code cache.*}(1단 캐시 hit/miss) 는
+ * 여기 없다.</b> 그 둘은 "집계 결과"가 아니라 <b>사건이 일어나는 그 순간</b> 세야 정확해서,
+ * 각각 실제 호출 지점({@code AiClassificationService})과 조회 지점({@code ClassificationReuseLookup})
+ * 에 카운터로 박혀 있다. gauge 는 스크랩 시점에 현재값을 되묻는 계기라 "몇 번 일어났나"에는
+ * 맞지 않는다 — 계기의 성격이 달라 자리가 갈린다.
  */
 @Configuration(proxyBeanMethods = false)
 public class MetricsConfig {
@@ -30,6 +42,20 @@ public class MetricsConfig {
         Gauge.builder("triage.inquiries.stuck_received", statsService,
                         StatsService::stuckReceivedCount)
                 .description("접수 후 임계 시간 이상 RECEIVED 에 머문 문의 수 — 0 이 아니면 분류 파이프라인 실패 (D-017)")
+                .register(registry);
+
+        // 검토 큐 적체 — 10초 캐시(stats:summary:backlog)를 경유해 스크랩 부하를 막는다 (TRI-67·70).
+        Gauge.builder("triage.queue.backlog", statsService, s -> s.backlog().total())
+                .description("PENDING 상태로 밀린 검토 큐 건수 (stats:summary 캐시 경유)")
+                .register(registry);
+
+        // 분류 성공률 — FAILED 를 뺀 비율. classification() 을 프록시 경유로 불러(10초 캐시) 그
+        // 레코드의 순수 계산 successRate() 를 쓴다 — backlog 와 같은 패턴. 계산을 StatsService 안에
+        // 두고 self-invocation 하면 @Cacheable 이 우회돼 스크랩마다 DB 를 친다 (AI 리뷰 지적).
+        // 정의는 Classification#successRate (D-065).
+        Gauge.builder("triage.classification.success.rate", statsService,
+                        s -> s.classification().successRate())
+                .description("분류가 쓸 수 있는 답을 낸 비율 (FAILED 제외). 자동 확정률과는 다르다")
                 .register(registry);
     }
 }

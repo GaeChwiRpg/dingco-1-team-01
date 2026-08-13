@@ -501,9 +501,13 @@ X-User-Role: AGENT
 | `GET /actuator/health` | E2E 헬스 체크 (`tests/e2e/api.spec.ts`) |
 | `GET /actuator/metrics/triage.queue.backlog` | 큐 적체 건수 gauge (`stats:summary` 캐시 경유) |
 | `GET /actuator/metrics/triage.inquiries.stuck_received` | 10분 이상 `RECEIVED` 에 머문 문의 수 — ②롤백으로 조용히 방치된 건 탐지 (D-017). **0 이 아니면 분류 파이프라인이 실패 중** |
-| `GET /actuator/metrics/triage.ai.calls` | 실제 AI 호출 횟수 counter (재사용분 제외) |
-| `GET /actuator/metrics/triage.classification.success.rate` | 분류 성공률 |
-| `GET /actuator/metrics/cache.gets` | `classification:byNormalizedKey` hit/miss |
+| `GET /actuator/metrics/triage.ai.calls` | 실제 AI 호출 횟수 counter (재사용분 제외) — `AiClassificationService` 가 네트워크로 나가는 순간 센다 |
+| `GET /actuator/metrics/triage.classification.success.rate` | 분류 성공률 gauge — `FAILED` 만 실패로 세어 `(전체−FAILED)/전체` (D-065). 자동 확정률과 다르다 |
+| `GET /actuator/metrics/triage.cache.classification.hits` · `…misses` | 1단 캐시(`classification:byNormalizedKey`) hit/miss counter — `ClassificationReuseLookup` 조회 지점에서 센다 |
+
+> **`cache.gets` 가 아니라 `triage.cache.classification.hits`/`misses` 인 이유 (TRI-70)**: `cache.gets` 는 스프링이 **관리하는** 캐시(`@Cacheable`)에만 자동으로 붙는 이름이다. 1단 캐시는 손으로 짠 Redis 컴포넌트(`ClassificationCache`)라 그 이름으로는 잡히지 않고, 붙는다 해도 통계용 `stats:summary` 캐시를 세게 된다. 실제 hit/miss 는 이미 `ClassificationReuseLookup`(TRI-68)이 위 두 counter 로 세고 있어, **계약을 실제 counter 이름에 맞췄다**(같은 값을 두 이름으로 내보내지 않는다).
+>
+> **구현 상태 (TRI-70)**: 위 5개 지표(health 제외)가 모두 실제로 나간다. `triage.queue.backlog`·`triage.classification.success.rate` 는 `StatsService` 의 10초 캐시(`stats:summary`)를 경유하는 gauge, `triage.ai.calls`·`triage.cache.classification.*` 는 사건 발생 지점의 counter, `triage.inquiries.stuck_received` 는 `now` 기준 gauge다.
 
 ---
 
@@ -528,4 +532,5 @@ X-User-Role: AGENT
 | v1.6 | 2026-08-11 | **통계·정책 조회 구현 반영 (TRI-67·68·69 완료)** — §7 「현재 구현 상태」 갱신: `backlog`·`classification`·`aiCallSavings`·`audit`(`autoAccepted`/`reused` 분리 + 신뢰도 구간별 집계) 전체가 이제 실제로 나간다. `cache` 만 아직 미구현 — 부품(TRI-40·41·84)은 있지만 실제 분류 흐름에서 불러 쓰는 코드(TRI-53, 김준현)가 없어 잴 지점이 없다. §6 `threshold`·`audit.sampleRate` 도 실제로 나간다 — `audit.sampleRate` 는 `ClassificationProperties.audit`(TRI-64·65, PR #50)에 의존해 그 변경을 함께 반영했다. `GET /api/policies` 는 이미 계약된 §6 그대로 구현됐다(TRI-69) | TRI-67·68·69 |
 | v1.7 | 2026-08-12 | **재사용 on/off 스위치를 정책 조회에 노출 (D-062)** — §6 `GET /api/policies` 응답에 `reuse.enabled` 추가(`ClassificationProperties.reuse`, 기본 `true`). `threshold`·`audit.sampleRate` 와 같은 이유로 읽기 전용 — 실행 중 바뀌면 측정 1·8ⓐ-1 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다 | TRI-69 |
 | v1.8 | 2026-08-13 | **`audit` 블록 중복 구현을 통합 (TRI-66 · TRI-68)** — develop 에 TRI-66(감사 실측 비율: `eligibleTotal`·`sampledTotal`·`actualSampleRate`·`configuredSampleRate`)이 독립적으로 먼저 올라가 있었다. TRI-68(본 계약의 완전판 — 위 넷에 `reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket` 를 더한 것)로 흡수 통합한다. 계산 로직을 대조해 두 구현이 같은 verdict 버킷에 대해 동일한 값을 낸다는 것을 확인했고, TRI-66 쪽 실측 결과(PR #64·#65)는 재측정 없이 그대로 유효하다. TRI-66 설계 중 **`eligibleTotal` 이 0 이면 `actualSampleRate` 를 `null` 로 두는 처리**(D-022 와 같은 논리)는 이번에 함께 반영했다 | TRI-66 · TRI-68 |
+| v1.9 | 2026-08-13 | **관측 지표 3종 Actuator 배선 + `cache.gets` 정정 (TRI-70)** — §8 에 계약만 있고 잴 지점이 없던 `triage.ai.calls`(실제 AI 호출 counter, 재사용은 이 지점에 도달하지 않아 구조적으로 제외)·`triage.queue.backlog`(10초 캐시 경유 gauge)·`triage.classification.success.rate`(gauge)를 실제로 배선. `cache.gets` 행을 실제 counter 이름 `triage.cache.classification.hits`/`misses` 로 정정 — 커스텀 Redis 캐시라 스프링 자동 `cache.gets` 로는 안 잡히고, 값을 두 이름으로 내보내지 않기 위해 코드가 아니라 계약을 실제에 맞췄다. 분류 성공률의 "성공" 정의(=`FAILED` 만 실패)는 D-065 | TRI-70 |
 <!-- 변경 시 한 줄씩 추가 -->

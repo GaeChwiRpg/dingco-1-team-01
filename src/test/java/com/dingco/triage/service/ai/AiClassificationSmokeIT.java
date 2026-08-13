@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.dingco.triage.config.AnthropicProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,7 @@ class AiClassificationSmokeIT {
                 .build();
 
         AiClassificationService service = new AiClassificationService(
-                fixedProvider(client), properties);
+                fixedProvider(client), properties, new SimpleMeterRegistry());
 
         AiRawResponse response = service.classify(
                 "어제 받은 신발이 사이즈가 안 맞아서 반품하고 환불받고 싶어요.");
