@@ -136,6 +136,9 @@ class AuditOutsideTransactionIT {
         // 없어 이 비우기가 필요 없었다.
         statsService.evictSummary();
         outsideEnqueuer.reset();
+        // audit() 는 @Cacheable(AUDIT_CACHE) 다 — 안 비우면 이전 테스트가 캐시에 남긴 값을
+        // 이번 테스트가 그대로 돌려받는다 (표본 수가 이전 테스트 것과 뒤섞여 보인다).
+        statsService.evictSummary();
     }
 
     // ─────────────────────────────────────────────────────────────

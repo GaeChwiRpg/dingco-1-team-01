@@ -48,6 +48,47 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
             Pageable pageable);
 
     /**
+     * {@code search} 와 같은 조건, 다른 읽기 방식 (측정 5ⓖ, TRI-87).
+     *
+     * <p>{@code search} 는 {@code @EntityGraph} 로 세 테이블(큐·문의·분류결과)을 <b>통째로</b>
+     * 엔티티로 올린다. 이건 응답({@link com.dingco.triage.api.dto.ReviewQueueItemResponse})에
+     * 실제 나가는 <b>6개 칼럼만</b> 처음부터 뽑는다 — 항목마다 추가 쿼리가 나가는 문제는 애초에
+     * 생기지 않는다(엔티티가 아니므로 LAZY 필드 자체가 없음).
+     *
+     * <p>어느 쪽이 더 빠른지는 이 메서드를 추가한 시점에는 모른다 — 재보고 정한다.
+     * 두 방법을 실제로 나란히 잰 값은 {@code evidence/} 참고.
+     */
+    @Query("""
+            select q.id as id, q.inquiry.id as inquiryId, q.inquiry.content as content,
+                   q.classificationResult.category as suggestedCategory,
+                   q.status as status, q.createdAt as createdAt
+            from InquiryReviewQueueItem q
+            where q.status = :status
+              and (:from is null or q.createdAt >= :from)
+              and (:to is null or q.createdAt <= :to)
+            """)
+    Page<ReviewQueueItemProjection> searchProjected(
+            @Param("status") QueueStatus status,
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            Pageable pageable);
+
+    /** {@link #searchProjected} 전용 프로젝션 — 응답 DTO 와 같은 6개 칼럼만 담는다. */
+    interface ReviewQueueItemProjection {
+        Long getId();
+
+        Long getInquiryId();
+
+        String getContent();
+
+        InquiryCategory getSuggestedCategory();
+
+        QueueStatus getStatus();
+
+        Instant getCreatedAt();
+    }
+
+    /**
      * 한 문의의 큐 항목 전부.
      *
      * <p><b>"같은 문의가 큐에 두 번 들어갔나"를 묻는 자리다</b> (D-049 · 측정 2). 지금은 트랜잭션 ②

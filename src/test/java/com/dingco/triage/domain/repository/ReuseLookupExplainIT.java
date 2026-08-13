@@ -31,7 +31,7 @@ import org.springframework.test.context.ActiveProfiles;
  * 커버되는 것은 구동({@code inquiries}) 쪽뿐이고, {@code final_category IS NOT NULL} 은
  * <b>인덱스로 안 걸려 서버에서 필터</b>된다. 그래서 같은 키의 판정 행이 쌓일수록 훑는 양이 는다.
  *
- * <p><b>돌리는 법</b> — 10만 건을 심어 느리므로 스위치로 켠다. 출력을 evidence 에 옮긴다:
+ * <p><b>실행방법</b> — 10만 건을 심어 느리므로 스위치로 켠다. 출력을 evidence 에 옮긴다:
  * <pre>{@code
  * EXPLAIN_MEASURE=true ./gradlew test --tests '*ReuseLookupExplainIT'
  * }</pre>
