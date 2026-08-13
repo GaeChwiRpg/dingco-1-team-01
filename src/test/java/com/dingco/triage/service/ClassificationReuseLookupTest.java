@@ -16,6 +16,7 @@ import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.service.cache.CacheSource;
 import com.dingco.triage.service.cache.CachedClassification;
 import com.dingco.triage.service.cache.ClassificationCache;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
@@ -68,7 +69,7 @@ class ClassificationReuseLookupTest {
                 new BigDecimal("0.8"),
                 new ClassificationProperties.Audit(new BigDecimal("0.05")),
                 new ClassificationProperties.Reuse(enabled));
-        return new ClassificationReuseLookup(cache, resultRepository, properties);
+        return new ClassificationReuseLookup(cache, resultRepository, properties, new SimpleMeterRegistry());
     }
 
     /** id 는 DB 가 채우는 값이라 테스트에서는 리플렉션으로 넣는다. */
@@ -101,6 +102,9 @@ class ClassificationReuseLookupTest {
             // 캐시가 줄이는 것은 DB 조회다 (D-014). 여기서 DB 를 또 치면 캐시가 아무 일도 안 한 것이다.
             verify(resultRepository, never()).findLatestHumanConfirmed(any());
             verify(resultRepository, never()).findLatestAutoAccepted(any());
+            // 계약 §7 cache.hits 가 세는 지점이 정확히 여기다 (TRI-68).
+            assertThat(lookup.cacheHitCount()).isEqualTo(1);
+            assertThat(lookup.cacheMissCount()).isZero();
         }
 
         @Test
@@ -169,6 +173,9 @@ class ClassificationReuseLookupTest {
 
             verify(resultRepository).findLatestHumanConfirmed(KEY);
             verify(resultRepository).findLatestAutoAccepted(KEY);
+            // 1단이 비었으면 2단 결과와 무관하게 miss 다 — hit rate 는 1단만의 결과다 (D-014).
+            assertThat(lookup.cacheMissCount()).isEqualTo(1);
+            assertThat(lookup.cacheHitCount()).isZero();
         }
     }
 
@@ -205,6 +212,10 @@ class ClassificationReuseLookupTest {
             verify(cache, never()).get(any());
             verify(resultRepository, never()).findLatestHumanConfirmed(any());
             verify(resultRepository, never()).findLatestAutoAccepted(any());
+            // 안 찾아본 것은 miss 가 아니다 — 껐을 때는 카운터도 안 움직여야 hit rate 의 뜻이
+            // 스위치 상태에 따라 달라지지 않는다.
+            assertThat(lookup.cacheHitCount()).isZero();
+            assertThat(lookup.cacheMissCount()).isZero();
         }
 
         @Test

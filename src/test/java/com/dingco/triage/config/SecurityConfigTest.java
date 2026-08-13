@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.dingco.triage.api.PoliciesController;
 import com.dingco.triage.api.ReviewQueueController;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
@@ -17,6 +18,7 @@ import com.dingco.triage.domain.InquiryReviewQueueItem;
 import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.service.ContentMasker;
+import com.dingco.triage.service.PoliciesService;
 import com.dingco.triage.service.ReviewQueryService;
 import com.dingco.triage.service.ReviewService;
 import java.math.BigDecimal;
@@ -42,12 +44,13 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * <b>그 앞에서 역할이 걸러지는지</b>다. DB 를 안 쓰므로 {@code @WebMvcTest} 슬라이스로 충분하고,
  * Docker 없는 환경에서도 돈다.
  *
- * <p>{@code GET /api/inquiry-review-queue} 만 TRI-56 으로 실제 컨트롤러({@link ReviewQueueController})
- * 가 생겨 더미에서 빠졌다 — 그래서 이 슬라이스에 그 컨트롤러를 함께 태우고, DB 를 쓰는
- * {@link ReviewQueryService} 와 {@link ReviewService} 는 {@code @MockBean} 으로 대신한다.
- * {@link ContentMasker} 는 의존성 없는 순수 컴포넌트라 목킹하지 않고 그대로 가져다 쓴다.
+ * <p>{@code GET /api/inquiry-review-queue} 는 TRI-56, {@code GET /api/policies} 는 TRI-69 로
+ * 실제 컨트롤러({@link ReviewQueueController} · {@link PoliciesController})가 생겨 더미에서
+ * 빠졌다 — 그래서 이 슬라이스에 그 컨트롤러들을 함께 태우고, 각자의 의존 서비스는
+ * {@code @MockBean} 으로 대신한다. {@link ContentMasker} 는 의존성 없는 순수 컴포넌트라
+ * 목킹하지 않고 그대로 가져다 쓴다.
  */
-@WebMvcTest(controllers = {ProbeController.class, ReviewQueueController.class})
+@WebMvcTest(controllers = {ProbeController.class, ReviewQueueController.class, PoliciesController.class})
 @Import({SecurityConfig.class, ContentMasker.class})
 class SecurityConfigTest {
 
@@ -59,6 +62,9 @@ class SecurityConfigTest {
 
     @MockBean
     private ReviewService reviewService;
+
+    @MockBean
+    private PoliciesService policiesService;
 
     @BeforeEach
     void stubReviewQueue() {
@@ -73,6 +79,12 @@ class SecurityConfigTest {
         ReflectionTestUtils.setField(item, "id", 1L);
         item.resolve(1L, Instant.now());
         given(reviewService.confirm(any(), anyLong(), any())).willReturn(item);
+        // GET /api/policies 매핑표 케이스(role=MANAGER → 200)도 역할 필터링만 잰다 — 값 자체는
+        // PoliciesControllerTest 소관이라 임의의 유효값만 채운다. 재사용 스위치는 역할 필터링과
+        // 무관하다 — null 을 주면 「켜짐」이 채워진다 (D-062).
+        given(policiesService.current()).willReturn(
+                new ClassificationProperties(
+                        new BigDecimal("0.8"), new ClassificationProperties.Audit(new BigDecimal("0.05")), null));
     }
 
     @ParameterizedTest(name = "{0} {1} — role={2} → {3}")

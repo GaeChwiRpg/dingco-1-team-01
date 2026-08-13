@@ -1,6 +1,7 @@
 package com.dingco.triage.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.BDDMockito.given;
 
 import com.dingco.triage.config.ClassificationProperties;
@@ -27,8 +28,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * TRI-66 — <b>감사 장치가 설정한 만큼 실제로 돌고 있는지</b>를 세는 집계가 맞는지 고정한다
- * (D-012 · D-033).
+ * <b>감사 장치가 설정한 만큼 실제로 돌고 있는지</b>를 세는 집계가 맞는지 고정한다 (TRI-66 · TRI-68
+ * 통합 · D-012 · D-033).
  *
  * <p><b>이 집계가 없으면 측정 8ⓐ-2 를 믿을 수 없다.</b> 감사 표본 삽입이 빠지면 오분류율의
  * 분모가 조용히 줄어드는데, 결과만 보면 "감사가 잡은 게 적네"로 읽혀 <b>감사가 덜 돈 것인지
@@ -40,9 +41,9 @@ import org.springframework.test.context.ActiveProfiles;
  * 목으로 뽑기를 정해두면 기대값이 결정적이 되고, 덤으로 <b>설정값과 실측이 어긋난 상황을
  * 일부러 만들어</b> 그 어긋남이 보이는지까지 확인할 수 있다.
  *
- * <p><b>실 MySQL 이 필요한 이유</b>: 두 집계는 판정 테이블을 {@code GROUP BY} 하고 큐 테이블에
- * 존재 검사({@code EXISTS})를 거는 쿼리다. 조건이 하나만 어긋나도 <b>숫자는 그럴듯하게 나오고
- * 아무도 눈치채지 못한다.</b>
+ * <p><b>실 MySQL 이 필요한 이유</b>: {@code eligibleTotal}·{@code sampledTotal} 은 판정 테이블을
+ * {@code GROUP BY} 하고 큐 테이블과 조인하는 쿼리다. 조건이 하나만 어긋나도 <b>숫자는 그럴듯하게
+ * 나오고 아무도 눈치채지 못한다.</b>
  *
  * <p>전수를 세는 집계라 다른 테스트가 남긴 행이 섞이면 기대값이 무너진다 — 매번 FK 역순으로
  * 비우고 시작한다.
@@ -147,17 +148,17 @@ class StatsServiceAuditRatesIT {
             givenAutoAccepted();
         }
 
-        StatsService.AuditRates rates = statsService.auditRates();
+        StatsService.Audit audit = statsService.audit();
 
-        assertThat(rates.configuredSampleRate())
+        assertThat(audit.configuredSampleRate())
                 .as("설정값은 application.yml 이 정한 그대로여야 한다 — 실측에 맞춰 움직이면 대조가 무의미하다")
-                .isEqualByComparingTo("0.05");
-        assertThat(rates.autoAccepted().eligibleTotal())
+                .isEqualTo(0.05);
+        assertThat(audit.autoAccepted().eligibleTotal())
                 .as("자동 확정된 4건 전부가 뽑힐 수 있었던 모집단이다").isEqualTo(4);
-        assertThat(rates.autoAccepted().sampledTotal()).isEqualTo(1);
-        assertThat(rates.autoAccepted().actualSampleRate())
-                .as("1/4 = 0.250. 설정 0.05 와 벌어진 것이 그대로 보여야 한다")
-                .isEqualByComparingTo("0.250");
+        assertThat(audit.autoAccepted().sampledTotal()).isEqualTo(1);
+        assertThat(audit.autoAccepted().actualSampleRate())
+                .as("1/4 = 0.25. 설정 0.05 와 벌어진 것이 그대로 보여야 한다")
+                .isEqualTo(0.25, within(1e-9));
     }
 
     @Test
@@ -171,16 +172,16 @@ class StatsServiceAuditRatesIT {
         givenReused();
         givenReused();
 
-        StatsService.AuditRates rates = statsService.auditRates();
+        StatsService.Audit audit = statsService.audit();
 
-        assertThat(rates.autoAccepted().eligibleTotal()).isEqualTo(2);
-        assertThat(rates.autoAccepted().sampledTotal()).isEqualTo(1);
-        assertThat(rates.autoAccepted().actualSampleRate()).isEqualByComparingTo("0.500");
+        assertThat(audit.autoAccepted().eligibleTotal()).isEqualTo(2);
+        assertThat(audit.autoAccepted().sampledTotal()).isEqualTo(1);
+        assertThat(audit.autoAccepted().actualSampleRate()).isEqualTo(0.5, within(1e-9));
 
-        assertThat(rates.reused().eligibleTotal())
+        assertThat(audit.reused().eligibleTotal())
                 .as("재사용도 「자동으로 확정된 것」이라 감사 대상이다 (D-033)").isEqualTo(2);
-        assertThat(rates.reused().sampledTotal()).isEqualTo(2);
-        assertThat(rates.reused().actualSampleRate()).isEqualByComparingTo("1.000");
+        assertThat(audit.reused().sampledTotal()).isEqualTo(2);
+        assertThat(audit.reused().actualSampleRate()).isEqualTo(1.0, within(1e-9));
     }
 
     @Test
@@ -211,15 +212,15 @@ class StatsServiceAuditRatesIT {
                 .as("격리는 감사가 아니다 — 사유가 섞이면 실측 비율이 부풀어 「감사가 넘치게 돈다」로 보인다")
                 .isZero();
 
-        StatsService.AuditRates rates = statsService.auditRates();
+        StatsService.Audit audit = statsService.audit();
 
-        assertThat(rates.autoAccepted().eligibleTotal())
+        assertThat(audit.autoAccepted().eligibleTotal())
                 .as("격리 건은 자동 확정이 아니므로 모집단이 아니다").isZero();
-        assertThat(rates.autoAccepted().sampledTotal())
+        assertThat(audit.autoAccepted().sampledTotal())
                 .as("큐에 2건이 있지만(위에서 단언) 감사로 뽑힌 것은 하나도 없다").isZero();
-        assertThat(rates.autoAccepted().actualSampleRate())
+        assertThat(audit.autoAccepted().actualSampleRate())
             .as("모집단이 0 이면 비율을 낼 수 없다").isNull();
-        assertThat(rates.reused().actualSampleRate()).isNull();
+        assertThat(audit.reused().actualSampleRate()).isNull();
     }
 
     @Test
@@ -230,7 +231,7 @@ class StatsServiceAuditRatesIT {
         given(auditSamplingPolicy.shouldSample()).willReturn(true);
         givenAutoAccepted();
 
-        assertThat(statsService.auditRates().autoAccepted().sampledTotal())
+        assertThat(statsService.audit().autoAccepted().sampledTotal())
                 .as("먼저 뽑힌 상태를 확인하고 넘어간다 — 이 줄이 없으면 아래가 0 이어도 이유를 모른다")
                 .isEqualTo(1);
 
@@ -241,9 +242,9 @@ class StatsServiceAuditRatesIT {
                 """, java.sql.Timestamp.from(Instant.now()));
         assertThat(resolved).as("확정할 감사 항목이 실제로 있어야 이 테스트에 의미가 있다").isEqualTo(1);
 
-        assertThat(statsService.auditRates().autoAccepted().sampledTotal())
+        assertThat(statsService.audit().autoAccepted().sampledTotal())
                 .as("확정 후에도 「뽑혔다」는 1건 그대로여야 한다").isEqualTo(1);
-        assertThat(statsService.auditRates().autoAccepted().actualSampleRate())
-                .isEqualByComparingTo("1.000");
+        assertThat(statsService.audit().autoAccepted().actualSampleRate())
+                .isEqualTo(1.0, within(1e-9));
     }
 }

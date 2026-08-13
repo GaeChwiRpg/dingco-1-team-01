@@ -9,11 +9,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.dingco.triage.config.SecurityConfig;
 import com.dingco.triage.domain.type.QueueReason;
 import com.dingco.triage.service.StatsService;
-import com.dingco.triage.service.StatsService.AuditRates;
+import com.dingco.triage.service.StatsService.AiCallSavings;
+import com.dingco.triage.service.StatsService.Audit;
+import com.dingco.triage.service.StatsService.AutoAcceptedAudit;
 import com.dingco.triage.service.StatsService.Backlog;
-import com.dingco.triage.service.StatsService.Sampling;
-import java.math.BigDecimal;
+import com.dingco.triage.service.StatsService.CacheStats;
+import com.dingco.triage.service.StatsService.Classification;
+import com.dingco.triage.service.StatsService.ConfidenceBucket;
+import com.dingco.triage.service.StatsService.VerdictAudit;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,8 +29,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * TRI-72·TRI-67 — {@code GET /api/stats} 가 계약(API-CONTRACT §7)의
- * {@code classification.stuckReceived} + {@code backlog} 를 응답하는지 확인한다.
+ * TRI-72·TRI-67·TRI-68 — {@code GET /api/stats} 가 계약(API-CONTRACT §7)의
+ * {@code classification} · {@code backlog} · {@code aiCallSavings} · {@code cache} ·
+ * {@code audit} 을 응답하는지 확인한다.
  *
  * <p>역할별 401/403 매핑({@code MANAGER} 만 200)은 {@link com.dingco.triage.config.SecurityConfigTest}
  * 가 이미 검증한다 — {@link ReviewQueueControllerTest} 와 같은 방침으로 여기서 반복하지 않고
@@ -44,16 +50,36 @@ class StatsControllerTest {
     /** 빈 적체 — 이 테스트가 {@code backlog} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
     private static final Backlog EMPTY_BACKLOG = new Backlog(0, Map.of(), null);
 
-    /** 아무 판정도 없는 상태의 감사율 — {@code audit} 값 자체를 검증하지 않는 테스트에서 쓴다. */
-    private static final AuditRates EMPTY_AUDIT = new AuditRates(
-            new BigDecimal("0.05"), new Sampling(0, 0, null), new Sampling(0, 0, null));
+    /** 빈 판정 집계 — 이 테스트가 {@code classification} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
+    private static final Classification EMPTY_CLASSIFICATION = new Classification(0, 0, 0, 0, 0.0);
+
+    /** 빈 절감률 — 이 테스트가 {@code aiCallSavings} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
+    private static final AiCallSavings EMPTY_AI_CALL_SAVINGS = new AiCallSavings(0, 0, 0.0);
+
+    /** 빈 캐시 hit/miss — 이 테스트가 {@code cache} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
+    private static final CacheStats EMPTY_CACHE = new CacheStats(0.0, 0, 0);
+
+    /** 빈 감사 대조 — 이 테스트가 {@code audit} 값 자체를 검증하는 게 아닐 때 쓰는 기본값. */
+    private static final Audit EMPTY_AUDIT = new Audit(
+            0.0,
+            new AutoAcceptedAudit(0, 0, null, 0, 0, 0.0, List.of()),
+            new VerdictAudit(0, 0, null, 0, 0, 0.0));
+
+    /** 매 테스트가 반복해서 스텁하지 않도록 값이 없는 다섯 블록을 한 번에 건다. */
+    private void stubEmptyStats() {
+        given(statsService.stuckReceivedCount()).willReturn(0L);
+        given(statsService.backlog()).willReturn(EMPTY_BACKLOG);
+        given(statsService.classification()).willReturn(EMPTY_CLASSIFICATION);
+        given(statsService.aiCallSavings()).willReturn(EMPTY_AI_CALL_SAVINGS);
+        given(statsService.cache()).willReturn(EMPTY_CACHE);
+        given(statsService.audit()).willReturn(EMPTY_AUDIT);
+    }
 
     @Test
     @DisplayName("classification.stuckReceived 를 계약 구조 그대로 응답한다")
     void returnsStuckReceivedUnderClassification() throws Exception {
+        stubEmptyStats();
         given(statsService.stuckReceivedCount()).willReturn(3L);
-        given(statsService.backlog()).willReturn(EMPTY_BACKLOG);
-        given(statsService.auditRates()).willReturn(EMPTY_AUDIT);
 
         mockMvc.perform(get("/api/stats")
                         .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
@@ -62,10 +88,25 @@ class StatsControllerTest {
     }
 
     @Test
+    @DisplayName("classification — 판정별 건수·자동확정률을 계약 구조 그대로 응답한다 (TRI-68)")
+    void returnsClassificationUnderContractShape() throws Exception {
+        stubEmptyStats();
+        given(statsService.classification()).willReturn(new Classification(1284, 1180, 96, 8, 0.919));
+
+        mockMvc.perform(get("/api/stats")
+                        .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.classification.inquiriesTotal").value(1284))
+                .andExpect(jsonPath("$.classification.autoAccepted").value(1180))
+                .andExpect(jsonPath("$.classification.needsReview").value(96))
+                .andExpect(jsonPath("$.classification.failed").value(8))
+                .andExpect(jsonPath("$.classification.autoAcceptRate").value(0.919));
+    }
+
+    @Test
     @DisplayName("backlog — 사유별 건수·전체 건수·가장 오래된 항목 시각을 계약 구조 그대로 응답한다 (TRI-67)")
     void returnsBacklogUnderContractShape() throws Exception {
-        given(statsService.stuckReceivedCount()).willReturn(0L);
-        given(statsService.auditRates()).willReturn(EMPTY_AUDIT);
+        stubEmptyStats();
         given(statsService.backlog()).willReturn(new Backlog(
                 7,
                 Map.of(QueueReason.LOW_CONFIDENCE, 4L, QueueReason.CLASSIFY_FAILED, 1L,
@@ -83,75 +124,77 @@ class StatsControllerTest {
     }
 
     @Test
-    @DisplayName("audit — 설정 비율과 실측 비율을 자동 확정·재사용 따로 응답한다 (TRI-66)")
-    void returnsAuditRatesPerVerdict() throws Exception {
-        given(statsService.stuckReceivedCount()).willReturn(0L);
-        given(statsService.backlog()).willReturn(EMPTY_BACKLOG);
-        given(statsService.auditRates()).willReturn(new AuditRates(
-                new BigDecimal("0.05"),
-                new Sampling(1180, 59, new BigDecimal("0.050")),
-                new Sampling(412, 21, new BigDecimal("0.051"))));
+    @DisplayName("aiCallSavings — 접수 수·실제 AI 호출 수·절감률을 계약 구조 그대로 응답한다 (TRI-68)")
+    void returnsAiCallSavingsUnderContractShape() throws Exception {
+        stubEmptyStats();
+        given(statsService.aiCallSavings()).willReturn(new AiCallSavings(1284, 412, 0.679));
 
         mockMvc.perform(get("/api/stats")
                         .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.audit.configuredSampleRate").value(0.05))
-                // 분자·분모가 비율과 함께 나가야 검산이 된다. 비율만 있으면 반올림 뒤라
-                // "20건 중 1건"인지 "2000건 중 100건"인지 구분되지 않는다.
-                .andExpect(jsonPath("$.audit.autoAccepted.eligibleTotal").value(1180))
-                .andExpect(jsonPath("$.audit.autoAccepted.sampledTotal").value(59))
-                .andExpect(jsonPath("$.audit.autoAccepted.actualSampleRate").value(0.050))
-                // 두 경로를 합치지 않는다 (D-033) — 한쪽만 새고 있을 때 평균에 묻히면 안 된다.
-                .andExpect(jsonPath("$.audit.reused.eligibleTotal").value(412))
-                .andExpect(jsonPath("$.audit.reused.sampledTotal").value(21))
-                .andExpect(jsonPath("$.audit.reused.actualSampleRate").value(0.051));
+                .andExpect(jsonPath("$.aiCallSavings.inquiriesReceived").value(1284))
+                .andExpect(jsonPath("$.aiCallSavings.aiCallsMade").value(412))
+                .andExpect(jsonPath("$.aiCallSavings.savingsRate").value(0.679));
     }
 
     @Test
-    @DisplayName("뽑힐 수 있었던 건이 없으면 실측 비율은 null 이다 — 0.0 으로 채우면 표본 누락과 섞인다")
-    void leavesActualRateNullWhenNothingWasEligible() throws Exception {
-        given(statsService.stuckReceivedCount()).willReturn(0L);
-        given(statsService.backlog()).willReturn(EMPTY_BACKLOG);
-        given(statsService.auditRates()).willReturn(EMPTY_AUDIT);
+    @DisplayName("audit — autoAccepted·reused 를 분리하고 신뢰도 구간별 집계를 계약 구조 그대로 응답한다 (TRI-68)")
+    void returnsAuditUnderContractShape() throws Exception {
+        stubEmptyStats();
+        given(statsService.audit()).willReturn(new Audit(
+                0.05,
+                new AutoAcceptedAudit(1180, 59, 0.050, 40, 6, 0.150,
+                        List.of(new ConfidenceBucket("0.8-0.9", 24, 5, 0.792),
+                                new ConfidenceBucket("0.9-1.0", 16, 1, 0.938))),
+                new VerdictAudit(412, 21, 0.051, 15, 1, 0.067)));
 
         mockMvc.perform(get("/api/stats")
                         .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
                 .andExpect(status().isOk())
-                // 설정값은 판정이 하나도 없어도 알 수 있다 — 이건 실측이 아니라 설정이다.
                 .andExpect(jsonPath("$.audit.configuredSampleRate").value(0.05))
-                .andExpect(jsonPath("$.audit.autoAccepted.eligibleTotal").value(0))
-                // 0.0 이면 "뽑힐 게 있었는데 하나도 안 뽑혔다"(표본 누락 신호)와 같은 얼굴이 된다.
-                // 필드를 통째로 빼지도 않는다 — 빼면 읽는 쪽이 "아직 없다"와 "이 버전엔 그 필드가
-                // 없다"를 구분할 수 없다. nullValue() 는 경로는 있고 값만 비었음을 요구한다.
+                .andExpect(jsonPath("$.audit.autoAccepted.eligibleTotal").value(1180))
+                .andExpect(jsonPath("$.audit.autoAccepted.sampledTotal").value(59))
+                .andExpect(jsonPath("$.audit.autoAccepted.actualSampleRate").value(0.050))
+                .andExpect(jsonPath("$.audit.autoAccepted.reviewed").value(40))
+                .andExpect(jsonPath("$.audit.autoAccepted.mismatched").value(6))
+                .andExpect(jsonPath("$.audit.autoAccepted.misclassificationRate").value(0.150))
+                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket[0].range").value("0.8-0.9"))
+                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket[0].reviewed").value(24))
+                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket[0].mismatched").value(5))
+                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket[0].actualAccuracy").value(0.792))
+                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket[1].range").value("0.9-1.0"))
+                .andExpect(jsonPath("$.audit.reused.eligibleTotal").value(412))
+                .andExpect(jsonPath("$.audit.reused.sampledTotal").value(21))
+                .andExpect(jsonPath("$.audit.reused.reviewed").value(15))
+                .andExpect(jsonPath("$.audit.reused.mismatched").value(1))
+                .andExpect(jsonPath("$.audit.reused.misclassificationRate").value(0.067))
+                // reused 에는 byConfidenceBucket 이 없다 — 비교할 AI 확신도가 없다 (D-033).
+                .andExpect(jsonPath("$.audit.reused.byConfidenceBucket").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("audit — 모집단이 0 이면 actualSampleRate 는 0.0 이 아니라 JSON null 로 나간다 (TRI-66)")
+    void returnsNullActualSampleRateWhenNoEligiblePopulation() throws Exception {
+        stubEmptyStats();
+
+        mockMvc.perform(get("/api/stats")
+                        .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.audit.autoAccepted.actualSampleRate").value(nullValue()))
                 .andExpect(jsonPath("$.audit.reused.actualSampleRate").value(nullValue()));
     }
 
     @Test
-    @DisplayName("아직 착수 안 한 블록(aiCallSavings·cache)은 응답에 없다 — 0 으로 지어내지 않는다")
-    void doesNotFabricateUnimplementedBlocks() throws Exception {
-        given(statsService.stuckReceivedCount()).willReturn(0L);
-        given(statsService.backlog()).willReturn(EMPTY_BACKLOG);
-        given(statsService.auditRates()).willReturn(EMPTY_AUDIT);
+    @DisplayName("cache — 1단 캐시 hit rate·hits·misses 를 계약 구조 그대로 응답한다 (TRI-68)")
+    void returnsCacheUnderContractShape() throws Exception {
+        stubEmptyStats();
+        given(statsService.cache()).willReturn(new CacheStats(0.604, 776, 508));
 
         mockMvc.perform(get("/api/stats")
                         .header("X-User-Id", "1").header("X-User-Role", "MANAGER"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.classification.stuckReceived").value(0))
-                // 다른 측정 소유의 블록을 빈 값으로 채워 "있는 것처럼" 보이게 하지 않는다.
-                // backlog 는 TRI-67, audit 의 감사율은 TRI-66 으로 이제 실제로 있으므로 여기서
-                // 빠졌다 — 위 테스트들이 그 자리를 대신 검증한다.
-                .andExpect(jsonPath("$.aiCallSavings").doesNotExist())
-                .andExpect(jsonPath("$.cache").doesNotExist())
-                // ⚠️ audit 블록은 생겼지만 그 안이 다 찬 것은 아니다. 감사가 몇 건을 잡아냈고
-                // 그중 몇 건이 틀렸는지는 측정 8ⓐ 의 몫이라 아직 없다 — 0 으로 지어내면
-                // "감사했는데 하나도 안 틀렸다"라는 결론이 저절로 만들어진다.
-                .andExpect(jsonPath("$.audit.autoAccepted.reviewed").doesNotExist())
-                .andExpect(jsonPath("$.audit.autoAccepted.mismatched").doesNotExist())
-                .andExpect(jsonPath("$.audit.autoAccepted.misclassificationRate").doesNotExist())
-                .andExpect(jsonPath("$.audit.autoAccepted.byConfidenceBucket").doesNotExist())
-                // classification 블록 안에서도 미착수 카운트를 0 으로 지어내지 않는다.
-                .andExpect(jsonPath("$.classification.autoAccepted").doesNotExist())
-                .andExpect(jsonPath("$.classification.inquiriesTotal").doesNotExist());
+                .andExpect(jsonPath("$.cache.hitRate").value(0.604))
+                .andExpect(jsonPath("$.cache.hits").value(776))
+                .andExpect(jsonPath("$.cache.misses").value(508));
     }
 }

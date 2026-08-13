@@ -181,7 +181,7 @@ class ClassificationAuditSamplingIT {
         // 2) ⚠️ 캐시가 정말 채워졌는지 확인하고 넘어간다. 이 줄이 없으면, 캐시가 꺼져 있어
         //    매번 DB 를 새로 세는 상황에서도 아래 단언이 통과해 버린다 — 그러면 이 테스트는
         //    evict 를 지워도 안 터지는, 아무것도 못 잡는 테스트가 된다.
-        Cache cache = cacheManager.getCache("stats:summary");
+        Cache cache = cacheManager.getCache(StatsService.BACKLOG_CACHE);
         assertThat(cache).as("통계 캐시가 있어야 이 테스트에 의미가 있다").isNotNull();
         assertThat(cache.get(SimpleKey.EMPTY))
                 .as("읽은 값이 캐시에 담겨야 「비워지는지」를 잴 수 있다").isNotNull();

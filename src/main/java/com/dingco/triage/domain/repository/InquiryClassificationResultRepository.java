@@ -108,70 +108,23 @@ public interface InquiryClassificationResultRepository
                 .stream().findFirst();
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 감사 장치 자체를 감사한다 — TRI-66 · D-012
-    //
-    // 감사 표본 삽입이 빠지면 측정 8ⓐ 의 분모가 조용히 줄어드는데, 줄었다는 사실 자체가
-    // 아무 데도 안 남는다. 아래 두 쿼리가 그것을 드러낸다 — 뽑힐 수 있었던 수와 실제로
-    // 뽑힌 수를 따로 세어, 설정한 비율과 어긋나면 눈에 보이게 한다.
-    //
-    // ⚠️ 두 쿼리 모두 판정 「행」을 센다. 문의가 아니다. 감사 여부를 정하는 자리
-    // (ClassificationService.enqueueIfNeeded)가 판정 행이 만들어질 때마다 정확히 한 번씩
-    // 묻기 때문에, 행을 세는 것이 곧 "몇 번 물었나 / 몇 번 뽑혔나"와 같아진다.
-    //
-    // ⚠️ 자동 확정과 재사용을 합치지 않는다 (D-033). 합치면 두 경로의 비율 차이가 사라져,
-    // 한쪽만 새고 있을 때 평균에 묻힌다.
-    // ─────────────────────────────────────────────────────────────
-
     /**
-     * <b>뽑힐 수 있었던 전체</b> — 자동으로 확정된 판정 행 수를 판정별로 (계약 §7
-     * {@code audit.*.eligibleTotal}).
+     * 판정별 건수 (계약 §7 {@code classification} 블록, TRI-68).
      *
-     * <p>모집단이 {@code AUTO_ACCEPTED} · {@code REUSED} 인 것은 이 시스템이 감사하는 대상이
-     * <b>"AI 가 답한 것"이 아니라 "자동으로 확정된 것"</b>이기 때문이다 (D-033). 확신 못 한 건과
-     * 못 읽은 건은 <b>전건이</b> 사람에게 가므로 애초에 뽑고 말고 할 것이 없다.
+     * <p>이 저장소 헤더에 P3 소유로 명시된 "감사 집계"의 일부다. 판정 행 하나가 분류 시도 1건과
+     * 대응하므로, 여기서 세는 것이 {@code classification.inquiriesTotal} 의 모집단이 된다.
+     *
+     * <p><b>{@code audit.*.eligibleTotal}(TRI-66 · D-012)도 여기서 나온다</b> — 필터 없이 판정
+     * 전체를 세어 verdict 별로 나누면, {@code AUTO_ACCEPTED}·{@code REUSED} 버킷만 꺼내 쓰는
+     * 것과 {@code WHERE verdict IN (...)} 로 미리 좁혀 세는 것이 <b>같은 verdict 에 대해서는
+     * 수학적으로 같은 값</b>이다 — 감사 전용 쿼리를 따로 두지 않는다.
      */
     @Query("""
-            SELECT r.verdict AS verdict, count(r) AS count
-              FROM InquiryClassificationResult r
-             WHERE r.verdict IN (com.dingco.triage.domain.type.Verdict.AUTO_ACCEPTED,
-                                 com.dingco.triage.domain.type.Verdict.REUSED)
-             GROUP BY r.verdict
+            select r.verdict as verdict, count(r) as count
+            from InquiryClassificationResult r
+            group by r.verdict
             """)
-    List<VerdictCount> countAuditEligibleByVerdict();
-
-    /**
-     * <b>실제로 뽑힌 수</b> — 감사 사유로 검토 목록에 들어간 판정 행 수를 판정별로 (계약 §7
-     * {@code audit.*.sampledTotal}).
-     *
-     * <p><b>큐 항목의 상태({@code PENDING}/{@code RESOLVED})를 보지 않는다.</b> 세려는 것은
-     * "지금 몇 건이 밀려 있나"가 아니라 <b>"뽑혔나"</b>이고, 상담원이 확정했다고 해서 뽑혔던
-     * 사실이 사라지지는 않는다. 상태로 거르면 감사가 진행될수록 실측 비율이 0 을 향해 내려가
-     * <b>정상 동작이 표본 누락처럼 보인다.</b>
-     *
-     * <p><b>⚠️ {@code reason} 등치는 지금 없어도 같은 값이 나온다.</b> 격리 건
-     * ({@code LOW_CONFIDENCE}·{@code CLASSIFY_FAILED})은 판정이 {@code NEEDS_REVIEW}·
-     * {@code FAILED} 라 위 {@code IN} 절에서 이미 빠지기 때문이다 — <b>이 조건을 지워도
-     * 테스트는 안 터진다.</b> 그런데도 두는 이유는 "자동 확정된 건이 감사가 아닌 사유로 큐에
-     * 들어가는 경로"가 생기는 순간 <b>실측 비율이 설정값보다 부풀어 「감사가 넘치게 돌고
-     * 있다」는 거짓 신호</b>가 되기 때문이다. 표본 누락은 값이 작아져 눈에 띄지만 이쪽은
-     * 반대라 알아채기 어렵다.
-     *
-     * <p>존재 검사({@code exists})로 쓴 이유는 조인하면 한 판정 행에 큐 항목이 둘 이상일 때
-     * 같은 행이 여러 번 세어지기 때문이다. 지금 구조에서는 그런 행이 생기지 않지만,
-     * <b>세는 쪽이 그 가정에 기대지 않게</b> 둔다.
-     */
-    @Query("""
-            SELECT r.verdict AS verdict, count(r) AS count
-              FROM InquiryClassificationResult r
-             WHERE r.verdict IN (com.dingco.triage.domain.type.Verdict.AUTO_ACCEPTED,
-                                 com.dingco.triage.domain.type.Verdict.REUSED)
-               AND EXISTS (SELECT 1 FROM InquiryReviewQueueItem q
-                            WHERE q.classificationResult = r
-                              AND q.reason = com.dingco.triage.domain.type.QueueReason.AUDIT_SAMPLE)
-             GROUP BY r.verdict
-            """)
-    List<VerdictCount> countAuditSampledByVerdict();
+    List<VerdictCount> countByVerdict();
 
     /**
      * 판정별 집계 프로젝션.
