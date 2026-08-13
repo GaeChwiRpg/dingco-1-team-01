@@ -2,12 +2,21 @@ package com.dingco.triage.service.ai;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.mock;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.MessageCreateParams;
 import com.dingco.triage.config.AnthropicProperties;
 import com.dingco.triage.domain.type.InquiryCategory;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -24,15 +33,40 @@ class AiClassificationServiceTest {
             new AnthropicProperties("", "claude-sonnet-5", 512, Duration.ofSeconds(30));
 
     @Test
-    @DisplayName("키가 없으면 조용히 넘어가지 않고 명확한 예외로 실패한다")
+    @DisplayName("키가 없으면 조용히 넘어가지 않고 명확한 예외로 실패한다 — 그리고 호출 카운터는 오르지 않는다")
     void failsLoudlyWithoutApiKey() {
+        MeterRegistry registry = new SimpleMeterRegistry();
         AiClassificationService service =
-                new AiClassificationService(emptyProvider(), PROPERTIES);
+                new AiClassificationService(emptyProvider(), PROPERTIES, registry);
 
         assertThatThrownBy(() -> service.classify("환불해주세요"))
                 .as("키 없이 null 을 돌려주면 그 문의는 판정도 격리도 안 된 채 사라진다")
                 .isInstanceOf(AiCallException.class)
                 .hasMessageContaining("ANTHROPIC_API_KEY");
+
+        assertThat(registry.counter("triage.ai.calls").count())
+                .as("키가 없어 네트워크로 나가지 않은 건은 '실제 호출'이 아니라 세지 않는다 (TRI-70)")
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("실제로 부르면 triage.ai.calls 가 호출마다 오른다 (TRI-70)")
+    void countsEveryRealCall() {
+        MeterRegistry registry = new SimpleMeterRegistry();
+        AnthropicClient client = mock(AnthropicClient.class, RETURNS_DEEP_STUBS);
+        Message message = mock(Message.class, RETURNS_DEEP_STUBS);
+        given(message.content()).willReturn(List.of());
+        given(client.messages().create(any(MessageCreateParams.class))).willReturn(message);
+
+        AiClassificationService service =
+                new AiClassificationService(fixedProvider(client), PROPERTIES, registry);
+
+        service.classify("환불해주세요");
+        service.classify("배송 언제 오나요");
+
+        assertThat(registry.counter("triage.ai.calls").count())
+                .as("이 메서드가 AI 를 실제로 부르는 유일한 자리라 호출 수와 카운터가 일치해야 한다")
+                .isEqualTo(2.0);
     }
 
     @Test
@@ -67,6 +101,30 @@ class AiClassificationServiceTest {
         Field field = AiClassificationService.class.getDeclaredField("SYSTEM_PROMPT");
         field.setAccessible(true);
         return (String) field.get(null);
+    }
+
+    private ObjectProvider<AnthropicClient> fixedProvider(AnthropicClient client) {
+        return new ObjectProvider<>() {
+            @Override
+            public AnthropicClient getIfAvailable() {
+                return client;
+            }
+
+            @Override
+            public AnthropicClient getObject() {
+                return client;
+            }
+
+            @Override
+            public AnthropicClient getObject(Object... args) {
+                return client;
+            }
+
+            @Override
+            public AnthropicClient getIfUnique() {
+                return client;
+            }
+        };
     }
 
     private ObjectProvider<AnthropicClient> emptyProvider() {

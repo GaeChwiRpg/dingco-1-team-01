@@ -13,6 +13,7 @@ import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.support.MySqlTestContainer;
 import com.dingco.triage.support.RedisContainerSupport;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -60,6 +61,9 @@ class StatsServiceTest extends RedisContainerSupport {
 
     @Autowired
     private ClassificationReuseLookup reuseLookup;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -200,6 +204,37 @@ class StatsServiceTest extends RedisContainerSupport {
         assertThat(autoAudit.eligibleTotal()).isEqualTo(1);
         assertThat(autoAudit.reviewed()).isEqualTo(1);
         assertThat(autoAudit.mismatched()).isZero();
+    }
+
+    @Test
+    @DisplayName("gauge triage.queue.backlog — PENDING 큐 건수를 backlog().total() 과 같은 값으로 읽는다 (TRI-70)")
+    void gauge_queueBacklogReadsSameValueAsService() {
+        sample(saveAutoAccepted(InquiryCategory.DELIVERY, "0.900"));
+        sample(saveAutoAccepted(InquiryCategory.PAYMENT, "0.880"));
+
+        double gauge = meterRegistry.get("triage.queue.backlog").gauge().value();
+
+        assertThat(gauge)
+                .as("gauge 와 /api/stats 는 같은 출처(StatsService.backlog, 10초 캐시)를 읽어야 한다")
+                .isEqualTo((double) statsService.backlog().total())
+                .isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("gauge triage.classification.success.rate — FAILED 만 실패로 세어 (전체-FAILED)/전체 를 낸다 (TRI-70)")
+    void gauge_classificationSuccessRateExcludesOnlyFailed() {
+        saveAutoAccepted(InquiryCategory.DELIVERY, "0.900"); // 성공
+        resultRepository.save(InquiryClassificationResult.needsReview(
+                saveInquiry(), InquiryCategory.ETC, new BigDecimal("0.300"), "claude-sonnet-5", "{}", 1)); // 성공(저확신 격리도 분류는 됐다)
+        resultRepository.save(InquiryClassificationResult.failed(
+                saveInquiry(), "claude-sonnet-5", null, 3)); // 실패
+
+        double gauge = meterRegistry.get("triage.classification.success.rate").gauge().value();
+
+        assertThat(gauge)
+                .as("성공 2 / 전체 3 — NEEDS_REVIEW 도 카테고리가 있으므로 성공에 든다 (자동 확정률과 다르다)")
+                .isEqualTo(statsService.classificationSuccessRate())
+                .isCloseTo(2.0 / 3.0, within(1e-9));
     }
 
     @Test

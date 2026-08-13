@@ -9,6 +9,8 @@ import com.anthropic.models.messages.TextBlock;
 import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.dingco.triage.config.AnthropicProperties;
 import com.dingco.triage.domain.type.InquiryCategory;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.ObjectProvider;
@@ -70,10 +72,27 @@ public class AiClassificationService {
     private final ObjectProvider<AnthropicClient> clientProvider;
     private final AnthropicProperties properties;
 
+    /**
+     * 실제 AI 호출 횟수 — 계약 §8 {@code triage.ai.calls} (TRI-70).
+     *
+     * <p><b>여기가 실제로 AI 를 부르는 유일한 자리라</b> 이 카운터는 "네트워크로 나간 호출"만
+     * 센다. 재사용({@code REUSED}) 경로는 이 메서드에 <b>도달하지 않으므로</b>(분류 담당이
+     * reuse hit 이면 {@code persistReuse} 로 빠진다) "재사용분 제외"가 구조적으로 보장된다 —
+     * 별도의 제외 로직이 없다.
+     *
+     * <p>재시도로 다시 부르면 그때마다 오른다 — {@code classify} 가 다시 불리는 것이 곧 실제
+     * 호출이기 때문이다. "재사용으로 몇 건 아꼈나"(측정 6, {@code aiCallSavings.aiCallsMade})는
+     * 판정 행 수로 세는 <b>문의 단위</b> 값이라 이 카운터와 층위가 다르다 — 정상 측정(재시도
+     * 없음)에서는 두 값이 일치한다.
+     */
+    private final Counter aiCalls;
+
     public AiClassificationService(ObjectProvider<AnthropicClient> clientProvider,
-                                   AnthropicProperties properties) {
+                                   AnthropicProperties properties,
+                                   MeterRegistry meterRegistry) {
         this.clientProvider = clientProvider;
         this.properties = properties;
+        this.aiCalls = meterRegistry.counter("triage.ai.calls");
     }
 
     /**
@@ -105,6 +124,10 @@ public class AiClassificationService {
                 .thinking(ThinkingConfigDisabled.builder().build())
                 .addUserMessage(maskedContent)
                 .build();
+
+        // 실제로 네트워크로 나가는 호출만 센다 (TRI-70). 키가 없어 위에서 던진 경우는 부른 것이
+        // 아니라 세지 않는다 — "AI 를 실제로 부른 경우에만 올라간다"(완료조건)를 지키려는 자리다.
+        aiCalls.increment();
 
         Message response;
         try {
