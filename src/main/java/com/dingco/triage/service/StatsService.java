@@ -135,6 +135,12 @@ public class StatsService {
      *
      * <p>분모는 {@link InquiryRepository#countAll()} — 아직 분류를 기다리는(RECEIVED) 문의도
      * 포함한다. "받은 문의 대비 얼마나 아꼈나"를 보는 값이라 분류 완료 여부로 분모를 좁히지 않는다.
+     *
+     * <p><b>분자는 {@code reused} 를 직접 쓴다 — {@code received - aiCallsMade} 로 우회하지
+     * 않는다.</b> 우회하면 그 차이에 아직 분류 전인(RECEIVED) 문의까지 섞여 <b>"안 불렀을 뿐인 것"이
+     * "아꼈다"로 잘못 세어진다</b> — 분류가 밀릴수록 절감률이 좋아 보이는 역전이 생기고, 그 밀린
+     * 건은 {@code stuckReceived}(D-017) 에서는 문제로 잡히는데 여기서는 반대로 잘된 것으로 잡혀
+     * 두 지표가 서로 어긋난다 (AI 코드리뷰 지적, PR #69).
      */
     @Cacheable(AI_CALL_SAVINGS_CACHE)
     public AiCallSavings aiCallSavings() {
@@ -143,7 +149,7 @@ public class StatsService {
         long reused = byVerdict.getOrDefault(Verdict.REUSED, 0L);
         long total = totalOf(byVerdict);
         long aiCallsMade = total - reused;
-        double savingsRate = rate(inquiriesReceived - aiCallsMade, inquiriesReceived);
+        double savingsRate = rate(reused, inquiriesReceived);
         return new AiCallSavings(inquiriesReceived, aiCallsMade, savingsRate);
     }
 
@@ -356,7 +362,11 @@ public class StatsService {
 
     /**
      * 계약 §7 {@code aiCallSavings} 블록의 값 구조. {@code savingsRate} 는
-     * {@code 1 - aiCallsMade / inquiriesReceived} — 캐시 {@code hitRate}(D-014) 와는 다른 지표다.
+     * {@code reused / inquiriesReceived} — 캐시 {@code hitRate}(D-014) 와는 다른 지표다.
+     *
+     * <p><b>{@code 1 - aiCallsMade / inquiriesReceived} 와 같은 값이 아니다</b> — 아직 분류를
+     * 기다리는(RECEIVED) 문의가 있으면 그 차이만큼 갈린다. 분류가 안 밀린 정상 상태에서는
+     * {@code inquiriesReceived = aiCallsMade + reused} 라 두 식이 우연히 같아진다.
      */
     public record AiCallSavings(long inquiriesReceived, long aiCallsMade, double savingsRate) {
     }

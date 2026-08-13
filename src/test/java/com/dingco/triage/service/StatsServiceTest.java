@@ -110,7 +110,7 @@ class StatsServiceTest extends RedisContainerSupport {
     }
 
     @Test
-    @DisplayName("aiCallSavings — REUSED 만 AI 를 안 부른 것으로 세고, RECEIVED 도 분모에 들어간다 (D-014·D-033)")
+    @DisplayName("aiCallSavings — REUSED 만 AI 를 안 부른 것으로 세고, 분류 대기중(RECEIVED)은 절감으로 안 센다 (D-014·D-033)")
     void aiCallSavings_excludesOnlyReusedFromRealCalls() {
         saveAutoAccepted(InquiryCategory.DELIVERY, "0.900"); // 실제 호출
         saveAutoAccepted(InquiryCategory.PAYMENT, "0.850"); // 실제 호출
@@ -120,7 +120,7 @@ class StatsServiceTest extends RedisContainerSupport {
                 saveInquiry(), "claude-sonnet-5", null, 3)); // 실제 호출(재시도 소진)
         resultRepository.save(InquiryClassificationResult.reusedFromAi(
                 saveInquiry(), InquiryCategory.PRODUCT, new BigDecimal("0.900"), 999L)); // AI 안 부름
-        saveInquiry(); // 아직 RECEIVED — 접수는 됐지만 분류 전
+        saveInquiry(); // 아직 RECEIVED — 접수는 됐지만 분류 전. 절감으로 새면 안 된다 (AI 코드리뷰 지적)
 
         StatsService.AiCallSavings savings = statsService.aiCallSavings();
 
@@ -128,7 +128,9 @@ class StatsServiceTest extends RedisContainerSupport {
         assertThat(savings.aiCallsMade())
                 .as("AUTO_ACCEPTED 2 + NEEDS_REVIEW 1 + FAILED 1 = 4 — REUSED 는 제외")
                 .isEqualTo(4);
-        assertThat(savings.savingsRate()).isCloseTo(1.0 - 4.0 / 6.0, within(1e-9));
+        assertThat(savings.savingsRate())
+                .as("reused(1) / received(6) — 대기중 1건이 섞여 부풀면 1-4/6=0.333 이 나왔을 것이다")
+                .isCloseTo(1.0 / 6.0, within(1e-9));
     }
 
     @Test
@@ -221,7 +223,16 @@ class StatsServiceTest extends RedisContainerSupport {
         StatsService.CacheStats written = statsService.cache();
         assertThat(written.misses()).isEqualTo(missesBefore + 1);
         assertThat(written.hits()).isEqualTo(hitsBefore);
-        assertThat(written.hitRate()).isBetween(0.0, 1.0);
+        long totalAfterMiss = hitsBefore + missesBefore + 1;
+        double expectedHitRate = (double) hitsBefore / totalAfterMiss;
+        assertThat(written.hitRate())
+                .as("rate(hits, total) 계산 자체가 틀려도 범위(0~1) 검증만으로는 못 잡는다")
+                .isCloseTo(expectedHitRate, within(1e-9));
+
+        // 첫 호출 이후에도 카운터를 한 번 더 움직여, 두 번째 cache() 가 그 변화를 반영하지 않고
+        // "written" 과 그대로 같다는 것으로 재계산이 아니라 Redis 에서 읽어온 예전 값임을 확인한다.
+        // 안 바꾸면 재계산이든 캐시 hit 이든 같은 값이 나와 구별이 안 된다.
+        reuseLookup.find(UUID.randomUUID().toString());
 
         // 두 번째 호출은 재계산이 아니라 @Cacheable(stats:summary:cache) 를 거쳐 Redis 에서
         // 읽어와 역직렬화한 값이어야 한다 — 첫 호출(쓰기)만 재면 CacheStats 역직렬화가 깨져도

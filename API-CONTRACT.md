@@ -10,7 +10,7 @@
 > **v1.5 는 값 검증 4종 구현 반영(TRI-49·50)** — §3 `model` 예시를 D-024 확정값(`claude-sonnet-5`)으로 정정, 실패 사유 5종은 로그로만 남음을 명시.
 > **v1.6 은 통계·정책 조회 구현 반영(TRI-67·68·69 완료)** — §7 `backlog`·`classification`·`aiCallSavings`·`audit`(autoAccepted/reused 분리 + 신뢰도 구간별 집계) 이 실제로 나가기 시작함을, §6 `threshold`·`audit.sampleRate` 가 실제로 나가기 시작함을 명시. `cache` 만 아직 TRI-53 이 없어 남는다.
 > **v1.7 은 재사용 on/off 스위치 노출(D-062)** — §6 `GET /api/policies` 에 `reuse.enabled` 추가. 측정 1·8ⓐ-1(재사용 없이 잰 오분류율) 이 어느 조건에서 나온 것인지 화면에서 확인할 수 있다. 기동 시 고정, 실행 중 변경 API 없음 — `threshold`·`audit.sampleRate` 와 같은 이유(D-028).
-> **v1.8 은 `audit` 블록 중복 구현 통합(TRI-66 · TRI-68)** — develop 에 독립적으로 먼저 올라가 있던 TRI-66(감사 실측 비율)을 TRI-68(완전판)로 흡수, `actualSampleRate` 의 `eligibleTotal=0` → `null` 처리 반영. §7 `cache.hitRate` 가 `aiCallSavings.savingsRate` 이하라는 서술이 항상 성립하는 보장이 아님을 정정(재기동 직후 두 값의 집계 기간이 어긋날 수 있음).
+> **v1.8 은 `audit` 블록 중복 구현 통합(TRI-66 · TRI-68)** — develop 에 독립적으로 먼저 올라가 있던 TRI-66(감사 실측 비율)을 TRI-68(완전판)로 흡수, `actualSampleRate` 의 `eligibleTotal=0` → `null` 처리 반영. §7 `cache.hitRate` 가 `aiCallSavings.savingsRate` 이하라는 서술이 항상 성립하는 보장이 아님을 정정(재기동 직후 두 값의 집계 기간이 어긋날 수 있음). **코드리뷰 반영 2차** — `aiCallSavings.savingsRate` 계산식을 `reused / inquiriesReceived` 로 정정(대기중인 RECEIVED 문의가 절감으로 잘못 세어지던 것을 바로잡음, 코드리뷰 지적). `reuse.enabled=false` 면 `cache.hits`·`misses` 가 갱신되지 않아 `hits=0`·`misses=0` 이 트래픽 없음과 재사용 비활성화 중 무엇인지 `GET /api/policies` 의 `reuse.enabled` 와 함께 읽어야 함을 명시.
 
 ## 형식 원칙
 
@@ -417,6 +417,10 @@ X-User-Role: AGENT
 > 앱을 오래 안 재기동한 정상 상태에서는 캐시가 miss 여도 2단(DB)에서 재사용되면 AI 는 안 불리므로
 > `hitRate` 가 `savingsRate` 이하로 나오는 게 보통이지만, **재기동 직후처럼 두 값의 집계 기간이
 > 어긋나 있으면 이 관계가 깨질 수 있다** — 항상 성립하는 부등식으로 읽지 않는다.
+>
+> **`reuse.enabled=false` 면 `hits`·`misses` 가 갱신되지 않는다.** 재사용 자체를 끈 것이라 1단
+> 캐시 조회 경로를 안 타기 때문이다. 이 상태에서 `hits=0`·`misses=0` 은 "캐시 트래픽이 없다"가
+> 아니라 "재사용을 껐다"는 뜻일 수 있다 — `GET /api/policies` 의 `reuse.enabled` 와 함께 읽는다.
 
 **응답**: `200 OK`
 
