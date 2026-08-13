@@ -13,6 +13,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -33,6 +34,12 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
      *
      * <p>정렬은 여기서 강제하지 않는다 — 호출부가 {@code Pageable} 에 {@code created_at ASC}
      * (오래된 순, 적체 방지)를 실어 보낸다.
+     *
+     * <p><b>남이 선점 중인 항목은 걸러낸다</b> (TRI-93 · D-032). {@code claimedBy} 원본값·
+     * {@code claimedAt} 을 응답에 그대로 실으면 "누가 얼마나 오래 붙들고 있나"가 감사 표본
+     * 추론 단서가 될 수 있다 — blind 판별 질문("이 값만으로 감사 표본을 알 수 있나")을 못
+     * 넘긴다. 그래서 원본값을 내보내는 대신 <b>목록에서 아예 빼는 쪽</b>을 택했다 — 본인이
+     * 선점 중이거나(연장 목적으로 계속 보여야 함) 아무도 선점 안 했거나 만료됐으면 보인다.
      */
     @EntityGraph(attributePaths = {"inquiry", "classificationResult"})
     @Query("""
@@ -40,11 +47,14 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
             where q.status = :status
               and (:from is null or q.createdAt >= :from)
               and (:to is null or q.createdAt <= :to)
+              and (q.claimedBy is null or q.claimedBy = :agentId or q.claimedAt < :claimExpiryCutoff)
             """)
     Page<InquiryReviewQueueItem> search(
             @Param("status") QueueStatus status,
             @Param("from") Instant from,
             @Param("to") Instant to,
+            @Param("agentId") Long agentId,
+            @Param("claimExpiryCutoff") Instant claimExpiryCutoff,
             Pageable pageable);
 
     /**
@@ -103,6 +113,26 @@ public interface InquiryReviewQueueRepository extends JpaRepository<InquiryRevie
      * {@code reason} 이 아니다. 사유로 거르는 메서드를 이 인터페이스에 만들지 않는다.
      */
     List<InquiryReviewQueueItem> findByInquiryId(Long inquiryId);
+
+    /**
+     * 만료된 선점을 일괄 해제한다 (TRI-93 스윕 · D-032). 벌크 업데이트라 {@code @Version} 을
+     * 안 거친다 — 의도적이다. 이건 "누가 이겼나"를 가리는 경합이 아니라 유지보수 청소라,
+     * 하필 이 순간 재선점된 행을 실수로 같이 풀어도(극히 드문 경계) 대가는 "다시 선점하면
+     * 그만"이라 낙관적 락으로 막을 만큼 위험하지 않다.
+     *
+     * <p>{@code status = PENDING} 만 본다 — {@code RESOLVED} 항목의 {@code claimed_*} 는
+     * 이미 의미가 없다(목록 조회가 {@code PENDING} 만 필터링 대상으로 쓴다).
+     *
+     * @return 해제된 행 수 — 스케줄러가 로그에 남긴다
+     */
+    @Modifying
+    @Query("""
+            update InquiryReviewQueueItem q
+            set q.claimedBy = null, q.claimedAt = null
+            where q.status = com.dingco.triage.domain.type.QueueStatus.PENDING
+              and q.claimedAt < :cutoff
+            """)
+    int releaseExpiredClaims(@Param("cutoff") Instant cutoff);
 
     /**
      * 큐 적체(backlog) — 사유별 미결(PENDING) 건수 (계약 §7 {@code backlog.byReason}, TRI-67).

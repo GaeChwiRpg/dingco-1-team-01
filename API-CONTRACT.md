@@ -1,4 +1,4 @@
-# API-CONTRACT v1.8
+# API-CONTRACT v1.10
 
 > API 계약 + 변경 이력. 모든 endpoint 변경은 이 문서 업데이트와 동반.
 > 도메인 배경은 `PRD.md`, 코딩 규칙은 `CLAUDE.md`.
@@ -11,6 +11,8 @@
 > **v1.6 은 통계·정책 조회 구현 반영(TRI-67·68·69 완료)** — §7 `backlog`·`classification`·`aiCallSavings`·`audit`(autoAccepted/reused 분리 + 신뢰도 구간별 집계) 이 실제로 나가기 시작함을, §6 `threshold`·`audit.sampleRate` 가 실제로 나가기 시작함을 명시. `cache` 만 아직 TRI-53 이 없어 남는다.
 > **v1.7 은 재사용 on/off 스위치 노출(D-062)** — §6 `GET /api/policies` 에 `reuse.enabled` 추가. 측정 1·8ⓐ-1(재사용 없이 잰 오분류율) 이 어느 조건에서 나온 것인지 화면에서 확인할 수 있다. 기동 시 고정, 실행 중 변경 API 없음 — `threshold`·`audit.sampleRate` 와 같은 이유(D-028).
 > **v1.8 은 `audit` 블록 중복 구현 통합(TRI-66 · TRI-68)** — develop 에 독립적으로 먼저 올라가 있던 TRI-66(감사 실측 비율)을 TRI-68(완전판)로 흡수, `actualSampleRate` 의 `eligibleTotal=0` → `null` 처리 반영. §7 `cache.hitRate` 가 `aiCallSavings.savingsRate` 이하라는 서술이 항상 성립하는 보장이 아님을 정정(재기동 직후 두 값의 집계 기간이 어긋날 수 있음). **코드리뷰 반영 2차** — `aiCallSavings.savingsRate` 계산식을 `reused / inquiriesReceived` 로 정정(대기중인 RECEIVED 문의가 절감으로 잘못 세어지던 것을 바로잡음, 코드리뷰 지적). `reuse.enabled=false` 면 `cache.hits`·`misses` 가 갱신되지 않아 `hits=0`·`misses=0` 이 트래픽 없음과 재사용 비활성화 중 무엇인지 `GET /api/policies` 의 `reuse.enabled` 와 함께 읽어야 함을 명시.
+> **v1.9 는 관측 지표 3종 Actuator 배선 + `cache.gets` 정정(TRI-70)** — §8 `triage.ai.calls`·`triage.queue.backlog`·`triage.classification.success.rate` 실제 배선, `cache.gets` 를 실제 counter 이름(`triage.cache.classification.hits`/`misses`)으로 정정.
+> **v1.10 은 검토 항목 선점(claim) 신설(TRI-93 · D-032)** — 새 endpoint **§4-1 `PATCH /api/inquiry-review-queue/{id}/claim`** 추가. `@Version` 낙관적 락(사후 감지)과 대비되는 **사전 예방** 동시성 장치. §4 목록 응답에 `claimedByMe` 추가 — 남이 선점 중인 항목은 목록에서 아예 빠지고(blind, D-010), `claimedBy`·`claimedAt` 원본값은 어떤 endpoint 에서도 노출하지 않는다. 409 원인에 `ALREADY_CLAIMED` 3번째 종류 추가.
 
 ## 형식 원칙
 
@@ -267,7 +269,8 @@ X-User-Role: CUSTOMER
       "content": "3일 전에 주문한 상품이 아직도 배송중이라고만 나와요. 그냥 환불해주세요. 주문번호 ****",
       "suggestedCategory": "RETURN_REFUND",
       "status": "PENDING",
-      "createdAt": "2026-08-05T10:12:05Z"
+      "createdAt": "2026-08-05T10:12:05Z",
+      "claimedByMe": false
     }
   ],
   "page": 0,
@@ -283,10 +286,58 @@ X-User-Role: CUSTOMER
 - **알려진 한계 2 — 확률적 추론 (D-019)**: `content` 는 **제거할 수 없다.** 상담원이 문의 원문을 못 읽으면 분류 작업 자체가 불가능하기 때문이다. 다만 숙련된 상담원은 *"이건 딱 봐도 명확한 환불 문의인데 왜 내 큐에 있지"* 로 감사 표본을 **확률적으로** 추론할 수 있다
 - 두 한계의 성격이 다르다 — **결정적 역산은 0건이어야 하고**(그건 결함이다), **확률적 추론은 남는다**(그건 감수한다). 따라서 `misclassificationRate` 는 **하한값**으로만 해석한다
 - **`REUSED` 건이 감사로 뽑혀 들어와도 응답은 다른 항목과 구별되지 않는다** (D-033). `verdict` 는 검토 큐 응답에 나가지 않으므로, 상담원은 이것이 AI 가 방금 분류한 건인지 지난 답을 재사용한 건인지 알 수 없다 — blind 는 그대로 유지된다
+- **`claimedByMe` — 요청한 상담원 본인이 이 항목을 선점 중인지만 알려준다 (TRI-93 · D-032).** 남이 선점한 항목은 애초에 **목록에서 빠진다** — `claimedBy`(누가)·`claimedAt`(언제부터) 원본값은 어떤 형태로도 응답에 나가지 않는다. "누가 오래 붙들고 있나"가 감사 표본 추론의 새 단서가 될 수 있어서다 (blind, D-010). 본인이 선점 중이거나, 아무도 선점 안 했거나, 선점이 만료된 항목만 목록에 보인다
 
 > **이전 도메인보다 확률적 추론이 쉬워졌다.** 에러 메시지는 비전문가에게 균일하게 어렵지만, CS 문의는 상담원이 읽는 순간 난이도를 직관적으로 안다. 측정 10 에서 이 점을 한계로 함께 기록한다.
 
 **오류**: 403 (`ROLE_CUSTOMER` 접근)
+
+---
+
+### 4-1. PATCH /api/inquiry-review-queue/{id}/claim
+
+> 검토 항목 선점 (`ROLE_AGENT` 이상, TRI-93 · D-032). 두 상담원이 같은 항목을 동시에 붙들고 각자 판단한 뒤 확정 순간에야 한 명이 409 를 받는(작업이 통째로 버려지는) 상황을, 확정 전에 **미리** 막는다. §5 의 `@Version` 낙관적 락(충돌을 **사후에 감지**)과 성격이 대비되는 **사전 예방** 장치다.
+
+**요청**
+
+```http
+PATCH /api/inquiry-review-queue/902/claim
+X-User-Id: 7
+X-User-Role: AGENT
+```
+
+- 본문 없음. 대상은 경로의 `{id}` 하나뿐이다.
+
+**응답**: `200 OK`
+
+```json
+{
+  "id": 902,
+  "status": "PENDING",
+  "claimedAt": "2026-08-13T10:12:05Z"
+}
+```
+
+- 본인이 이미 선점 중인 항목을 다시 선점하면 **연장**된다 (`claimedAt` 이 지금 시각으로 갱신) — 실패가 아니다
+- 이 응답은 **선점을 요청한 본인에게만** 나간다. `claimedBy`(누구)는 응답에 없다 — 요청자 자신이 이미 알고 있는 값이라 실을 이유가 없고, 실으면 다른 endpoint 의 blind 원칙과 형식이 어긋난다
+- 만료 시간(`review.claim.expiry`, 기본 5분)은 설정값이며 이 응답에 노출되지 않는다 — 주기적 스윕(`review.claim.sweep-interval`, 기본 1분)이 만료된 선점을 해제한다
+
+**오류**: 400, 403, **404**(항목 없음), **409**(아래 2종)
+
+| `code` | 시나리오 |
+| --- | --- |
+| `ALREADY_CLAIMED` | 다른 상담원이 아직 만료되지 않은 선점을 쥐고 있음 |
+| `CONCURRENT_UPDATE` | §5 와 같은 배선 — 커밋 시점 `@Version` 불일치. 새 동시성 수단을 따로 두지 않고 이미 있는 낙관적 락에 얹는다 |
+
+```json
+{
+  "code": "ALREADY_CLAIMED",
+  "message": "다른 상담원이 이미 이 항목을 보고 있습니다.",
+  "reviewQueueItemId": 902
+}
+```
+
+> **선점은 확정(§5)을 전제하지 않는다.** 선점 없이 바로 확정해도 지금은 막지 않는다 — 그건 이 티켓의 범위가 아니다 (`PRD.md` §8 항목 H).
 
 ---
 
@@ -533,4 +584,5 @@ X-User-Role: AGENT
 | v1.7 | 2026-08-12 | **재사용 on/off 스위치를 정책 조회에 노출 (D-062)** — §6 `GET /api/policies` 응답에 `reuse.enabled` 추가(`ClassificationProperties.reuse`, 기본 `true`). `threshold`·`audit.sampleRate` 와 같은 이유로 읽기 전용 — 실행 중 바뀌면 측정 1·8ⓐ-1 결과가 어느 조건에서 나온 것인지 사후에 구분되지 않는다 | TRI-69 |
 | v1.8 | 2026-08-13 | **`audit` 블록 중복 구현을 통합 (TRI-66 · TRI-68)** — develop 에 TRI-66(감사 실측 비율: `eligibleTotal`·`sampledTotal`·`actualSampleRate`·`configuredSampleRate`)이 독립적으로 먼저 올라가 있었다. TRI-68(본 계약의 완전판 — 위 넷에 `reviewed`·`mismatched`·`misclassificationRate`·`byConfidenceBucket` 를 더한 것)로 흡수 통합한다. 계산 로직을 대조해 두 구현이 같은 verdict 버킷에 대해 동일한 값을 낸다는 것을 확인했고, TRI-66 쪽 실측 결과(PR #64·#65)는 재측정 없이 그대로 유효하다. TRI-66 설계 중 **`eligibleTotal` 이 0 이면 `actualSampleRate` 를 `null` 로 두는 처리**(D-022 와 같은 논리)는 이번에 함께 반영했다 | TRI-66 · TRI-68 |
 | v1.9 | 2026-08-13 | **관측 지표 3종 Actuator 배선 + `cache.gets` 정정 (TRI-70)** — §8 에 계약만 있고 잴 지점이 없던 `triage.ai.calls`(실제 AI 호출 counter, 재사용은 이 지점에 도달하지 않아 구조적으로 제외)·`triage.queue.backlog`(10초 캐시 경유 gauge)·`triage.classification.success.rate`(gauge)를 실제로 배선. `cache.gets` 행을 실제 counter 이름 `triage.cache.classification.hits`/`misses` 로 정정 — 커스텀 Redis 캐시라 스프링 자동 `cache.gets` 로는 안 잡히고, 값을 두 이름으로 내보내지 않기 위해 코드가 아니라 계약을 실제에 맞췄다. 분류 성공률의 "성공" 정의(=`FAILED` 만 실패)는 D-065 | TRI-70 |
+| v1.10 | 2026-08-13 | **검토 항목 선점(claim) 신설 (TRI-93 · D-032)** — 새 §4-1 `PATCH /api/inquiry-review-queue/{id}/claim` 추가: 확정(§5) 전에 미리 항목을 붙드는 사전 예방 동시성 장치, `@Version` 낙관적 락(사후 감지)과 대비된다. 성공 시 `id`·`status`·`claimedAt` 반환(본인에게만), 충돌은 새 코드 `ALREADY_CLAIMED` 409(+ 기존 `CONCURRENT_UPDATE` 배선 재사용). §4 목록 응답에 `claimedByMe` boolean 추가 — 남이 선점 중인 항목은 목록에서 제외되고 `claimedBy`·`claimedAt` 원본값은 어떤 응답에도 노출하지 않는다(blind, D-010) | TRI-93 |
 <!-- 변경 시 한 줄씩 추가 -->

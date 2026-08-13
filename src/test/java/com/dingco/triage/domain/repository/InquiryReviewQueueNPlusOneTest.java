@@ -102,7 +102,7 @@ class InquiryReviewQueueNPlusOneTest {
 
         seedItems(SMALL_ITEM_COUNT);
         statistics.clear();
-        Page<InquiryReviewQueueItem> small = queueRepository.search(QueueStatus.PENDING, null, null,
+        Page<InquiryReviewQueueItem> small = queueRepository.search(QueueStatus.PENDING, null, null, 0L, Instant.EPOCH,
                 PageRequest.of(0, PAGE_SIZE, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
         small.getContent().forEach(item -> {
             item.getInquiry().getContent();
@@ -113,7 +113,7 @@ class InquiryReviewQueueNPlusOneTest {
         cleanTables();
         seedItems(LARGE_ITEM_COUNT);
         statistics.clear();
-        Page<InquiryReviewQueueItem> big = queueRepository.search(QueueStatus.PENDING, null, null,
+        Page<InquiryReviewQueueItem> big = queueRepository.search(QueueStatus.PENDING, null, null, 0L, Instant.EPOCH,
                 PageRequest.of(0, PAGE_SIZE, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
         big.getContent().forEach(item -> {
             item.getInquiry().getContent();

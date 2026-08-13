@@ -78,9 +78,13 @@ class InquiryReviewQueueRepositoryTest {
         return queueRepository.save(InquiryReviewQueueItem.from(result));
     }
 
+    /**
+     * 이 클래스가 만드는 항목은 {@code claimedBy} 가 전부 {@code null} 이라, 선점 필터(TRI-93)는
+     * agentId·claimExpiryCutoff 값과 무관하게 전부 통과한다 — 여기서는 아무 값이나 준다.
+     */
     private static Page<InquiryReviewQueueItem> search(InquiryReviewQueueRepository repo, QueueStatus status,
             Instant from, Instant to) {
-        return repo.search(status, from, to,
+        return repo.search(status, from, to, 0L, Instant.EPOCH,
                 PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
     }
 
@@ -136,6 +140,41 @@ class InquiryReviewQueueRepositoryTest {
                 .isEqualTo(InquiryCategory.SERVICE_USAGE);
     }
 
+    /**
+     * {@code claimed_at} 을 엔티티 API({@link InquiryReviewQueueItem#claim})로 채운다 — raw JDBC
+     * {@code java.sql.Timestamp} 로 직접 쓰면 Hibernate 의 {@code hibernate.jdbc.time_zone=UTC}
+     * 를 안 거쳐 드라이버 기본 시간대로 변환되고, 그러면 같은 절대 시각이 Hibernate 가 쓴 값과
+     * 어긋나 이 필터 비교가 실제로는 재현하지 않는 조건을 재현하게 된다(실제로 재현 확인 —
+     * raw JdbcTemplate 로 썼을 때 만료된 선점이 필터를 통과하지 못했다).
+     */
+    private void claim(InquiryReviewQueueItem item, Long agentId, Instant at) {
+        item.claim(agentId, at);
+        queueRepository.saveAndFlush(item);
+    }
+
+    @Test
+    @DisplayName("남이 아직 안 만료된 선점을 쥔 항목은 목록에서 빠진다 — 본인 선점·미선점·만료된 선점은 보인다 (TRI-93 · D-032)")
+    void excludesItemsClaimedByAnotherAgentUnlessExpired() {
+        Instant now = Instant.now();
+        Instant claimExpiryCutoff = now.minus(java.time.Duration.ofMinutes(5));
+
+        InquiryReviewQueueItem unclaimed = saveQueueItem("nk-unclaimed", InquiryCategory.PRODUCT);
+        InquiryReviewQueueItem claimedByMe = saveQueueItem("nk-claimed-me", InquiryCategory.ACCOUNT);
+        claim(claimedByMe, 7L, now);
+        InquiryReviewQueueItem claimedByOther = saveQueueItem("nk-claimed-other", InquiryCategory.PAYMENT);
+        claim(claimedByOther, 99L, now);
+        InquiryReviewQueueItem claimedByOtherButExpired = saveQueueItem("nk-claimed-expired", InquiryCategory.COMPLAINT);
+        claim(claimedByOtherButExpired, 99L, now.minus(java.time.Duration.ofMinutes(10)));
+
+        Page<InquiryReviewQueueItem> page = queueRepository.search(QueueStatus.PENDING, null, null, 7L,
+                claimExpiryCutoff, PageRequest.of(0, 20, Sort.by(Sort.Direction.ASC, "createdAt", "id")));
+
+        assertThat(page.getContent())
+                .as("남(99L)이 아직 안 만료된 선점을 쥔 항목만 빠지고, 미선점·본인 선점·만료된 선점 항목은 보인다")
+                .extracting(InquiryReviewQueueItem::getId)
+                .containsExactlyInAnyOrder(unclaimed.getId(), claimedByMe.getId(), claimedByOtherButExpired.getId());
+    }
+
     @Test
     @DisplayName("(status, created_at) 인덱스가 이 순서·이 열 그대로 스키마에 존재한다")
     void statusCreatedIndexExistsOnSchema() {
@@ -157,5 +196,24 @@ class InquiryReviewQueueRepositoryTest {
                 .as("status 가 선행 컬럼이어야 등치 조건으로 좁히고 created_at 정렬을 커버한다 — "
                         + "순서가 뒤집히면 이 이점이 사라진다")
                 .containsExactly("status", "created_at");
+    }
+
+    @Test
+    @DisplayName("(status, claimed_at) 인덱스가 이 순서·이 열 그대로 스키마에 존재한다 (V3, TRI-93 스윕용)")
+    void statusClaimedAtIndexExistsOnSchema() {
+        // 만료 스윕(ReviewQueueClaimSweeper)이 "PENDING 이면서 claimed_at 이 cutoff 이전"을 찾는
+        // 쿼리를 커버하는 인덱스다 — status 가 선행 컬럼이어야 PENDING 으로 먼저 좁힌 뒤
+        // claimed_at 범위 스캔이 그 안으로만 좁혀진다. 위 statusCreatedIndexExistsOnSchema 와
+        // 같은 이유로, 인덱스가 스키마에서 사라지거나 열 순서가 뒤집히는 회귀만 가볍게 지킨다.
+        List<String> columnsInIndexOrder = jdbcTemplate.queryForList("""
+                SELECT column_name FROM information_schema.statistics
+                WHERE table_schema = DATABASE() AND table_name = 'inquiry_review_queue'
+                  AND index_name = 'idx_irq_status_claimed_at'
+                ORDER BY seq_in_index
+                """, String.class);
+
+        assertThat(columnsInIndexOrder)
+                .as("status 가 선행 컬럼이어야 스윕이 PENDING 으로 먼저 좁힌다 — 순서가 뒤집히면 이 이점이 사라진다")
+                .containsExactly("status", "claimed_at");
     }
 }

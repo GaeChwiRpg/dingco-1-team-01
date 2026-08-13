@@ -15,5 +15,8 @@ public enum ConflictCode {
     ALREADY_RESOLVED,
 
     /** A·B 가 <b>둘 다 PENDING 을 읽고</b> 동시에 시도. 커밋 시점 {@code @Version} 불일치로 검출. */
-    CONCURRENT_UPDATE
+    CONCURRENT_UPDATE,
+
+    /** 다른 상담원이 이미 선점 중이고 아직 만료되지 않음 (TRI-93 · D-032). */
+    ALREADY_CLAIMED
 }
