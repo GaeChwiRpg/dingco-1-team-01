@@ -1888,4 +1888,21 @@
 - **영향**: `service/StatsService#classificationSuccessRate`, `config/MetricsConfig`(gauge 등록), `API-CONTRACT.md` §8·v1.9. 계약 §7 응답 스키마·계약 A/B/C 불변 → 3자 합의 불필요.
 - **재평가**: `verdict` 에 새 값이 늘면 그것이 성공인지 실패인지 여기서 정한다 — 지금은 "카테고리가 나왔나"가 기준이다.
 
-<!-- 다음 결정 추가 시 D-066 부터 -->
+### D-066. 대기줄 포화 인라인 분류의 유실 — ②를 `REQUIRES_NEW` 로 (제안, 채택 대기)
+
+- **일자**: 2026-08-13
+- **상태**: **제안 — 채택 대기.** 운영 코드 **미적용.** 대상이 P2(김준현) 소관(`service/ClassificationService`)이라 채택은 **이 항목 + 김준현 협의** 후. 측정은 운영 경로를 안 건드리고 테스트로만 했다(TRI-86 선례).
+
+**한 줄로**: 측정 6·11(TRI-71)이 부하에서 잡은 "조용한 유실"의 근본 원인은 **D-031(①·② 분리)과 D-047(CallerRunsPolicy)의 이음새**다 — 대기줄이 차면 ②가 ①의 완료된 `AFTER_COMMIT` 문맥에서 REQUIRED 로 돌다 `@Modifying` 이 "no transaction is in progress" 로 죽는다. **제안 수정은 ②의 두 입구(`verifyAndPersist`·`persistReuse`)를 `REQUIRES_NEW` 로 바꾸는 것**이고, `AsyncLossPreventionIT`(모드 C/C')로 유실→유실0 을 실측했다.
+
+- **배경**: 대기줄(`queue-capacity=50`) 포화 시 `CallerRunsPolicy` 가 분류를 **접수한 쪽(①의 `AFTER_COMMIT`) 스레드에서 인라인 실행**한다(D-047). 그 스레드엔 이미 커밋돼 정리 중인 ①의 트랜잭션이 바인딩돼 있어, ②(`@Transactional` 기본 REQUIRED)가 새 트랜잭션을 못 열고 참여하려다 첫 문장인 상태 전이 UPDATE 에서 죽는다. 판정 행도 큐도 없이 `RECEIVED` 로 방치되고 재시도 대상도 아니다 — `stuckReceived` 만 뒤늦게 잡는다.
+- **선택지**:
+  1. **② REQUIRES_NEW (제안 채택)** — 완료된 트랜잭션을 suspend 하고 새 물리 트랜잭션을 연다. 최소 변경. 정상 비동기 경로(바인딩된 트랜잭션 없음)에선 REQUIRED 와 **동작 동일 — 무해**하고, 인라인 경로에선 **유실 0**. `AsyncLossPreventionIT` 로 증명됨.
+  2. 리스너를 `AFTER_COMPLETION`/별도 제출 구조로 — 완료된 문맥을 벗어난 뒤 ② 시작. 구조 변경이 더 크고 이 측정으로 증명 안 됨.
+  3. 커스텀 `RejectedExecutionHandler` — 인라인 대신 거부 예외. 「종료 중 창」까지 함께 다뤄야 해 범위가 큼(나중에 할 것 E).
+- **결정(제안)**: **1번.** `REQUIRES_NEW` 는 D-031("①·② 분리")을 **방어적으로 강화**하고(②가 어떤 경우에도 ①에 합류 안 함), D-047 의 철학("느려지는 건 보이지만 사라지는 건 안 보인다")을 완성한다 — **조용한 유실을 보이는 느려짐으로 바꾼다.**
+- **영향(적용 시)**: `service/ClassificationService`(`verifyAndPersist`·`persistReuse` 애노테이션 2줄 + import). 계약 A/B/C 불변, 도메인·스키마 불변 → **3자 합의 불필요**하나 대상이 P2 코드라 **김준현 협의 필요.** 근거·실측은 `evidence/async-loss-prevention.md`.
+- **범위 밖**: 「종료 중 + 대기줄 포화」 창(실행기 종료 중 `CallerRunsPolicy` 가 조용히 버림)은 이 수정으로 안 닫힌다 — 나중에 할 것 E.
+- **재평가**: 채택 시 애노테이션판 통합 테스트를 운영 코드와 함께 돌려 확정한다(시연은 트랜잭션 템플릿이라 DB 결과는 같지만 애노테이션 경로 그 자체는 채택 티켓에서 확인).
+
+<!-- 다음 결정 추가 시 D-067 부터 -->
