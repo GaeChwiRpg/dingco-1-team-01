@@ -25,13 +25,18 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gaechwirpg-mac]
     # compose 를 부르는 스텝이 기동 말고도 있다 (로그 수집·정리).
     # 이 값들을 기동 스텝에만 걸면 docker compose down 이 변수를 못 찾아 실패하므로 job 레벨에 둔다.
     env:
       # CI 전용 값. 운영 비밀은 여기 두지 않는다 — 헌법 「작업 경계」.
       MYSQL_ROOT_PASSWORD: ci-root
       DB_PASSWORD: ci-pw
+      # self-hosted runner의 상시 서비스와 충돌하지 않도록 CI 전용 호스트 포트를 쓴다.
+      DB_PORT: "13306"
+      REDIS_PORT: "16379"
+      APP_PORT: "18080"
+      BASE_URL: http://localhost:18080
       # 기본 1 = V1 만. 후보 인덱스는 측정 5ⓔ 로 이득이 확인되기 전까지 켜지 않는다 (D-023).
       FLYWAY_TARGET: "1"
     steps:
@@ -47,8 +52,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: tests/e2e/package-lock.json
 
       # 브라우저 바이너리를 받지 않는다 (팀 리뷰 반영).
       # tests/e2e 는 전부 Playwright 의 `request` fixture(APIRequestContext)로 HTTP 를 직접

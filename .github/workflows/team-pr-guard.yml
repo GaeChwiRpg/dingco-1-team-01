@@ -19,7 +19,7 @@ jobs:
   validate-pr-body:
     # CodeRabbit의 자동 본문 편집에는 러너를 배정하지 않는다.
     if: ${{ github.actor != 'coderabbitai[bot]' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gaechwirpg-mac]
     steps:
       - uses: actions/checkout@v4
 
