@@ -52,8 +52,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: tests/e2e/package-lock.json
 
       # 브라우저 바이너리를 받지 않는다 (팀 리뷰 반영).
       # tests/e2e 는 전부 Playwright 의 `request` fixture(APIRequestContext)로 HTTP 를 직접
