@@ -1,52 +1,88 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
 
 /**
- * API 레벨 E2E 스켈레톤.
+ * TRI-74 — 핵심 흐름 E2E: 접수 → (비동기 분류) → 검토 목록 → 확정 → 통계.
  *
- * 이 파일은 그대로 두면 안 되고, 팀의 공통 필수 기능 중 최소 1개를
- * 사용자가 겪는 순서대로 바꿔 써야 한다. 아래 흐름은 예시일 뿐이다.
+ * API 레벨 E2E다 (프론트 없음, `request` fixture). 시나리오는 `API-CONTRACT.md` §1·4·5·7
+ * 그대로다.
  *
- * 프론트가 있는 팀은 `request` 대신 `page` fixture 로 화면 흐름을 쓴다.
+ * 분류는 `@Async` 라 접수 응답에 결과가 안 담긴다 — 그래서 검토 큐에 항목이 나타날 때까지
+ * 폴링한다. `ANTHROPIC_API_KEY` 없이 로컬로 띄운 서버(팀 기본값, `docker-compose.yml` 참고)를
+ * 전제로 한다 — 이때 분류는 재시도 3회 끝에 결정적으로 `FAILED`(`CLASSIFY_FAILED`)가 되어
+ * **항상** 검토 큐에 들어간다. 실제 키가 있으면 `AUTO_ACCEPTED`(5% 감사 표본 제외 큐에 안 들어감)
+ * 로 끝날 수 있어 그 경우 이 시나리오는 타임아웃으로 실패한다 — CI 는 키 없이 돌린다.
  */
 
-test("서버가 응답한다", async ({ request }) => {
-  // 팀 서버에 헬스 엔드포인트가 없으면 아무 GET 이나 넣어도 된다.
-  const response = await request.get("/actuator/health");
-  expect(response.ok(), `헬스 체크 실패: ${response.status()}`).toBeTruthy();
+const CUSTOMER = { "X-User-Id": "5001", "X-User-Role": "CUSTOMER" };
+const AGENT = { "X-User-Id": "7", "X-User-Role": "AGENT" };
+const MANAGER = { "X-User-Id": "99", "X-User-Role": "MANAGER" };
+
+/** 검토 큐에 이 문의 항목이 나타날 때까지 기다린다 — 분류가 비동기라 즉시는 없다. */
+async function waitForQueueItem(
+  request: APIRequestContext,
+  inquiryId: number,
+  timeoutMs = 60_000,
+  intervalMs = 2_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await request.get("/api/inquiry-review-queue?size=100", { headers: AGENT });
+    expect(res.ok(), `검토 큐 조회 실패: ${res.status()}`).toBeTruthy();
+    const body = await res.json();
+    const found = body.content.find((item: { inquiryId: number }) => item.inquiryId === inquiryId);
+    if (found) {
+      return found;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(
+    `${timeoutMs}ms 안에 문의 ${inquiryId} 가 검토 큐에 안 나타났다 — ` +
+      "ANTHROPIC_API_KEY 없이 띄운 서버인지 확인한다 (README 참고).",
+  );
+}
+
+test("핵심 흐름: 문의 접수 → 검토 목록 → 확정 → 통계", async ({ request }) => {
+  // 1) 접수 — 즉시 202, 분류는 기다리지 않는다 (API-CONTRACT §1)
+  const received = await request.post("/api/inquiries", {
+    headers: CUSTOMER,
+    data: {
+      content: "E2E 시나리오용 문의입니다. 주문번호 20260813-000001 환불해주세요.",
+      channel: "WEB",
+    },
+  });
+  expect(received.status(), `접수 실패: ${received.status()} ${await received.text()}`).toBe(202);
+  const { inquiryId, status: receivedStatus } = await received.json();
+  expect(receivedStatus, "접수 직후에는 아직 분류 전이어야 한다").toBe("RECEIVED");
+
+  // 2) 검토 목록 — 분류가 끝나 큐에 들어올 때까지 기다린다
+  const queueItem = await waitForQueueItem(request, inquiryId);
+  expect(queueItem.inquiryId, "검토 큐 항목이 방금 접수한 문의를 가리켜야 한다").toBe(inquiryId);
+  // blind 규칙(D-010) — reason·confidence·threshold 는 검토 큐 응답에 있으면 안 된다
+  expect(queueItem).not.toHaveProperty("reason");
+  expect(queueItem).not.toHaveProperty("confidence");
+  expect(queueItem).not.toHaveProperty("threshold");
+
+  // 3) 확정 — 상담원이 최종 분류를 붙인다
+  const patched = await request.patch(`/api/inquiry-review-queue/${queueItem.id}`, {
+    headers: AGENT,
+    data: { finalCategory: "ETC" },
+  });
+  expect(patched.status(), `확정 실패: ${patched.status()} ${await patched.text()}`).toBe(200);
+  const resolved = await patched.json();
+  expect(resolved.status, "확정 후 큐 항목 상태는 RESOLVED 여야 한다").toBe("RESOLVED");
+  expect(resolved.finalCategory).toBe("ETC");
+
+  // 4) 통계 — 방금 확정한 것이 집계 구조에 반영돼 있는지 (TTL 10s 라 값 자체는 못 박지 않는다)
+  const stats = await request.get("/api/stats", { headers: MANAGER });
+  expect(stats.ok(), `통계 조회 실패: ${stats.status()}`).toBeTruthy();
+  const statsBody = await stats.json();
+  for (const block of ["backlog", "classification", "aiCallSavings", "cache", "audit"]) {
+    expect(statsBody, `계약 §7 블록 '${block}' 이 없다`).toHaveProperty(block);
+  }
+  expect(statsBody.classification.inquiriesTotal, "판정 행이 최소 1건은 있어야 한다").toBeGreaterThanOrEqual(1);
 });
 
-/**
- * TODO(팀): 아래를 팀의 실제 시나리오로 교체한다.
- *
- * 예시가 보여주는 것 — 한 흐름을 끝까지 이어서 검증한다:
- *   1) 생성   2) 생성된 것이 목록에 보이는지  3) 상태 변경  4) 변경이 반영됐는지
- *
- * 단계마다 응답을 확인하고, assertion 메시지에 무엇이 깨졌는지 적는다.
- */
-test.skip("핵심 흐름: 생성 → 조회 → 상태 변경", async ({ request }) => {
-  // 1) 생성
-  const created = await request.post("/api/items", {
-    data: { title: "E2E 시나리오 항목" },
-  });
-  expect(created.status(), "생성 요청이 201 이어야 한다").toBe(201);
-  const { id } = await created.json();
-
-  // 2) 목록에 보이는지
-  const list = await request.get("/api/items");
-  expect(list.ok()).toBeTruthy();
-  const items = await list.json();
-  expect(
-    items.some((item: { id: string }) => item.id === id),
-    "방금 만든 항목이 목록에 없다",
-  ).toBeTruthy();
-
-  // 3) 상태 변경
-  const patched = await request.patch(`/api/items/${id}`, {
-    data: { status: "DONE" },
-  });
-  expect(patched.ok(), `상태 변경 실패: ${patched.status()}`).toBeTruthy();
-
-  // 4) 변경이 실제로 반영됐는지 — 응답만 믿지 말고 다시 읽는다
-  const reloaded = await request.get(`/api/items/${id}`);
-  expect((await reloaded.json()).status).toBe("DONE");
+test("서버가 응답한다", async ({ request }) => {
+  const response = await request.get("/actuator/health");
+  expect(response.ok(), `헬스 체크 실패: ${response.status()}`).toBeTruthy();
 });
