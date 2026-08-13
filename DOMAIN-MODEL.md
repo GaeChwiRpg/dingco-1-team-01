@@ -147,9 +147,6 @@ KEY (normalized_key, created_at DESC)          -- 2단 절감 경로: 같은 키
 KEY (status, received_at)                      -- GET /api/inquiries: 상태 + 기간 + 정렬
 KEY (status, current_category, received_at)    -- 위 + 종류 필터 동시 사용
 
--- (status, received_at)는 (status, current_category, received_at)의 앞부분이라
--- 종류 필터가 없는 조회가 이 인덱스를 재사용합니다. 둘 다 남긴 이유는 별도 측정 참조
-
 -- inquiry_classification_result
 KEY (inquiry_id, created_at DESC)              -- 문의 하나의 가장 최근 판정
 KEY (verdict, confidence)                      -- 감사 대조: 확신도 구간별 집계 (측정 8)
