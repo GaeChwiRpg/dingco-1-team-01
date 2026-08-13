@@ -25,6 +25,75 @@ domain/
 
 ---
 
+## 0-1. DB 테이블과의 대조
+
+**필드 이름과 컬럼 이름이 다릅니다** — 자바는 `normalizedKey`, DB 는 `normalized_key` 입니다.
+쿼리를 짜거나 DB 를 직접 볼 때 이 표를 봅니다. **스키마 원본은
+`src/main/resources/db/migration/V2__domain_switch.sql`** 이고, 거기 주석에 근거(D-번호)가 있습니다.
+
+### `Inquiry` → `inquiries`
+
+| 필드 | 컬럼 | 타입 | 비었을 수 있나 |
+| --- | --- | --- | --- |
+| `id` | `id` | `BIGINT` | ❌ |
+| `customerId` | `customer_id` | `BIGINT` | ❌ |
+| `content` | `content` | **`VARCHAR(2000)`** | ❌ |
+| `channel` | `channel` | `VARCHAR(20)` | ❌ |
+| `normalizedKey` | `normalized_key` | `VARCHAR(64)` | ❌ |
+| `status` | `status` | `VARCHAR(20)` | ❌ |
+| `currentCategory` | `current_category` | `VARCHAR(20)` | ✅ |
+| `currentConfidence` | `current_confidence` | **`DECIMAL(4,3)`** | ✅ |
+| `receivedAt` · `createdAt` · `updatedAt` | 〃 (snake_case) | `DATETIME(6)` | ❌ |
+
+⚠️ **`content` 의 `2000` 은 API 검증과 반드시 같아야 합니다.** 어긋나면 **400 이어야 할 요청이
+500(`DataException`)으로 나가고**, 그러면 클라이언트 잘못과 서버 잘못이 로그에서 섞입니다.
+
+⚠️ **`normalized_key` 에 `UNIQUE` 가 없습니다.** 같은 키의 문의가 여러 건인 것이 정상이고 각자
+따로 판정됩니다 — **여기 `UNIQUE` 를 걸면 그건 폐기된 그룹핑의 부활입니다** (D-031).
+
+### `InquiryClassificationResult` → `inquiry_classification_result`
+
+| 필드 | 컬럼 | 타입 | 비었을 수 있나 |
+| --- | --- | --- | --- |
+| `id` | `id` | `BIGINT` | ❌ |
+| `inquiry` | `inquiry_id` | `BIGINT` (FK) | ❌ |
+| `category` | `category` | `VARCHAR(20)` | ✅ `FAILED` 면 비어 있음 |
+| `confidence` | `confidence` | **`DECIMAL(4,3)`** | ✅ `FAILED` · 사람 답 재사용이면 비어 있음 |
+| `model` | `model` | `VARCHAR(100)` | ✅ |
+| `rawResponse` | `raw_response` | `TEXT` | ✅ **호출 자체가 실패하면 비어 있음** |
+| `verdict` | `verdict` | `VARCHAR(20)` | ❌ |
+| `finalCategory` | `final_category` | `VARCHAR(20)` | ✅ 사람이 확정하기 전까지 |
+| `attemptCount` | `attempt_count` | `INT` (기본 `1`) | ❌ |
+| `createdAt` | `created_at` | `DATETIME(6)` | ❌ |
+
+> **`raw_response` 가 비었는지로 실패 원인이 갈립니다** — 값이 있으면 「응답은 왔는데 못 읽음」,
+> `null` 이면 「호출 자체가 실패」입니다. `model` 도 AI 응답이 말해주는 값이라 함께 비어 있습니다.
+
+### `InquiryReviewQueueItem` → `inquiry_review_queue`
+
+| 필드 | 컬럼 | 타입 |
+| --- | --- | --- |
+| `inquiry` · `classificationResult` | `inquiry_id` · `classification_result_id` | `BIGINT` (FK) |
+| `reason` | `reason` | `VARCHAR(20)` — **API 로 안 나갑니다** (blind, D-010) |
+| `status` | `status` | `VARCHAR(20)` |
+| `agentId` · `resolvedAt` | `agent_id` · `resolved_at` | 확정 전까지 비어 있음 |
+| `version` | `version` | `BIGINT` — 낙관적 락 |
+
+### 인덱스와 각각의 용도
+
+```sql
+-- inquiries
+KEY (normalized_key, created_at DESC)          -- 2단 절감 경로: 같은 키의 최근 판정
+KEY (status, received_at)                      -- GET /api/inquiries: 상태 + 기간 + 정렬
+KEY (status, current_category, received_at)    -- 위 + 종류 필터 동시 사용
+```
+
+**세 번째에서 `current_category` 를 가운데 둔 이유** — 종류는 **등치 조건**이라 앞에 두면
+뒤의 기간 범위와 정렬까지 한 인덱스로 커버됩니다. 실측은
+`evidence/measurement-5-list-query-explain.md` · `measurement-5d-reuse-lookup-explain.md`.
+
+---
+
 ## 1. 엔티티 3개
 
 ### 1-1. `Inquiry` — 문의 1건, 그리고 상태의 주인
