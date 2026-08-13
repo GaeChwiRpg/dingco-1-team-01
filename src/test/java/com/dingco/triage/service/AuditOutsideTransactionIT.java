@@ -15,7 +15,7 @@ import com.dingco.triage.domain.repository.InquiryRepository;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.type.Channel;
 import com.dingco.triage.domain.type.InquiryCategory;
-import com.dingco.triage.service.StatsService.Sampling;
+import com.dingco.triage.service.StatsService.AutoAcceptedAudit;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
 import com.dingco.triage.service.event.ClassificationPersistedEvent;
@@ -67,7 +67,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * INSERT 가 아무 데도 안 간다 — 그런데 <b>예외도 로그도 없다.</b> 그 함정과 「제대로 분리한
  * 판」을 갈라 놓아야 D-012 를 정확히 읽을 수 있다 (실패 사례 26).
  *
- * <p><b>세는 방법은 TRI-66 의 필드를 그대로 쓴다</b> — {@link StatsService#auditRates()} 의
+ * <p><b>세는 방법은 TRI-66 의 필드를 그대로 쓴다</b> — {@link StatsService#audit()} 의
  * {@code eligibleTotal}(뽑힐 수 있었던 수) 과 {@code sampledTotal}(실제로 큐에 들어간 수).
  * 이 테스트를 위한 새 집계를 만들지 않는다. 만들면 <b>재는 자가 재는 대상을 겸하게 되어</b>
  * 실제 운영에서 쓰는 숫자와 실험의 숫자가 갈린다.
@@ -132,6 +132,9 @@ class AuditOutsideTransactionIT {
         jdbcTemplate.update("DELETE FROM inquiry_classification_result");
         jdbcTemplate.update("DELETE FROM inquiries");
         outsideEnqueuer.reset();
+        // audit() 는 @Cacheable(AUDIT_CACHE) 다 — 안 비우면 이전 테스트가 캐시에 남긴 값을
+        // 이번 테스트가 그대로 돌려받는다 (표본 수가 이전 테스트 것과 뒤섞여 보인다).
+        statsService.evictSummary();
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -145,7 +148,7 @@ class AuditOutsideTransactionIT {
 
         classifyMany(N);
 
-        Sampling sampling = autoAcceptedSampling();
+        AutoAcceptedAudit sampling = autoAcceptedSampling();
         assertThat(sampling.eligibleTotal()).isEqualTo(N);
         assertThat(sampling.sampledTotal())
                 .as("샌 건수 = 기대 표본 − 실제 표본")
@@ -160,7 +163,7 @@ class AuditOutsideTransactionIT {
         // 실패를 하나도 주입하지 않았다. 그냥 「감사는 곁다리니 커밋 후에」로 옮겼을 뿐이다.
         classifyMany(N);
 
-        Sampling sampling = autoAcceptedSampling();
+        AutoAcceptedAudit sampling = autoAcceptedSampling();
         assertThat(sampling.eligibleTotal())
                 .as("판정은 멀쩡히 10건 — 겉보기에 아무 일도 없었다")
                 .isEqualTo(N);
@@ -179,7 +182,7 @@ class AuditOutsideTransactionIT {
 
         classifyMany(N);
 
-        Sampling sampling = autoAcceptedSampling();
+        AutoAcceptedAudit sampling = autoAcceptedSampling();
         assertThat(sampling.eligibleTotal()).isEqualTo(N);
         assertThat(sampling.sampledTotal())
                 .as("제대로 분리하면 정상 경로에서는 안 샌다 — 0 이라고 그대로 적는다 (티켓 완료 조건)")
@@ -207,7 +210,7 @@ class AuditOutsideTransactionIT {
                 .as("②가 통째로 롤백된다 (측정 3 이 이미 고정한 그림)")
                 .isEmpty();
 
-        Sampling sampling = autoAcceptedSampling();
+        AutoAcceptedAudit sampling = autoAcceptedSampling();
         assertThat(sampling.eligibleTotal())
                 .as("모집단조차 안 생긴다 — 「분모가 조용히 줄어드는」 상황이 아니다")
                 .isZero();
@@ -225,7 +228,7 @@ class AuditOutsideTransactionIT {
         // ★ 예외가 안 난다. ②는 이미 커밋됐고, 실패는 커밋 후 별도 묶음에서 났다.
         classifyMany(N);
 
-        Sampling sampling = autoAcceptedSampling();
+        AutoAcceptedAudit sampling = autoAcceptedSampling();
         assertThat(sampling.eligibleTotal())
                 .as("판정은 멀쩡히 10건 남는다 — 겉보기에 아무 일도 없었다")
                 .isEqualTo(N);
@@ -234,7 +237,7 @@ class AuditOutsideTransactionIT {
                 .isZero();
         assertThat(sampling.actualSampleRate())
                 .as("설정 1.0 인데 실측 0.0 — TRI-66 이 없었으면 이 어긋남조차 안 보인다")
-                .isEqualByComparingTo(BigDecimal.ZERO);
+                .isEqualTo(0.0);
         assertThat(outsideEnqueuer.noticedLoss())
                 .as("이쪽은 예외라도 났다 — 로그는 남는다. 다만 아무도 안 던진다")
                 .isEqualTo(N);
@@ -276,8 +279,8 @@ class AuditOutsideTransactionIT {
                 Inquiry.receive(9300L, content, Channel.WEB, UUID.randomUUID().toString(), Instant.now()));
     }
 
-    private Sampling autoAcceptedSampling() {
-        return statsService.auditRates().autoAccepted();
+    private AutoAcceptedAudit autoAcceptedSampling() {
+        return statsService.audit().autoAccepted();
     }
 
     @TestConfiguration
