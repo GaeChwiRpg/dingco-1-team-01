@@ -506,7 +506,7 @@ X-User-Role: AGENT
 | `GET /actuator/metrics/triage.cache.classification.hits` · `…misses` | 1단 캐시(`classification:byNormalizedKey`) hit/miss counter — `ClassificationReuseLookup` 조회 지점에서 센다 |
 
 > **`cache.gets` 가 아니라 `triage.cache.classification.hits`/`misses` 인 이유 (TRI-70)**: `cache.gets` 는 스프링이 **관리하는** 캐시(`@Cacheable`)에만 자동으로 붙는 이름이다. 1단 캐시는 손으로 짠 Redis 컴포넌트(`ClassificationCache`)라 그 이름으로는 잡히지 않고, 붙는다 해도 통계용 `stats:summary` 캐시를 세게 된다. 실제 hit/miss 는 이미 `ClassificationReuseLookup`(TRI-68)이 위 두 counter 로 세고 있어, **계약을 실제 counter 이름에 맞췄다**(같은 값을 두 이름으로 내보내지 않는다).
-
+>
 > **구현 상태 (TRI-70)**: 위 5개 지표(health 제외)가 모두 실제로 나간다. `triage.queue.backlog`·`triage.classification.success.rate` 는 `StatsService` 의 10초 캐시(`stats:summary`)를 경유하는 gauge, `triage.ai.calls`·`triage.cache.classification.*` 는 사건 발생 지점의 counter, `triage.inquiries.stuck_received` 는 `now` 기준 gauge다.
 
 ---

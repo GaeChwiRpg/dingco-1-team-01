@@ -49,9 +49,12 @@ public class MetricsConfig {
                 .description("PENDING 상태로 밀린 검토 큐 건수 (stats:summary 캐시 경유)")
                 .register(registry);
 
-        // 분류 성공률 — FAILED 를 뺀 비율. 정의는 StatsService#classificationSuccessRate (TRI-70).
+        // 분류 성공률 — FAILED 를 뺀 비율. classification() 을 프록시 경유로 불러(10초 캐시) 그
+        // 레코드의 순수 계산 successRate() 를 쓴다 — backlog 와 같은 패턴. 계산을 StatsService 안에
+        // 두고 self-invocation 하면 @Cacheable 이 우회돼 스크랩마다 DB 를 친다 (AI 리뷰 지적).
+        // 정의는 Classification#successRate (D-065).
         Gauge.builder("triage.classification.success.rate", statsService,
-                        StatsService::classificationSuccessRate)
+                        s -> s.classification().successRate())
                 .description("분류가 쓸 수 있는 답을 낸 비율 (FAILED 제외). 자동 확정률과는 다르다")
                 .register(registry);
     }

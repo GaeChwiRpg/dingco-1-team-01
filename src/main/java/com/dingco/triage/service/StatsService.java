@@ -117,26 +117,6 @@ public class StatsService {
     }
 
     /**
-     * 분류 성공률 — 계약 §8 Actuator gauge {@code triage.classification.success.rate} (TRI-70).
-     *
-     * <p><b>성공 = 분류가 「쓸 수 있는 답」을 냈다.</b> {@code FAILED}(값을 못 읽어
-     * {@code category}·{@code confidence} 가 둘 다 null, D-022) 만 실패로 세고, 나머지 셋
-     * ({@code AUTO_ACCEPTED}·{@code NEEDS_REVIEW}·{@code REUSED})은 카테고리가 있으므로
-     * 성공으로 본다 — {@code NEEDS_REVIEW} 도 "저확신이라 사람에게 넘긴 것"이지 분류 자체가
-     * 실패한 것은 아니다. 그래서 이 값은 <b>자동 확정률({@code autoAcceptRate})과 다르다</b>:
-     * 저확신 격리 건이 성공에는 들어가지만 자동 확정에는 안 들어간다.
-     *
-     * <p>지표를 새로 세지 않고 {@link #classification()}(10초 캐시)을 그대로 읽는다 — gauge 가 매
-     * 스크랩마다 전수 집계를 다시 돌지 않도록 한다. 분모가 0(문의 없음)이면 {@code 0.0}.
-     */
-    public double classificationSuccessRate() {
-        Classification c = classification();
-        return c.inquiriesTotal() == 0
-                ? 0.0
-                : (double) (c.inquiriesTotal() - c.failed()) / c.inquiriesTotal();
-    }
-
-    /**
      * AI 절감률 — 계약 §7 {@code aiCallSavings} 블록 (TRI-68).
      *
      * <p><b>이 값이 줄이는 것은 AI 호출이지 DB 조회가 아니다 (D-014).</b> {@code cache} 블록(1단
@@ -378,6 +358,24 @@ public class StatsService {
      */
     public record Classification(
             long inquiriesTotal, long autoAccepted, long needsReview, long failed, double autoAcceptRate) {
+
+        /**
+         * 분류 성공률 — 계약 §8 gauge {@code triage.classification.success.rate} (TRI-70 · D-065).
+         *
+         * <p><b>성공 = 분류가 「쓸 수 있는 답」을 냈다.</b> {@code FAILED}(값을 못 읽어 종류·확신도가
+         * 둘 다 null, D-022)만 실패로 세고, 나머지 셋({@code AUTO_ACCEPTED}·{@code NEEDS_REVIEW}·
+         * {@code REUSED})은 카테고리가 있어 성공으로 본다 — {@code NEEDS_REVIEW}(저확신 격리)도
+         * 분류 자체는 됐다. 그래서 {@code autoAcceptRate} 와 다르다: 저확신 격리 건이 성공에는
+         * 들어가지만 자동 확정에는 안 들어간다. 분모가 0이면 {@code 0.0}.
+         *
+         * <p><b>이미 집계된 이 레코드의 값으로만 계산한다 — DB 를 다시 치지 않는다.</b> gauge 는
+         * 프록시 경유 {@link StatsService#classification()}(10초 캐시)로 이 레코드를 받은 뒤 이 순수
+         * 계산을 부른다. 계산을 {@code StatsService} 안에 두고 {@code classification()} 을 직접
+         * 부르면 self-invocation 이라 {@code @Cacheable} 이 우회돼 스크랩마다 DB 를 친다 (AI 리뷰 지적).
+         */
+        public double successRate() {
+            return inquiriesTotal == 0 ? 0.0 : (double) (inquiriesTotal - failed) / inquiriesTotal;
+        }
     }
 
     /**

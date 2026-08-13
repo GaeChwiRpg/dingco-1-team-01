@@ -64,7 +64,7 @@
 측정을 처음 돌렸을 때(접수를 묶지 않고 1000건을 한꺼번에 던짐) **1건이 유실**돼 999/1000 에서
 멈췄다. 스택:
 
-```
+```text
 ThreadPoolExecutor$CallerRunsPolicy.rejectedExecution
   → InquiryReceivedEventListener.onInquiryReceived
   → ClassificationService.verifyAndPersist → persist(:175)

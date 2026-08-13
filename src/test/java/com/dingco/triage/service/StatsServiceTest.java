@@ -233,7 +233,7 @@ class StatsServiceTest extends RedisContainerSupport {
 
         assertThat(gauge)
                 .as("성공 2 / 전체 3 — NEEDS_REVIEW 도 카테고리가 있으므로 성공에 든다 (자동 확정률과 다르다)")
-                .isEqualTo(statsService.classificationSuccessRate())
+                .isEqualTo(statsService.classification().successRate())
                 .isCloseTo(2.0 / 3.0, within(1e-9));
     }
 
