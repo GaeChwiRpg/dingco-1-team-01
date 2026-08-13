@@ -53,7 +53,7 @@ domain/
 | --- | --- |
 | `content` **2000자** | 고객이 쓴 자연어라 길이가 들쭉날쭉합니다. 2000자는 "한 화면에 안 들어가는 긴 문의"까지 받되 무한정 받지는 않는 선입니다. **개인정보가 섞여 들어오므로** AI 로 보내기 전과 화면에 내보낼 때 가립니다 |
 | `normalized_key` **64자 · UNIQUE 아님** | 본문을 소문자화·공백 정리·주문번호/날짜/금액/연락처 마스킹해서 만든 조회용 문자열입니다. **UNIQUE 를 일부러 안 걸었습니다** — 같은 키의 문의가 여러 건 있는 것이 정상이고 각자 따로 판정됩니다. **여기 UNIQUE 를 걸면 그게 곧 그룹핑의 부활입니다** (D-031) |
-| `current_confidence` **DECIMAL(4,3)** | `0.000` ~ `1.000` 을 담습니다. **`DOUBLE` 이 아닌 이유**는 기준값(예: `0.8`)과 비교하는 값이라 소수 오차로 판정이 뒤집히면 안 되기 때문입니다. 자리수 4·소수 3자리라 `1.000` 까지만 들어갑니다 |
+| `current_confidence` **DECIMAL(4,3)** | **`DOUBLE` 이 아닌 이유**는 기준값(예: `0.8`)과 비교하는 값이라 소수 오차로 판정이 뒤집히면 안 되기 때문입니다.<br>⚠️ **이 타입이 `0~1` 범위를 막아주지는 않습니다** — `DECIMAL(4,3)` 은 `-9.999` 까지 담기고, **`CHECK` 제약도 없습니다**(마이그레이션 두 개에 `CHECK` 가 0개). 범위를 지키는 것은 **AI 응답을 읽는 자리 하나뿐**입니다 (D-034). 엔티티 팩토리도 범위를 다시 안 봅니다 |
 | `received_at` vs `created_at` | **받은 시각**과 **DB 에 넣은 시각**입니다. 지금은 거의 같지만 나중에 과거 문의를 옮겨 담으면 갈립니다. `stuckReceived`(분류가 멈춘 문의)는 **`received_at` 기준**으로 셉니다 |
 | `updated_at` | 판정 전이는 벌크 UPDATE 라 **JPA auditing 을 안 탑니다.** 그래서 UPDATE 문이 시각을 직접 넣습니다 — 안 그러면 상태는 바뀌었는데 시각은 접수 때 그대로라 **판정이 언제 났는지 읽을 수 없는 행**이 생깁니다 |
 
@@ -99,7 +99,7 @@ Inquiry.receive(customerId, content, channel, normalizedKey, receivedAt)
 | `rawResponse` | `raw_response` `TEXT` | AI 원본 응답 | 응답 자체를 못 받았으면 |
 | `verdict` | `verdict` `VARCHAR(20)` | 판정 결과 | 없음 (필수) |
 | `finalCategory` | `final_category` `VARCHAR(20)` | **사람 확정** | 아직 아무도 확정 안 했으면 |
-| `attemptCount` | `attempt_count` `INT` | 시도 횟수 | 없음. 기본 `1`, **1 이상**만 허용 |
+| `attemptCount` | `attempt_count` `INT` | **처리 시도 횟수** | 없음. **1 이상**만 허용 |
 | `createdAt` | `created_at` `DATETIME(6)` | 판정 시각 | 없음 |
 
 > `category` 와 `confidence` 는 **둘 다 `null` 이거나 둘 다 있거나**입니다 — 단 하나 예외가 사람 답 재사용(`confidence` 만 `null`)입니다.
@@ -111,7 +111,7 @@ Inquiry.receive(customerId, content, channel, normalizedKey, receivedAt)
 | `category` **vs** `final_category` | **두 칸이 나뉜 것이 이 프로젝트의 핵심입니다.** 앞은 AI 가 말한 것, 뒤는 사람이 정한 것이고 **둘 다 남깁니다.** 하나로 합쳐 덮어쓰면 *"AI 가 뭐라고 했었나"* 가 사라지고, 그러면 오분류율을 낼 수가 없습니다 |
 | `model` **100자** | 실제 호출이면 `claude-sonnet-5` 같은 모델명이, 재사용이면 `reused:1234` 처럼 **원본 판정 행의 번호**가 들어갑니다. **한 칸에 두 종류가 들어가는 것이 의도**입니다 — 이 칸만 보면 "이 판정이 진짜 호출인지 재사용인지"를 알 수 있고, 그게 없으면 AI 절감률을 사후에 검산할 수 없습니다 |
 | `raw_response` **TEXT** | AI 가 보낸 답을 손대지 않고 그대로 넣습니다. **파싱에 실패해도 남깁니다** — 사유("못 읽었다")만으로는 프롬프트를 어떻게 고칠지 알 수 없기 때문입니다 |
-| `attempt_count` | **실제로 AI 를 부른 횟수**입니다. 재시도가 회수하고 있는지를 이 값으로 봅니다 — `2` 이상인데 판정이 났으면 "한 번 실패했다가 살아난 건"입니다 |
+| `attempt_count` | **판정 종류마다 뜻이 조금 다릅니다.**<br>`AUTO_ACCEPTED`·`NEEDS_REVIEW`·`FAILED` — **실제로 AI 를 부른 횟수**. `2` 이상인데 판정이 났으면 *"한 번 실패했다가 살아난 건"*입니다<br>⚠️ `REUSED` — **항상 `1` 이고, AI 는 한 번도 안 불렀습니다.** `0` 을 넣고 싶지만 `1 이상` 제약에 걸려 `1` 로 고정했습니다. **그래서 「AI 호출 횟수」를 이 칸의 합으로 세면 재사용 건만큼 부풀려집니다** — 실제 호출 수는 `model` 칸이 `reused:` 로 시작하지 않는 행만 세거나, Actuator 의 호출 카운터를 봅니다 |
 | `inquiry_id` **FK 있음** | `inquiries` 를 참조합니다. **문의 1건에 판정 행이 여러 개** 쌓입니다(재시도·재분류) — 그래서 "최신 판정"을 뽑을 때는 항상 정렬이 필요합니다 |
 
 **인덱스 2개 — 무엇을 위해 있나**
@@ -207,19 +207,27 @@ switch (result.getVerdict()) {
 
 ## 2. enum 7개
 
-**전부 이름 문자열로 저장합니다** (`VARCHAR`, `@Enumerated(EnumType.STRING)`). **순서(`ORDINAL`)로 저장하지 않습니다** — 순서로 저장하면 나중에 값을 가운데 끼워 넣었을 때 **이미 저장된 행의 뜻이 통째로 밀립니다.** DB 를 열어 봐도 숫자만 보여서 무슨 값인지 알 수 없고요.
+**7개가 다 같은 성격이 아닙니다.** DB 에 저장되는 것과 응답에만 실리는 것을 갈라 봐야 합니다.
 
-| enum | 값 | 어디 쓰나 | 값이 늘 수 있나 |
+**DB 에 저장되는 6개** — 전부 **이름 문자열**로 넣습니다 (`VARCHAR`, `@Enumerated(EnumType.STRING)`). **순서(`ORDINAL`)로 저장하지 않습니다** — 순서로 저장하면 나중에 값을 가운데 끼워 넣었을 때 **이미 저장된 행의 뜻이 통째로 밀립니다.** DB 를 열어 봐도 숫자만 보여서 무슨 값인지 알 수 없고요.
+
+| enum | 값 | 어느 컬럼에 | 값이 늘 수 있나 |
 | --- | --- | --- | --- |
-| `InquiryStatus` | `RECEIVED` · `CLASSIFIED` · `UNCLASSIFIED` | 문의의 상태 | 사실상 고정 |
-| `InquiryCategory` | 10종 (`DELIVERY` … `ETC`) | 분류 결과 | 경계 정의를 고쳐야 함 |
-| `Verdict` | `AUTO_ACCEPTED` · `NEEDS_REVIEW` · `FAILED` · `REUSED` | 판정 결과 | **늘면 컴파일이 막는다** (아래) |
-| `QueueReason` | `LOW_CONFIDENCE` · `CLASSIFY_FAILED` · `AUDIT_SAMPLE` | 큐에 들어온 사유 | 계약 B 변경 필요 |
-| `QueueStatus` | `PENDING` · `RESOLVED` | 큐 항목 상태 | 사실상 고정 |
-| `Channel` | `WEB` · `APP` · `EMAIL` · `PHONE` | 문의가 들어온 경로 | 자유롭게 |
-| `ConflictCode` | `ALREADY_RESOLVED` · `CONCURRENT_UPDATE` | 409 의 원인 구분 | 락 전략이 늘면 |
+| `InquiryStatus` | `RECEIVED` · `CLASSIFIED` · `UNCLASSIFIED` | `inquiries.status` | 사실상 고정 |
+| `InquiryCategory` | 10종 (`DELIVERY` … `ETC`) | `current_category` · `category` · `final_category` | 경계 정의를 고쳐야 함 |
+| `Verdict` | `AUTO_ACCEPTED` · `NEEDS_REVIEW` · `FAILED` · `REUSED` | `...result.verdict` | **늘면 컴파일이 막는다** (아래) |
+| `QueueReason` | `LOW_CONFIDENCE` · `CLASSIFY_FAILED` · `AUDIT_SAMPLE` | `...queue.reason` | 계약 B 변경 필요 |
+| `QueueStatus` | `PENDING` · `RESOLVED` | `...queue.status` | 사실상 고정 |
+| `Channel` | `WEB` · `APP` · `EMAIL` · `PHONE` | `inquiries.channel` | API 계약도 함께 고쳐야 함 |
 
-> 캐시 값에 쓰는 `CacheSource`(`HUMAN` · `AI`)는 `domain/type/` 이 아니라 `service/cache/` 에 있습니다. **DB 에 안 들어가고 캐시 안에서만 사는 값**이라 도메인 타입으로 두지 않았습니다.
+**DB 에 안 들어가는 것 2개** — 응답으로만 나갑니다.
+
+| enum | 값 | 어디 쓰나 | 어디 있나 |
+| --- | --- | --- | --- |
+| `ConflictCode` | `ALREADY_RESOLVED` · `CONCURRENT_UPDATE` | **409 응답의 `code`** — 컬럼이 아니다 | `domain/type/` (예외 → 오류 응답) |
+| `CacheSource` | `HUMAN` · `AI` | 캐시 값이 사람 답인지 AI 답인지 | **`service/cache/`** — 도메인 타입이 아니다 |
+
+> `ConflictCode` 가 `domain/type/` 에 있는 것은 **위치일 뿐 저장된다는 뜻이 아닙니다.** 확정 충돌 예외가 들고 다니다가 오류 응답의 `code` 로 나갑니다. 그래서 **enum 값을 바꾸면 DB 가 아니라 API 계약이 깨집니다.**
 
 ### `InquiryStatus` — 상태는 문의마다 붙는다
 
@@ -314,7 +322,7 @@ RECEIVED ──확신도 높음──> CLASSIFIED
 - **적체 통계는 `PENDING` 만 셉니다.** 그래서 감사로 뽑힌 건도 확정되고 나면 적체에서 빠집니다 — 측정할 때 이걸 모르면 *"감사가 큐에 안 들어갔다"* 로 잘못 읽습니다
 - 「처리 중(누가 보고 있음)」 상태는 **아직 없습니다** — `PRD.md` §8 항목 H 로 미뤄뒀습니다
 
-### `ConflictCode` — 둘 다 필요한 이유
+### `ConflictCode` — 둘 다 필요한 이유 (DB 저장 아님 · 응답 전용)
 
 둘 다 `409` 로 나가지만 **원인이 다르고, 상담원에게 할 말도 다릅니다.**
 
@@ -340,7 +348,8 @@ RECEIVED ──확신도 높음──> CLASSIFIED
 
 그럼 왜 담나 — **정규화 키가 채널에 따라 얼마나 덜 겹치는지** 보려고 담습니다. 같은 내용이라도 **전화 기록은 상담원이 요약해 적고 웹 입력은 고객이 직접 씁니다.** 문장이 달라지면 키가 달라지고, 키가 달라지면 AI 를 또 부릅니다. 절감률이 기대보다 낮게 나올 때 **채널 탓인지 정규화 규칙 탓인지** 가르는 데 씁니다.
 
-- 값을 늘려도(예: `KAKAO`) **아무것도 안 깨집니다** — 분류 로직이 이 값을 보지 않기 때문입니다. 7개 중 가장 자유로운 enum 입니다
+- ⚠️ **값을 늘리려면(예: `KAKAO`) `API-CONTRACT.md` 를 같이 고쳐야 합니다.** 계약에 허용 값이 `WEB | APP | EMAIL | PHONE` 로 못박혀 있어서, enum 만 늘리면 **문서와 실제가 갈립니다.**
+  - 다만 **코드 쪽은 안 깨집니다** — 이 값을 보는 `switch` 도, DB `CHECK` 제약도 없고 `VARCHAR(20)` 이라 새 값이 그냥 들어갑니다. **enum 7개 중 코드 영향이 가장 적은 대신, 계약 영향은 있는 쪽**입니다
 
 ---
 
