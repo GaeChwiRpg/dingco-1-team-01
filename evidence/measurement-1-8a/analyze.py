@@ -234,6 +234,136 @@ def print_measure_1(runs):
     row("전체", answered)
 
 
+def load_backlog(path: Path):
+    """stats 스냅샷의 backlog 블록. 없으면 빈 dict — 부르는 쪽이 「못 쟀다」로 적는다."""
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text()).get("backlog") or {}
+
+
+def print_measure_2(raw: Path, runs):
+    """[측정 2] 틀린 건이 조용히 넘어가지 않고 검토 목록에 쌓이나.
+
+    같은 원자료를 읽는다 — 측정 2 를 위해 앱을 다시 돌리지 않는다. 읽는 규칙이 두 곳으로
+    갈리면 한쪽만 고쳐지고, 그러면 같은 원자료에서 다른 숫자가 나온다.
+    """
+    title("[측정 2] 검토 목록에 들어온 비율과 사유별 몫")
+    print("성공 기준 1번(「조용히 넘어가지 않는가」)에 답하는 자리다. 격리는 전건, 감사는")
+    print("일부다 — 두 갈래가 각각 제 몫으로 들어갔는지 본다.\n")
+
+    posted = [r for r in runs if r.get("posted")]
+
+    # ── 판정 분포. 큐 삽입 사유는 verdict 가 정한다 (계약 B) — category=null 은 결과일 뿐
+    #    판별식이 아니다 (D-022).
+    verdicts = {}
+    for r in posted:
+        verdicts[r.get("verdict")] = verdicts.get(r.get("verdict"), 0) + 1
+
+    print(pad("판정", 16) + pad("건수", 8, ">") + pad("몫", 10, ">"))
+    for name in ("AUTO_ACCEPTED", "NEEDS_REVIEW", "FAILED", "REUSED"):
+        print(pad(name, 16) + pad(verdicts.get(name, 0), 8, ">")
+              + pad(fmt(rate(verdicts.get(name, 0), len(posted))), 10, ">"))
+    print(pad("합계", 16) + pad(len(posted), 8, ">"))
+
+    # ── 사유별 큐 삽입. 격리(전건)와 감사(일부)를 갈라 센다.
+    low = verdicts.get("NEEDS_REVIEW", 0)
+    failed = verdicts.get("FAILED", 0)
+    audit = sum(1 for r in posted if r.get("audit_sampled"))
+    inserted = low + failed + audit
+
+    print()
+    print(pad("큐 삽입 사유", 18) + pad("건수", 8, ">") + pad("전체 대비", 12, ">"))
+    for label, count in (("LOW_CONFIDENCE", low), ("CLASSIFY_FAILED", failed),
+                         ("AUDIT_SAMPLE", audit)):
+        print(pad(label, 18) + pad(count, 8, ">")
+              + pad(fmt(rate(count, len(posted))), 12, ">"))
+    print(pad("합계", 18) + pad(inserted, 8, ">")
+          + pad(fmt(rate(inserted, len(posted))), 12, ">"))
+
+    # ── 검산 ①: 큐 스냅샷의 항목 수와 맞나.
+    #
+    # 세는 방법이 하나뿐이면 틀렸을 때 틀린 줄 모른다. 위 합계는 판정에서 역산한 값이고,
+    # queue.json 은 API 가 실제로 돌려준 목록이다.
+    #
+    # ⚠️ 큐 목록은 DB 전수라 이전 실행분이 섞여 있다 (감사율에서 겪은 것과 같은 함정 —
+    # 「누적으로만 보면 틀린다」). 측정 전 적체를 빼야 이번 회차의 삽입분이 된다.
+    queue_path = raw / "queue.json"
+    before_backlog = load_backlog(raw / "stats-before.json")
+    if queue_path.exists():
+        queue_total = len(json.loads(queue_path.read_text()).get("content", []))
+        carried = before_backlog.get("total")
+        if carried is None:
+            print(f"\n[검산 ①] 큐 목록 {queue_total}건 — 측정 전 스냅샷이 없어 누적분을 못 뺀다")
+        else:
+            this_run = queue_total - carried
+            mark = "✅ 일치" if this_run == inserted else "❌ 어긋남"
+            print(f"\n[검산 ①] 판정에서 센 {inserted}건 vs 큐 목록 {queue_total}건 "
+                  f"− 측정 전 적체 {carried}건 = {this_run}건 → {mark}")
+            if this_run != inserted:
+                print("  ⚠️ 어긋났다. 사유 매핑(계약 B)이나 감사 표본 판별 중 하나가 틀렸다는 뜻이다.")
+    else:
+        print("\n[검산 ①] queue.json 이 없어 대조 못 함")
+
+    # ── 검산 ②: 통계 API 의 사유별 적체 증가분과 맞나.
+    #
+    # ⚠️ 두 가지를 같이 조심한다.
+    #   ⓐ 누적이다 — 측정 전후의 차를 내야 이번 회차 값이 된다
+    #   ⓑ stats-after 는 감사 확정(⑤단계) 뒤에 찍었다. 확정된 감사 표본은 RESOLVED 라
+    #      적체(PENDING)에서 빠진다 — AUDIT_SAMPLE 이 0 으로 보이는 것이 정상이다
+    # 둘 중 하나만 모르고 보면 멀쩡한 장치가 고장 난 것처럼 보인다.
+    after_backlog = load_backlog(raw / "stats-after.json")
+    if after_backlog and before_backlog:
+        after_reason = after_backlog.get("byReason") or {}
+        before_reason = before_backlog.get("byReason") or {}
+        print("\n[검산 ②] 통계 API 의 적체(PENDING) 증가분 — 격리만 남는다")
+        deltas = {}
+        for key in ("LOW_CONFIDENCE", "CLASSIFY_FAILED", "AUDIT_SAMPLE"):
+            deltas[key] = after_reason.get(key, 0) - before_reason.get(key, 0)
+            print(f"  {pad(key, 18)}{pad(before_reason.get(key, 0), 6, '>')} → "
+                  f"{pad(after_reason.get(key, 0), 6, '>')}   증가 {fmt(deltas[key])}")
+        ok = deltas["LOW_CONFIDENCE"] == low and deltas["CLASSIFY_FAILED"] == failed
+        print(f"  판정에서 센 격리 {low}·{failed} 와 같아야 한다 → "
+              + ("✅ 일치" if ok else "❌ 어긋남"))
+        print("  (감사 표본은 확정 뒤라 RESOLVED — 증가 0 이 정상이다)")
+    else:
+        print("\n[검산 ②] stats 스냅샷이 없어 대조 못 함")
+
+    # ── 못 읽은 건이 「0」이 아니라 「null」로 남았나 (D-022).
+    #
+    # confidence 에 0 을 쓰면 최하위 구간에 「AI 가 0 이라 신고한 건」과 「응답이 깨진 건」이
+    # 섞여 측정 8ⓐ 가 오염된다. 파싱 실패는 판정 방향 지시이지 저장 값이 아니다.
+    print()
+    failures = [r for r in posted if r.get("verdict") == "FAILED"]
+    if failures:
+        bad = [r for r in failures if r.get("confidence") is not None or r.get("category")]
+        print(f"[D-022] 못 읽은 건 {len(failures)}건 — category·confidence 가 둘 다 null 인가")
+        for r in failures:
+            print(f"  seed {pad(r['seed_id'], 4, '>')}  category={fmt(r.get('category'))}"
+                  f"  confidence={fmt(r.get('confidence'))}"
+                  f"  attempt={fmt(r.get('attempt_count'))}")
+        print("  → " + ("✅ 전부 null" if not bad else f"❌ {len(bad)}건이 값을 갖고 있다"))
+    else:
+        print("[D-022] 못 읽은 건이 0 건이라 확인할 것이 없다 — 「쟀는데 0」이 아니라 「못 쟀다」다")
+
+    # ── 재시도가 회수하고 있나 (D-022 재평가).
+    #
+    # CLASSIFY_FAILED 가 0 건인 것과 「재시도가 회수했다」는 다른 말이다. attempt_count 가
+    # 2 이상인데 판정이 난 건이 있어야 회수의 증거가 된다 — 세는 쪽이 그 가정에 기대지 않게 둔다.
+    print()
+    attempts = {}
+    for r in posted:
+        attempts[r.get("attempt_count")] = attempts.get(r.get("attempt_count"), 0) + 1
+    print("[재시도] attempt_count 분포 — 회수된 건이 있나")
+    for key in sorted(attempts, key=lambda v: (v is None, v)):
+        print(f"  {pad(fmt(key), 6)}{pad(attempts[key], 6, '>')}건")
+    recovered = [r for r in posted
+                 if (r.get("attempt_count") or 0) >= 2 and r.get("verdict") != "FAILED"]
+    print(f"  → 2회 이상 시도하고도 판정이 난 건(회수): {len(recovered)}건")
+    if not recovered:
+        print("  ⚠️ 0 건이다. 「회수가 안 된다」가 아니라 「이번 실행에 재시도할 일이 적었다」일")
+        print("     수 있다 — 둘은 이 숫자만으로 구분되지 않는다 (측정 4 가 주입해서 확인한다)")
+
+
 def misclassified(runs, key="expected"):
     """자동 확정됐는데 정답과 다른 건. 채점 기준을 바꿔 끼울 수 있게 key 를 받는다."""
     return [r for r in runs
@@ -501,6 +631,7 @@ def main():
     runs = load_runs(raw, seed)
 
     print_conditions(raw, runs)
+    print_measure_2(raw, runs)
     print_measure_1(runs)
     wrong_total = print_measure_8a1(runs)
     print_measure_8a2(runs, wrong_total)
