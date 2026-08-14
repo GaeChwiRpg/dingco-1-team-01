@@ -21,6 +21,7 @@ import com.dingco.triage.service.ai.AiCallException;
 import com.dingco.triage.service.ai.AiClassificationService;
 import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
+import com.dingco.triage.service.cache.CachedClassification;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -33,14 +34,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -58,9 +64,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <tr><th>모드</th><th>무엇이 실패</th><th>②트랜잭션</th><th>판정/큐</th><th>원문</th><th>등급</th></tr>
  *   <tr><td><b>A</b></td><td>AI 호출 3회 실패</td><td>완주</td><td>FAILED · CLASSIFY_FAILED 있음</td>
  *       <td>잔존</td><td><b>검토가능</b> (stuck 안 오름)</td></tr>
- *   <tr><td><b>C</b></td><td>대기줄 포화 인라인</td><td>못 열림</td><td>없음</td>
+ *   <tr><td><b>C</b></td><td>대기줄 포화 인라인 + <b>REQUIRED 대조군</b></td><td>못 열림</td><td>없음</td>
  *       <td>잔존(①)</td><td><b>조용한 유실</b> (stuck 뒤늦게)</td></tr>
- *   <tr><td><b>C'</b></td><td>C 에 REQUIRES_NEW 수정 적용</td><td>새로 열림</td><td>LOW_CONFIDENCE 있음</td>
+ *   <tr><td><b>C'</b></td><td>같은 문맥 + <b>운영 REQUIRES_NEW</b></td><td>새로 열림</td><td>LOW_CONFIDENCE 있음</td>
  *       <td>잔존</td><td><b>검토가능</b> (유실 0)</td></tr>
  * </table>
  *
@@ -82,16 +88,29 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <b>결정적으로</b> 만든다 — 부하 테스트의 타이밍 의존(flaky)을 피하고, 수정이 겨냥하는 바로 그
  * 지점을 직접 때린다.
  *
- * <p><b>운영 코드는 한 줄도 바꾸지 않는다.</b> 수정안(②를 {@code REQUIRES_NEW} 로)의 <b>효과</b>만
- * {@code REQUIRES_NEW} 트랜잭션 템플릿으로 감싸 시연한다(모드 C'). 채택은 별도 티켓 + DECISIONS
- * 항목 + P2(김준현) 협의의 몫이다. 이 방식은 TRI-86(감사 삽입을 ② 밖으로 빼보는 대조 실험)이
- * <b>운영 경로를 안 건드리고 반사실만 측정한</b> 선례를 따른다.
+ * <p><b>⚠️ D-066 채택으로 C·C' 의 역할이 뒤집혔다 (TRI-96).</b> 처음 이 파일을 쓸 때는 운영 ②가
+ * {@code REQUIRED} 였고, 수정안의 <b>효과</b>를 {@code REQUIRES_NEW} 트랜잭션 템플릿으로 감싸
+ * 시연했다(운영 코드 무변경). 이제 운영 ②가 {@code REQUIRES_NEW} 이므로 반대가 됐다.
+ *
+ * <ul>
+ *   <li><b>C'</b> — 감싸는 템플릿을 <b>없앴다.</b> 운영 빈을 그냥 부르는데 유실이 0 이면, 그것이
+ *       곧 <b>운영 클래스에 붙인 애노테이션이 실제로 프록시를 탄다는 확인</b>이다. D-066 이
+ *       "애노테이션 경로 그 자체"의 확인을 채택 티켓의 몫으로 지정했고, 이 자리가 그것이다
+ *   <li><b>C</b> — {@code REQUIRED} 를 강제한 <b>테스트 전용 대조군 빈</b>으로 옮겼다. 결함 재현을
+ *       지우지 않는 이유는, 지우면 누가 운영 애노테이션을 되돌려도 아무 테스트도 실패하지 않기
+ *       때문이다 — 이 결함은 평소 테스트로는 안 보인다
+ * </ul>
+ *
+ * <p>대조군을 {@code @Primary} 로 끼우지 않고 <b>빈을 하나 더 등록</b>했다. 모드 A 는 운영 경로
+ * 전체(리스너 → 재시도 → {@code @Recover})를 그대로 타야 하므로 운영 빈을 바꿔치기하면 안 된다.
+ * 반사실만 별도 빈으로 두는 방식은 TRI-86(감사 삽입을 ② 밖으로 빼보는 대조 실험)의 선례를 따른다.
  *
  * <p><b>재현</b>: {@code ./gradlew test --tests '*AsyncLossPreventionIT'} (Docker MySQL 8 필요).
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@Import(com.dingco.triage.support.MySqlTestContainer.class)
+@Import({com.dingco.triage.support.MySqlTestContainer.class,
+        AsyncLossPreventionIT.RequiredControlConfig.class})
 class AsyncLossPreventionIT {
 
     /** 접수 시각 기준점. stuck 의 "임계 시간 전/후"를 이 값에서 상대로 잡는다. */
@@ -106,7 +125,16 @@ class AsyncLossPreventionIT {
     private InquiryIngestService inquiryIngestService;
 
     @Autowired
+    @Qualifier("classificationService")
     private ClassificationService classificationService;
+
+    /**
+     * <b>모드 C 전용 대조군 — ②를 {@code REQUIRED} 로 되돌린 빈 (TRI-96).</b> 운영 빈을 바꿔치기하지
+     * 않는 이유는 모드 A 가 운영 경로 전체를 그대로 타야 하기 때문이다. {@link RequiredControlConfig}.
+     */
+    @Autowired
+    @Qualifier(RequiredControlConfig.BEAN_NAME)
+    private ClassificationService requiredClassificationService;
 
     @Autowired
     private StatsService statsService;
@@ -206,15 +234,16 @@ class AsyncLossPreventionIT {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("모드 C — AFTER_COMMIT 문맥의 ② REQUIRED: no transaction in progress → RECEIVED 방치 · stuck +1")
+    @DisplayName("모드 C — AFTER_COMMIT 문맥의 ② REQUIRED(대조군): no transaction in progress → RECEIVED 방치 · stuck +1")
     void modeC_seamDefect_silentlyLosesInquiry() {
         // ① 접수 (커밋된 RECEIVED). 실제 유입 경로 대신 직접 저장해 비동기 리스너와의 경합을 없앤다.
         Long id = saveReceived("모드 C 이음새 재현 문의");
         assertThat(currentStatusOf(id)).isEqualTo(InquiryStatus.RECEIVED);
 
-        // ② 를 ①의 AFTER_COMMIT 문맥에서 REQUIRED 로 실행 → 대기줄 포화 인라인 경로와 같은 이음새
+        // ② 를 ①의 AFTER_COMMIT 문맥에서 REQUIRED 로 실행 → 대기줄 포화 인라인 경로와 같은 이음새.
+        // ⚠️ 운영 빈이 아니라 REQUIRED 를 강제한 대조군 빈이다 — 운영은 D-066 채택으로 REQUIRES_NEW 다.
         Throwable thrown = runInCommittedAfterCommitContext(id, () ->
-                classificationService.verifyAndPersist(id, needsReview(), rawResponse(), 1));
+                requiredClassificationService.verifyAndPersist(id, needsReview(), rawResponse(), 1));
 
         // 근본 원인이 이 예외로 드러난다 — 활성 트랜잭션이 없어 @Modifying 이 죽는다
         assertThat(thrown)
@@ -239,33 +268,30 @@ class AsyncLossPreventionIT {
                 .as("설계된 방어(FAILED 기록)는 못 잡고, stuck 만 뒤늦게 잡는다")
                 .isEqualTo(1L);
 
-        report("C. AFTER_COMMIT 인라인 이음새 (결함)",
+        report("C. AFTER_COMMIT 인라인 이음새 (REQUIRED 대조군 · 결함)",
                 currentStatusOf(id).name(), "없음",
                 statsService.stuckReceivedCount(), thrown.getClass().getSimpleName() + ": " + firstLine(thrown));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 모드 C' — 수정 시연: 같은 문맥에서 REQUIRES_NEW 면 유실되지 않는다 (운영 미적용)
+    // 모드 C' — 운영 확인: 같은 문맥에서 운영 ②(REQUIRES_NEW)는 유실되지 않는다 (D-066 채택)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("모드 C' — 같은 문맥 + REQUIRES_NEW: 새 트랜잭션이 열려 정상 전이 · 검토가능 · 유실 0")
+    @DisplayName("모드 C' — 같은 문맥 + 운영 REQUIRES_NEW: 새 트랜잭션이 열려 정상 전이 · 검토가능 · 유실 0")
     void modeCFix_requiresNew_preventsLoss() {
-        Long id = saveReceived("모드 C 수정 시연 문의");
+        Long id = saveReceived("모드 C 수정 확인 문의");
         assertThat(currentStatusOf(id)).isEqualTo(InquiryStatus.RECEIVED);
 
-        // 제안 수정안(② 를 REQUIRES_NEW 로)의 효과를 템플릿으로 시연한다 — 운영 애노테이션은 무변경.
-        // REQUIRES_NEW 는 완료된 트랜잭션을 suspend 하고 새 물리 트랜잭션을 연다.
-        TransactionTemplate requiresNew = new TransactionTemplate(transactionManager);
-        requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-
+        // ⚠️ 감싸는 트랜잭션 템플릿이 없다 (TRI-96). 채택 전에는 여기서 REQUIRES_NEW 템플릿으로
+        // 효과만 시연했지만, 이제는 운영 빈을 그대로 부른다 — 모드 C 와 호출 모양이 완전히 같고
+        // 다른 것은 애노테이션뿐이다. 유실 0 이 나오면 그 애노테이션이 프록시를 탔다는 뜻이다.
         Throwable thrown = runInCommittedAfterCommitContext(id, () ->
-                requiresNew.executeWithoutResult(status ->
-                        classificationService.verifyAndPersist(id, needsReview(), rawResponse(), 1)));
+                classificationService.verifyAndPersist(id, needsReview(), rawResponse(), 1));
 
-        // 수정하면 예외가 나지 않는다
+        // 운영 애노테이션이 새 트랜잭션을 열므로 예외가 나지 않는다
         assertThat(thrown)
-                .as("새 트랜잭션이 열려 @Modifying 이 활성 트랜잭션 안에서 돈다")
+                .as("운영 REQUIRES_NEW 가 새 트랜잭션을 열어 @Modifying 이 활성 트랜잭션 안에서 돈다")
                 .isNull();
 
         // 정상 전이 + 검토가능 — 유실 0
@@ -284,7 +310,7 @@ class AsyncLossPreventionIT {
                 .as("수정 후에는 방치가 없어 stuck 으로도 안 잡힌다")
                 .isZero();
 
-        report("C'. 같은 문맥 + REQUIRES_NEW (수정 시연)",
+        report("C'. 같은 문맥 + REQUIRES_NEW (운영 애노테이션 · D-066 채택)",
                 currentStatusOf(id).name(), "LOW_CONFIDENCE 1건", 0L, "유실 없음 · 검토가능");
     }
 
@@ -389,5 +415,50 @@ class AsyncLossPreventionIT {
         // 한 줄 key=value — 로그 파서·CI 출력에서 정렬이 안 흐트러지고 grep/대조가 쉽다 (코드리뷰 반영).
         System.out.printf("[유실방지 taxonomy] %s | 상태=%s | 큐=%s | stuck=%d | 판정=%s%n",
                 mode, finalStatus, queue, stuck, note);
+    }
+
+    /**
+     * <b>모드 C 의 대조군 빈 — ②의 두 입구를 {@code REQUIRED} 로 되돌린다 (TRI-96 · D-066 채택).</b>
+     *
+     * <p>운영 클래스의 애노테이션이 {@code REQUIRES_NEW} 라도 <b>하위 클래스에서 오버라이드한
+     * 메서드의 애노테이션이 우선</b>하므로, 이 빈은 채택 전 동작을 그대로 낸다.
+     *
+     * <p><b>{@code @Primary} 를 붙이지 않는다.</b> 붙이면 모드 A 가 타는 운영 경로(리스너 → 재시도
+     * → {@code @Recover})까지 대조군으로 바뀌어, "운영이 이렇게 동작한다"는 단언이 거짓이 된다.
+     * 그래서 빈을 하나 <b>더</b> 등록하고 모드 C 만 이름으로 집어 쓴다.
+     */
+    @TestConfiguration
+    static class RequiredControlConfig {
+
+        static final String BEAN_NAME = "requiredControlClassificationService";
+
+        @Bean(BEAN_NAME)
+        ClassificationService requiredControlClassificationService(
+                InquiryRepository inquiryRepository,
+                InquiryClassificationResultRepository resultRepository,
+                InquiryReviewQueueRepository queueRepository,
+                ClassificationProperties properties,
+                AuditSamplingPolicy auditSamplingPolicy,
+                ApplicationEventPublisher eventPublisher,
+                StatsService statsService,
+                Clock clock) {
+            // REQUIRED = 스레드에 매달린 트랜잭션이 있으면 그것에 참여한다. 인라인 경로에는 ①의
+            // "이미 커밋된" 트랜잭션이 매달려 있어, 참여하려는 시도 자체가 유실이 된다.
+            return new ClassificationService(inquiryRepository, resultRepository, queueRepository,
+                    properties, auditSamplingPolicy, eventPublisher, statsService, clock) {
+                @Override
+                @Transactional(propagation = Propagation.REQUIRED)
+                public boolean verifyAndPersist(Long inquiryId, AiParsedClassification parsed,
+                        AiRawResponse raw, int attemptCount) {
+                    return super.verifyAndPersist(inquiryId, parsed, raw, attemptCount);
+                }
+
+                @Override
+                @Transactional(propagation = Propagation.REQUIRED)
+                public boolean persistReuse(Long inquiryId, CachedClassification reusable) {
+                    return super.persistReuse(inquiryId, reusable);
+                }
+            };
+        }
     }
 }
