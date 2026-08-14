@@ -68,7 +68,8 @@ happy-path 검사로는 못 잡는 별도 결함(C)이 있다"** 를 드러낸 �
 - **어떻게 확인**: `AiClassificationService.classify` 가 매번 `AiCallException` 을 던지게 하고, 실제
   접수 경로(`InquiryIngestService.receive`)로 넣어 `@Async` 파이프라인을 태웠다.
 - **실측**:
-  - 실제 재시도 **3회**(`classify_failed reason=API_ERROR attempts=3`), 접수→저장 **6.14s**
+  - 실제 재시도 **3회** — 테스트가 mock 호출 수를 `retryProperties.maxAttempts()` 와 **단언**한다(설정=실측 일치)
+  - 접수→저장 **6.14s** — **이번 실행의 1회 관측값(단언 아님)**. 벽시계라 실행마다 흔들린다. 재시도 간격의 엄밀한 측정은 측정 4(`ClassifyRetryMeasureIT`) 참조
   - 판정 `FAILED`(category·confidence 둘 다 null, D-022), 원문 잔존
   - 검토 큐에 `CLASSIFY_FAILED` **1건** → 사람이 볼 수 있다
   - **임계 시간을 넘겨도 `stuckReceived=0`** — 이 건은 "방치"가 아니라 "사람에게 넘어간" 것이다
@@ -192,6 +193,12 @@ wrk)는 안 썼다.** 이 결함에 대해 그것이 맞는 선택이다.
   `@Async` void 라 예외가 호출자 대신 비동기 예외 핸들러로 빠지기 때문이다. **호출부 관점에선 진짜
   "조용한" 유실**이고, 오직 `RECEIVED` 방치로만 드러난다 — "조용한 유실"이 이 실측으로 뒷받침된다.
 
+> **이 결함은 속도 문제와 같은 뿌리다 (김준현 리뷰 · PR #84 `api-response-time-improvement-options.md`
+> 2-1).** 대기줄이 차는 **그 순간** 접수가 느려지는 것과 문의가 사라지는 것이 **함께** 일어난다. 그래서
+> D-045 ⑤ 의 근거였던 *"느려지는 건 보이지만 사라지는 건 안 보인다"* 가 부하에서 깨진다 — 느려지면서
+> **동시에** 사라진다. 위 177/200 이 그걸 숫자로 보인다. (`REQUIRES_NEW` 는 사라짐만 없애지 느려짐은
+> 그대로 두므로, 속도는 측정 a 의 별도 몫이다.)
+
 ### 한계 — 숫자 옆에 둔다
 
 | 한계 | 내용 |
@@ -220,6 +227,12 @@ wrk)는 안 썼다.** 이 결함에 대해 그것이 맞는 선택이다.
 측정 C' 이 증명한 수정은 **②의 두 입구(`verifyAndPersist`·`persistReuse`)를 `REQUIRES_NEW` 로
 바꾸는 것**이다. 둘 다 같은 `persist()`(문제의 `@Modifying` 을 첫 문장으로 가진)를 부르므로,
 재사용 경로(`persistReuse`)도 대기줄 포화 인라인에서 같은 이음새에 걸린다 — 그래서 **둘 다** 바꾼다.
+
+> **검증 범위 (코드리뷰 반영)**: 결정적 재현·수정 시연은 **`verifyAndPersist` 로** 했다. `persistReuse`
+> 는 **같은 `persist()` 를 공유**하고(이음새는 그 첫 줄 `@Modifying` 에 있으며, 캐시 처리 차이는 그
+> *뒤*라 이음새와 무관하다) 부하 테스트의 `FixConfig` 도 두 입구를 함께 `REQUIRES_NEW` 로 감싸므로
+> **같은 수정이 적용된다.** 다만 `persistReuse` 경로 자체를 이음새로 **독립 재현한 테스트는 없다** —
+> 재사용 hit 을 인라인으로 태우려면 캐시(Redis) 준비가 필요해, 공유 경로 논거로 대신했다.
 
 ### 파일: `src/main/java/com/dingco/triage/service/ClassificationService.java`
 
