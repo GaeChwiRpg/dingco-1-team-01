@@ -7,6 +7,7 @@ import com.dingco.triage.domain.type.QueueStatus;
 import com.dingco.triage.support.MySqlTestContainer;
 import com.dingco.triage.support.ReviewQueueSeedSupport;
 import jakarta.persistence.EntityManagerFactory;
+import java.time.Instant;
 import java.util.stream.LongStream;
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -82,7 +83,7 @@ class ReviewQueueEntityGraphVsProjectionIT {
 
         // 워밍업 — 첫 호출의 커넥션 풀·쿼리 계획 캐시 초기화 비용이 비교를 왜곡하지 않게 한다.
         for (int i = 0; i < WARMUP_RUNS; i++) {
-            drainEntities(queueRepository.search(QueueStatus.PENDING, null, null, pageable));
+            drainEntities(queueRepository.search(QueueStatus.PENDING, null, null, 0L, Instant.EPOCH, pageable));
             queueRepository.searchProjected(QueueStatus.PENDING, null, null, pageable).getContent();
         }
 
@@ -94,7 +95,7 @@ class ReviewQueueEntityGraphVsProjectionIT {
         for (int i = 0; i < TIMED_RUNS; i++) {
             statistics.clear();
             long start = System.nanoTime();
-            lastEgPage = queueRepository.search(QueueStatus.PENDING, null, null, pageable);
+            lastEgPage = queueRepository.search(QueueStatus.PENDING, null, null, 0L, Instant.EPOCH, pageable);
             drainEntities(lastEgPage);
             egTimes[i] = (System.nanoTime() - start) / 1_000_000;
             egQueries += statistics.getPrepareStatementCount();

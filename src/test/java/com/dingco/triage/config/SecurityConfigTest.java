@@ -64,12 +64,15 @@ class SecurityConfigTest {
     private ReviewService reviewService;
 
     @MockBean
+    private com.dingco.triage.service.ReviewClaimService reviewClaimService;
+
+    @MockBean
     private PoliciesService policiesService;
 
     @BeforeEach
     void stubReviewQueue() {
         // 이 테스트가 재는 건 역할 필터링이지 조회 결과가 아니다 — 빈 페이지로 충분하다.
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt())).willReturn(Page.empty());
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt())).willReturn(Page.empty());
         // PATCH 매핑표 케이스(role=AGENT → 200)도 역할 필터링만 잰다 — 응답 바디는 검증 대상이 아니다.
         Inquiry inquiry = Inquiry.receive(1L, "문의합니다", Channel.WEB, "nk-1", Instant.now());
         ReflectionTestUtils.setField(inquiry, "id", 1L);

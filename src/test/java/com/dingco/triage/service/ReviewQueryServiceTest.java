@@ -6,9 +6,13 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import com.dingco.triage.config.ReviewClaimProperties;
 import com.dingco.triage.domain.repository.InquiryReviewQueueRepository;
 import com.dingco.triage.domain.type.QueueStatus;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,21 +26,30 @@ import org.springframework.data.domain.Sort;
  */
 class ReviewQueryServiceTest {
 
+    private static final Long AGENT_ID = 2L;
+    private static final Instant NOW = Instant.parse("2026-08-13T00:00:00Z");
+
     private final InquiryReviewQueueRepository repository = mock(InquiryReviewQueueRepository.class);
-    private final ReviewQueryService service = new ReviewQueryService(repository);
+    private final ReviewClaimProperties claimProperties =
+            new ReviewClaimProperties(Duration.ofMinutes(5), Duration.ofMinutes(1));
+    private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+    private final ReviewQueryService service = new ReviewQueryService(repository, claimProperties, clock);
 
     @Test
-    @DisplayName("createdAt ASC(오래된 순) 정렬을 실어 repository.search 로 그대로 위임한다")
+    @DisplayName("createdAt ASC(오래된 순) 정렬 + 선점 만료 기준시각을 실어 repository.search 로 그대로 위임한다")
     void searchDelegatesWithOldestFirstSort() {
         Instant from = Instant.parse("2026-08-01T00:00:00Z");
         Instant to = Instant.parse("2026-08-07T00:00:00Z");
-        given(repository.search(eq(QueueStatus.PENDING), eq(from), eq(to), org.mockito.ArgumentMatchers.any()))
+        Instant expectedClaimExpiryCutoff = NOW.minus(claimProperties.expiry());
+        given(repository.search(eq(QueueStatus.PENDING), eq(from), eq(to), eq(AGENT_ID),
+                eq(expectedClaimExpiryCutoff), org.mockito.ArgumentMatchers.any()))
                 .willReturn(Page.empty());
 
-        service.search(QueueStatus.PENDING, from, to, 2, 30);
+        service.search(QueueStatus.PENDING, from, to, AGENT_ID, 2, 30);
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(repository).search(eq(QueueStatus.PENDING), eq(from), eq(to), captor.capture());
+        verify(repository).search(eq(QueueStatus.PENDING), eq(from), eq(to), eq(AGENT_ID),
+                eq(expectedClaimExpiryCutoff), captor.capture());
         Pageable pageable = captor.getValue();
         assertThat(pageable.getSort())
                 .as("적체 방지가 목적이라 상담원이 오래된 항목부터 본다 — 정렬 축은 협상 대상이 아니다. "

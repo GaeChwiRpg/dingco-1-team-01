@@ -60,6 +60,9 @@ class ReviewQueueControllerTest {
     @MockBean
     private ReviewService reviewService;
 
+    @MockBean
+    private com.dingco.triage.service.ReviewClaimService reviewClaimService;
+
     private InquiryReviewQueueItem queueItem(String content, Long inquiryId, Long itemId,
             InquiryCategory suggestedCategory) {
         Inquiry inquiry = Inquiry.receive(5001L, content, Channel.WEB, "nk-1", NOW);
@@ -90,7 +93,7 @@ class ReviewQueueControllerTest {
     void responseExposesOnlyContractFields() throws Exception {
         InquiryReviewQueueItem item = queueItem("환불해주세요 010-1234-5678", 4471L, 902L,
                 InquiryCategory.RETURN_REFUND);
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt()))
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt()))
                 .willReturn(new PageImpl<>(List.of(item), PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/api/inquiry-review-queue")
@@ -114,7 +117,7 @@ class ReviewQueueControllerTest {
     void contentIsMaskedOnTheWayOut() throws Exception {
         InquiryReviewQueueItem item = queueItem("주문번호 20260803-771234 확인해주세요", 1L, 1L,
                 InquiryCategory.DELIVERY);
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt()))
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt()))
                 .willReturn(new PageImpl<>(List.of(item)));
 
         mockMvc.perform(get("/api/inquiry-review-queue")
@@ -127,7 +130,7 @@ class ReviewQueueControllerTest {
     @DisplayName("CLASSIFY_FAILED 항목은 suggestedCategory 가 null 로 그대로 나간다 — false 로 치환하지 않는다 (D-022)")
     void suggestedCategoryIsNullForClassifyFailed() throws Exception {
         InquiryReviewQueueItem item = queueItem("문의합니다", 5L, 6L, null);
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt()))
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt()))
                 .willReturn(new PageImpl<>(List.of(item)));
 
         mockMvc.perform(get("/api/inquiry-review-queue")
@@ -139,7 +142,7 @@ class ReviewQueueControllerTest {
     @Test
     @DisplayName("status 파라미터를 생략하면 PENDING 이 기본값이다")
     void defaultsToPendingStatus() throws Exception {
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt()))
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt()))
                 .willReturn(new PageImpl<>(List.of()));
 
         mockMvc.perform(get("/api/inquiry-review-queue")
@@ -147,7 +150,7 @@ class ReviewQueueControllerTest {
                 .andExpect(status().isOk());
 
         ArgumentCaptor<QueueStatus> statusCaptor = ArgumentCaptor.forClass(QueueStatus.class);
-        verify(reviewQueryService).search(statusCaptor.capture(), any(), any(), anyInt(), anyInt());
+        verify(reviewQueryService).search(statusCaptor.capture(), any(), any(), anyLong(), anyInt(), anyInt());
         assertThat(statusCaptor.getValue()).isEqualTo(QueueStatus.PENDING);
     }
 
@@ -189,7 +192,7 @@ class ReviewQueueControllerTest {
     void doesNotAcceptBlindQueryParameters() throws Exception {
         // 알 수 없는 쿼리 파라미터는 Spring MVC 가 조용히 무시한다 — 여기서 검증하는 건 그 값이
         // service 호출로 전달되지 않는다는 것이다(전달할 파라미터 자체가 컨트롤러 시그니처에 없다).
-        given(reviewQueryService.search(any(), any(), any(), anyInt(), anyInt()))
+        given(reviewQueryService.search(any(), any(), any(), anyLong(), anyInt(), anyInt()))
                 .willReturn(new PageImpl<>(List.of()));
 
         mockMvc.perform(get("/api/inquiry-review-queue")
@@ -201,7 +204,7 @@ class ReviewQueueControllerTest {
                 .andExpect(status().isOk());
 
         verify(reviewQueryService).search(org.mockito.ArgumentMatchers.eq(QueueStatus.PENDING),
-                any(), any(), anyInt(), anyInt());
+                any(), any(), anyLong(), anyInt(), anyInt());
     }
 
     @Test
@@ -308,5 +311,47 @@ class ReviewQueueControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CONCURRENT_UPDATE"))
                 .andExpect(jsonPath("$.reviewQueueItemId").value(902));
+    }
+
+    @Test
+    @DisplayName("선점 — 성공하면 id·status·claimedAt 을 반환한다 (TRI-93)")
+    void claimReturnsClaimedAt() throws Exception {
+        InquiryReviewQueueItem item = queueItem("환불해주세요", 4471L, 902L, InquiryCategory.RETURN_REFUND);
+        item.claim(7L, NOW);
+        given(reviewClaimService.claim(902L, 7L)).willReturn(item);
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902/claim")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(902))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.claimedAt").value(NOW.toString()));
+    }
+
+    @Test
+    @DisplayName("선점 — 남이 이미 선점 중이면 409 ALREADY_CLAIMED 가 그대로 응답으로 나간다 (배선 확인)")
+    void claimPropagatesAlreadyClaimedFromService() throws Exception {
+        given(reviewClaimService.claim(eq(902L), anyLong()))
+                .willThrow(new ConflictException(ConflictCode.ALREADY_CLAIMED, 902L, "다른 상담원이 이미 이 항목을 보고 있습니다."));
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902/claim")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_CLAIMED"))
+                .andExpect(jsonPath("$.reviewQueueItemId").value(902));
+    }
+
+    @Test
+    @DisplayName("선점 응답에는 claimedBy(누가)를 담지 않는다 — 본인 확인은 claimedAt 만으로 충분하다 (D-010 방향)")
+    void claimResponseDoesNotExposeClaimedBy() throws Exception {
+        InquiryReviewQueueItem item = queueItem("환불해주세요", 4471L, 902L, InquiryCategory.RETURN_REFUND);
+        item.claim(7L, NOW);
+        given(reviewClaimService.claim(902L, 7L)).willReturn(item);
+
+        mockMvc.perform(patch("/api/inquiry-review-queue/902/claim")
+                        .header("X-User-Id", "7").header("X-User-Role", "AGENT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claimedBy").doesNotExist())
+                .andExpect(jsonPath("$.agentId").doesNotExist());
     }
 }

@@ -223,6 +223,21 @@ classification:
   reuse:
     enabled: true
 
+# 검토 항목 선점 (TRI-93 · D-032).
+review:
+  claim:
+    # 짧으면 선점 의미가 없고, 길면 자리를 비운 상담원 때문에 큐가 그만큼 오래 막힌다 —
+    # ReviewClaimProperties 참조. 재보고 조정한다.
+    expiry: 5m
+    # expiry 보다 충분히 짧게 — 만료 후 최대 이 주기만큼 더 묶여 있을 수 있다.
+    #
+    # ⚠️ 이 값만 ISO-8601(PT1M) 표기다 — ReviewQueueClaimSweeper 의 @Scheduled(fixedDelayString=...)
+    # 가 같은 문자열을 그대로 읽는데, Spring 의 @Scheduled 파서는 "1m" 같은 스프링 부트 축약 표기를
+    # 못 읽고 ISO-8601 아니면 순수 밀리초 숫자만 받는다 — "1m" 을 두면 부팅 자체가
+    # NumberFormatException 으로 실패한다(실제 재현 확인). expiry 는 ReviewClaimProperties 의
+    # Duration 바인딩에만 쓰여 두 표기 다 되지만, 여기는 @Scheduled 가 같이 읽으므로 맞춰야 한다.
+    sweep-interval: PT1M
+
 logging:
   level:
     com.dingco.triage: DEBUG

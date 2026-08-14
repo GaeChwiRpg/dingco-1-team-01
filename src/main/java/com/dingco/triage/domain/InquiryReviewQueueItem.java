@@ -16,6 +16,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import org.springframework.data.annotation.CreatedDate;
@@ -64,6 +65,17 @@ public class InquiryReviewQueueItem {
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
+
+    /**
+     * 선점자 (TRI-93 · D-032). {@code agentId} 와 별개 필드다 — {@code agentId} 는
+     * <b>확정한</b> 사람(③이 끝나야 채워짐)이고, 이건 <b>지금 붙들고 있는</b> 사람(확정 전에도
+     * 채워짐)이다. 확정한 사람과 선점한 사람이 다를 수 있다(선점 만료 후 다른 사람이 확정).
+     */
+    @Column(name = "claimed_by")
+    private Long claimedBy;
+
+    @Column(name = "claimed_at")
+    private Instant claimedAt;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -143,6 +155,14 @@ public class InquiryReviewQueueItem {
         return resolvedAt;
     }
 
+    public Long getClaimedBy() {
+        return claimedBy;
+    }
+
+    public Instant getClaimedAt() {
+        return claimedAt;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }
@@ -160,5 +180,41 @@ public class InquiryReviewQueueItem {
         this.status = QueueStatus.RESOLVED;
         this.agentId = Objects.requireNonNull(agentId, "agentId");
         this.resolvedAt = Objects.requireNonNull(resolvedAt, "resolvedAt");
+    }
+
+    /**
+     * 선점 가능 여부 (TRI-93 · D-032). 셋 중 하나면 선점(연장 포함)할 수 있다 —
+     * 안 잡혀 있거나, 본인이 이미 잡고 있거나(연장), 남이 잡았지만 만료됐거나.
+     *
+     * <p>동시성 방어는 여기서 하지 않는다 — {@code resolve} 와 같은 방식으로, 호출부가
+     * {@code saveAndFlush} 로 커밋 시점에 {@code @Version} 불일치를 잡는다. 새 잠금 수단을
+     * 만들지 않고 이미 있는 낙관적 락에 얹는다 — 이 테이블에 이미 검증된 동시성 장치가 있는데
+     * (`evidence/concurrent-review-confirm.md`, 40/40 재현) 다른 수단을 또 두면 "경합마다
+     * 수단이 다르다"(D-007)는 원칙이 근거 없이 늘어난다.
+     */
+    public boolean isClaimAvailable(Long agentId, Instant now, Duration expiry) {
+        if (claimedBy == null) {
+            return true;
+        }
+        if (claimedBy.equals(agentId)) {
+            return true;
+        }
+        return claimedAt != null && claimedAt.isBefore(now.minus(expiry));
+    }
+
+    public boolean isClaimedBy(Long agentId) {
+        return claimedBy != null && claimedBy.equals(agentId);
+    }
+
+    /** 선점(또는 본인 재선점 = 연장). 가능 여부 검사는 {@link #isClaimAvailable} 로 호출부가 먼저 한다. */
+    public void claim(Long agentId, Instant now) {
+        this.claimedBy = Objects.requireNonNull(agentId, "agentId");
+        this.claimedAt = Objects.requireNonNull(now, "claimedAt");
+    }
+
+    /** 선점 해제 — 만료 스윕이 부른다. */
+    public void releaseClaim() {
+        this.claimedBy = null;
+        this.claimedAt = null;
     }
 }
