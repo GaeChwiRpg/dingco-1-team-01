@@ -1906,4 +1906,21 @@
 - **범위 밖**: 「종료 중 + 대기줄 포화」 창(실행기 종료 중 `CallerRunsPolicy` 가 조용히 버림)은 이 수정으로 안 닫힌다 — 나중에 할 것 E.
 - **재평가**: 채택 시 애노테이션판 통합 테스트를 운영 코드와 함께 돌려 확정한다(시연은 트랜잭션 템플릿이라 DB 결과는 같지만 애노테이션 경로 그 자체는 채택 티켓에서 확인).
 
-<!-- 다음 결정 추가 시 D-067 부터 -->
+### D-067. D-032(검토 항목 선점) 구현 완료 (TRI-93, PR #86)
+
+- **일자**: 2026-08-14
+- **상태**: 채택 (5일 범위 안 구현 완료)
+
+**한 줄로**: D-032 가 "Phase 3 최우선"으로 미뤄뒀던 검토 항목 선점(claim)을 구현했다. 낙관적 락(D-021, 사후 감지)에 선점(사전 예방)을 더해 D-007 의 "경합 성격이 다르면 수단도 다르다"를 다시 주장할 수 있는 상태가 됐다.
+
+- **배경**: D-032 는 선택지 1(선점)을 채택하면서 착수 시점만 "여유가 생기면"으로 미뤄뒀다. `service/`·`api/` 가 예정보다 일찍 끝나 이번에 착수했다.
+- **구현 범위**:
+  - `PATCH /api/inquiry-review-queue/{id}/claim` — 선점·연장. `isClaimAvailable` 로 사전 판단 + 기존 `saveAndFlush` 의 `@Version` 으로 커밋 시점 충돌 감지 — D-021 의 확정(`resolve`) 배선을 그대로 재사용해 **새 동시성 수단을 만들지 않았다**
+  - 만료 스윕(`ReviewQueueClaimSweeper`, `review.claim.expiry` 기본 5분) — `@Version` 을 거치지 않는 벌크 UPDATE. 스윕은 "누가 이겼나"를 가리는 경합이 아니라 청소이므로, 경계에서 재선점된 행을 실수로 같이 풀어도 "다시 선점하면 그만"이라 낙관적 락으로 막을 위험성이 아니라고 판단
+  - D-032 가 미리 건 조건 — **선점 정보가 blind 를 깨지 않는지(D-010)** — 값을 가리는 대신 **목록에서 아예 제외**하는 쪽으로 통과시켰다. 남이 선점 중인 항목은 목록에서 빠지고, 응답에는 원본값 대신 `claimedByMe` boolean 만 노출
+  - 컬럼 2개(`claimed_by`, `claimed_at`) + 인덱스(`idx_irq_status_claimed_at`, Flyway V3) — `EXPLAIN` 실측으로 이 인덱스가 목록 조회가 아니라 스윕 전용으로 쓰임을 확인(`evidence/query-plan-review-queue.md`)
+- **재평가 조항 결과**: D-032 는 측정 7ⓑ 에서 `CONCURRENT_UPDATE` 가 실제로 관측되면 우선순위를 올리기로 했었다. `evidence/concurrent-review-confirm.md` 가 40/40 = 100% 를 확인했고, 이번 PR 은 그 신호를 받아 착수한 것이다.
+- **영향**: `API-CONTRACT.md` v1.10(신규 endpoint, `claimedByMe` 필드, 409 `ALREADY_CLAIMED`). 계약 A/B/C 불변 → 3자 합의 불필요.
+- **남은 것**: CodeRabbit actionable "RESOLVED 상태 항목도 선점 가능" 미반영(선점 시 `status == PENDING` 검사 추가 여부 결정 필요) + 테스트 커버리지 gap 2건(`SecurityConfigTest` claim 경로 역할 검증, `ReviewQueueControllerTest` `claimedByMe` 필드 검증) 미반영.
+
+<!-- 다음 결정 추가 시 D-068 부터 -->
