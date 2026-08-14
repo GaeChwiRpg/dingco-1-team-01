@@ -920,6 +920,24 @@ compare_labels.py  틀린 건을 사람 답과 대조한다   AI 를 안 부른�
 
 - **대기줄이 넘치면 분류가 유실된다.** 1000건을 한꺼번에 던지자 대기줄(50)이 넘쳐 `CallerRunsPolicy` 가 분류를 **①의 `AFTER_COMMIT` 스레드에서 인라인 실행**했고, 거기서 ②의 `@Modifying` 이 "no transaction is in progress" 로 죽어 **문의 1건이 유실**됐다(`RECEIVED` 방치). D-031(①·② 분리)×D-047(CallerRunsPolicy) 상호작용. **이 시스템이 막으려는 「조용히 유실」을 스스로 만드는 구멍**이라 `@techietaek` PAAR 카드(문의 유실 방지)와 직결된다. 소관은 P2(김준현). 지금은 `evidence/measurement-6-11-actual.md` 에 기록만 하고, 수정(예: ②를 `REQUIRES_NEW`)은 별도 티켓으로 뺀다.
 
+### 위 결함을 이어받았다 — 비동기 유실 방지 PAAR (이용택, `@techietaek` 카드)
+
+> 바로 위 「측정이 드러낸 결함」을 이 카드의 Problem 으로 이어받아, **발견에서 그친 것을 근본 원인 규명 + 수정 증명까지** 끌고 갔다. 운영 코드는 한 줄도 안 바꿨다(TRI-86 선례).
+
+- **세 실패 모드를 한 자리에서 재현** (`AsyncLossPreventionIT`, 신규 · 3건). 겉은 "분류 안 됨"으로 같지만 손실 의미가 다르다 — **복구성 × 관측성** 으로 등급을 매겼다.
+  - **A. AI 3회 실패** → `FAILED` 기록 + `CLASSIFY_FAILED` 큐, stuck 0 → **검토가능** (유실 0)
+  - **B. ② 저장 실패** → 롤백 + `RECEIVED`, stuck 1 → 관측됨 (측정 3 인용, 재측정 아님)
+  - **C. 대기줄 포화 인라인** → `no transaction is in progress`, `RECEIVED` 방치, stuck 1(뒤늦게) → **조용한 유실**
+  - **C'. C + `REQUIRES_NEW`** → 정상 전이 + `LOW_CONFIDENCE` 큐, stuck 0 → **검토가능** (유실 0)
+- **근본 원인은 CallerRunsPolicy 가 아니라 트랜잭션 이음새다.** 부하는 트리거일 뿐, 원인은 "완료된 `AFTER_COMMIT` 문맥에서 ②의 REQUIRED `@Modifying` 을 돌리는 것". 그래서 **부하 없이** `afterCommit()` 콜백에서 ②를 호출해 결정적으로 재현했다 — 예외 메시지가 측정 6·11 부하 실측과 정확히 일치.
+- **버그는 D-031 에도 D-047 에도 없다. 둘이 만나는 이음새에 있다** — 부분의 정합성이 합성의 정합성을 보장하지 않는다.
+- **수정 증명(운영 미적용)** — `REQUIRES_NEW` 트랜잭션 템플릿으로 효과만 시연(모드 C'). 제안 코드 diff·대안 3종은 **D-066**(제안·채택 대기) + `evidence/async-loss-prevention.md`. 채택은 P2(김준현) 협의 후.
+- **Result gate 의 판단** — gate 세 항목(원문0·검토가능·**stuck 관측 여부**)은 **모드 A 한 입력에서 다 확인된다**(원문 그대로·`CLASSIFY_FAILED` 큐·임계 넘겨도 stuck 0). `AsyncLossPreventionIT` 모드 A 가 셋을 한 번에 assert. 배타적인 것은 gate 안이 아니라 **모드 A(검토가능·stuck 0) vs 모드 C(검토가능X·stuck 1)** 사이다.
+- **한계** — 운영 미적용(답은 "해결"이 아니라 "규명·증명·채택 대기") · 「종료 중 창」은 이 수정으로도 안 닫힘(나중에 할 것 E) · 1회 실행.
+- **부하 실측으로 대량 확인(`SeamLoadIT`)** — 실행기를 포화(worker 1·큐 1)시켜 200건을 흘렸더니 현행(REQUIRED) **유실 177**, `REQUIRES_NEW`(테스트 전용 빈) **유실 0**. 유실된 177건은 `receive` 예외 0 — 호출부는 아무것도 못 받는 **진짜 조용한 유실**. hey/k6 가 아니라 JUnit 통합 테스트다(결함이 HTTP 가 아니라 서비스·트랜잭션 계층 · 유실은 DB 상태로 셈 · 응답시간 아닌 유실 건수 측정이라 hey/wrk 규칙 대상 아님). ⚠️ 88.5% 는 극단 포화값이지 운영 유실률 아님(자연 상태 ≈1/1000). 상세 `evidence/async-loss-prevention.md` 「부하 측정」.
+- 테스트 **339건** 통과(실패 0 · skip 5, 본인 실측). PAAR 카드 Result·체크박스 4개 반영.
+
+**다음**: **D-066 채택** — 운영에 `REQUIRES_NEW` 적용 + 애노테이션판 통합 테스트, 별도 티켓(P2) + 김준현 협의.
 ### 개인 — 김준현 (P2) — 측정 2 + 문서 정리
 
 - **① 측정 2 실측 (TRI-95, PR #79)** — 50건 중 **23건이 사람에게 갔다.** 사유별 몫 · 세는 방법 두 가지 검산 · 같은 신호 두 번에도 큐 1건(D-049) · 못 읽은 건이 `0` 아닌 `null`(D-022) · **값 검증 4종이 기준값 비교보다 앞인지**(D-034) 까지 한 문서에 담았다 (`evidence/measurement-2-review-queue.md`).
