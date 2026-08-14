@@ -1916,9 +1916,9 @@
 - **배경**: D-032 는 선택지 1(선점)을 채택하면서 착수 시점만 "여유가 생기면"으로 미뤄뒀다. `service/`·`api/` 가 예정보다 일찍 끝나 이번에 착수했다.
 - **구현 범위**:
   - `PATCH /api/inquiry-review-queue/{id}/claim` — 선점·연장. `isClaimAvailable` 로 사전 판단 + 기존 `saveAndFlush` 의 `@Version` 으로 커밋 시점 충돌 감지 — D-021 의 확정(`resolve`) 배선을 그대로 재사용해 **새 동시성 수단을 만들지 않았다**
-  - 만료 스윕(`ReviewQueueClaimSweeper`, `review.claim.expiry` 기본 5분) — `@Version` 을 거치지 않는 벌크 UPDATE. 스윕은 "누가 이겼나"를 가리는 경합이 아니라 청소이므로, 경계에서 재선점된 행을 실수로 같이 풀어도 "다시 선점하면 그만"이라 낙관적 락으로 막을 위험성이 아니라고 판단
+  - **만료 스윕(`ReviewQueueClaimSweeper`, 기본 만료 시간 5분)**은 오래된 선점을 주기적으로 해제하는 청소 작업이다. 이 작업은 `@Version`을 사용하지 않는 벌크 UPDATE로 처리한다. 스윕은 두 요청 중 누가 확정에 성공했는지를 결정하는 경합 제어가 아니라, 만료된 선점을 정리하는 작업이므로 `@Version`으로 별도 충돌 방어를 하지 않기로 했다. 다만 스윕 시점과 재선점 시점이 겹치면, 이미 다른 상담원이 작업 중인 항목의 선점 정보가 해제될 가능성은 남아 있다. 이 경우 다른 상담원이 작업하던 내용이 버려질 수 있으므로, 이는 현재 구조의 잔여 위험으로 남겨둔다
   - D-032 가 미리 건 조건 — **선점 정보가 blind 를 깨지 않는지(D-010)** — 값을 가리는 대신 **목록에서 아예 제외**하는 쪽으로 통과시켰다. 남이 선점 중인 항목은 목록에서 빠지고, 응답에는 원본값 대신 `claimedByMe` boolean 만 노출
-  - 컬럼 2개(`claimed_by`, `claimed_at`) + 인덱스(`idx_irq_status_claimed_at`, Flyway V3) — `EXPLAIN` 실측으로 이 인덱스가 목록 조회가 아니라 스윕 전용으로 쓰임을 확인(`evidence/query-plan-review-queue.md`)
+  - 컬럼 2개(`claimed_by`, `claimed_at`) + 인덱스(`idx_irq_status_claimed_at`, Flyway V3) — `EXPLAIN` 실측으로 이 인덱스가 목록 조회가 아니라 스윕 전용으로 쓰임을 확인(`evidence/query-plan-review-queue.md` — 스윕 쿼리와 목록 조회 쿼리의 실행 계획을 나란히 비교)
 - **재평가 조항 결과**: D-032 는 측정 7ⓑ 에서 `CONCURRENT_UPDATE` 가 실제로 관측되면 우선순위를 올리기로 했었다. `evidence/concurrent-review-confirm.md` 가 40/40 = 100% 를 확인했고, 이번 PR 은 그 신호를 받아 착수한 것이다.
 - **영향**: `API-CONTRACT.md` v1.10(신규 endpoint, `claimedByMe` 필드, 409 `ALREADY_CLAIMED`). 계약 A/B/C 불변 → 3자 합의 불필요.
 - **남은 것**: CodeRabbit actionable "RESOLVED 상태 항목도 선점 가능" 미반영(선점 시 `status == PENDING` 검사 추가 여부 결정 필요) + 테스트 커버리지 gap 2건(`SecurityConfigTest` claim 경로 역할 검증, `ReviewQueueControllerTest` `claimedByMe` 필드 검증) 미반영.

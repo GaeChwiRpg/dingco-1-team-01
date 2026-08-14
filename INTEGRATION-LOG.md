@@ -987,7 +987,7 @@ compare_labels.py  틀린 건을 사람 답과 대조한다   AI 를 안 부른�
   - 만료 스윕(`ReviewQueueClaimSweeper`, 기본 5분) — 벌크 UPDATE, `@Version` 미적용(의도적, 경계 사건의 위험이 낮다고 판단)
   - blind 규칙(D-010)을 선점 필드까지 확장 — 값을 가리는 대신 목록에서 제외, 응답엔 `claimedByMe` boolean 만
   - 컬럼 2개(`claimed_by`·`claimed_at`) + 인덱스(V3) — `EXPLAIN` 실측으로 새 인덱스가 목록 조회가 아니라 스윕 전용임을 확인(`evidence/query-plan-review-queue.md`)
-  - 동시성 재현 테스트 `ReviewClaimConcurrencyIT` — `CyclicBarrier` 로 MySQL 40회 재현, `SUCCESS` 1·`CONCURRENT_UPDATE` 1로 매번 갈리고 500 에러 0건
+  - 동시성 재현 테스트 `ReviewClaimConcurrencyIT` — `CyclicBarrier` 로 MySQL 40회 재현, `SUCCESS` 1·`CONCURRENT_UPDATE` 1로 매번 갈리고 500 에러 0건 (실행 환경: MySQL 8.0, 격리 수준은 기본값(REPEATABLE READ)·명시적 지정 없음. 재현: `./gradlew test --tests "*.ReviewClaimConcurrencyIT"` — 별도 evidence 파일 없이 테스트 클래스 자체가 근거)
   - CodeRabbit actionable "RESOLVED 상태 항목도 선점 가능" + 테스트 커버리지 gap 2건(`SecurityConfigTest`·`ReviewQueueControllerTest`) 미반영
 
 ### 다음
