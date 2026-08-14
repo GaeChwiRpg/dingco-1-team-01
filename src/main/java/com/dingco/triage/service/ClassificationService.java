@@ -23,6 +23,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -43,6 +44,26 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p><b>이 트랜잭션은 ①(접수)과 분리된 채로 돈다 (D-031).</b> 여기서 실패해도 ①은 이미 커밋돼
  * 있어야 한다 — 롤백되면 고객이 받은 접수 확인이 거짓말이 된다. 대신 문의가 {@code RECEIVED} 로
  * 방치되므로 {@code stuckReceived} 로 드러낸다 (D-017).
+ *
+ * <p><b>그 분리를 애노테이션으로 못박는다 — 두 입구 모두 {@code REQUIRES_NEW} 다 (D-066 채택).</b>
+ * 기본값({@code REQUIRED})이면 <b>스레드에 이미 매달린 트랜잭션이 있을 때 그것에 참여</b>하는데,
+ * 대기줄이 차서 {@code CallerRunsPolicy} 가 분류를 접수 스레드에서 인라인 실행하면(D-047) 그
+ * 스레드에는 <b>①의 이미 커밋된 트랜잭션</b>이 매달려 있다. 참여할 수 없는 것에 참여하려다
+ * 첫 문장인 상태 전이 UPDATE 가 {@code no transaction is in progress} 로 죽고, <b>판정 행도 큐
+ * 항목도 없이 문의가 {@code RECEIVED} 로 방치된다.</b> {@code AiCallException} 이 아니라 재시도
+ * 대상도 아니어서 아무도 다시 태우지 않는다 — 측정 6·11 이 1000건에서 1건, 부하 실측이 포화
+ * 200건에서 177건을 이렇게 잃었다.
+ *
+ * <p>{@code REQUIRES_NEW} 는 매달린 것을 잠시 밀어두고(suspend) <b>자기 트랜잭션을 새로 연다.</b>
+ * 정상 비동기 경로에는 애초에 매달린 트랜잭션이 없어 {@code REQUIRED} 와 <b>동작이 같다</b> —
+ * 달라지는 것은 인라인 경로 하나뿐이다. 이는 D-031 의 "①·② 분리"를 <b>어떤 경우에도</b> 지키게
+ * 만드는 방어이고, D-047 이 「버리지 않고 떠안기」를 고른 근거였던 <b>"느려지는 건 보이지만
+ * 사라지는 건 안 보인다"</b> 를 되돌린다 — 조용한 유실을 보이는 느려짐으로 바꾼다.
+ *
+ * <p>⚠️ <b>여기를 {@code REQUIRED} 로 되돌리면 유실이 다시 시작된다.</b> 그리고 평소 테스트로는
+ * 안 보인다 — 대기줄이 포화돼야만 나타난다. 회귀를 잡는 자리는 {@code SeamLoadIT}(부하) 와
+ * {@code AsyncLossPreventionIT}(단건) 이고, 둘 다 <b>REQUIRED 를 강제한 대조군</b>을 함께 들고
+ * 있으므로 이 애노테이션이 사라지면 실패한다.
  *
  * <p><b>기준값 비교는 값 검증 뒤에 온다 (D-034).</b> 순서가 뒤집히면 확신도 {@code 1.5} 짜리가
  * 자동 확정을 통과한 뒤에 걸러지고, 그 건은 <b>자동 확정되면서 동시에 신뢰도 구간 집계에서
@@ -104,7 +125,7 @@ public class ClassificationService {
      * @param attemptCount 실제 시도 횟수. {@code @Retryable} 이 회수하고 있는지의 근거다 (D-022 재평가)
      * @return 저장했으면 {@code true}. <b>{@code false} 면 이미 처리된 문의</b>라 아무것도 하지 않았다
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean verifyAndPersist(Long inquiryId, AiParsedClassification parsed,
             AiRawResponse raw, int attemptCount) {
         // 값 검증을 통과한 것만 기준값과 비교한다 (D-034)
@@ -137,6 +158,11 @@ public class ClassificationService {
      * 이것은 <b>새 트랜잭션이 아니라 ②의 다른 입구</b>다 — 안쪽 로직({@link #persist})을 그대로
      * 공유하고 상태 전이·감사 규칙도 같다. <b>근거는 D-063 에 있다</b> — PR 본문에만 적으면
      * 시간이 지났을 때 코드와 함께 읽히지 않는다 (CodeRabbit 지적).
+     *
+     * <p><b>여기도 {@code REQUIRES_NEW} 다 (D-066 채택).</b> 재사용 경로는 AI 를 부르지 않아 빠르게
+     * 끝나므로 <b>대기줄에 쌓이기보다 인라인으로 떨어질 일이 오히려 잦다</b> — 한쪽만 바꾸면
+     * 재사용 건에서 같은 유실이 그대로 남는다. 두 입구는 같은 {@link #persist} 를 공유하므로
+     * 전파 방식도 같아야 한다.
      *
      * @param reusable 재사용할 답. {@code sourceResultId} 는 <b>원본</b> 결과 id 다 — 재사용 행
      *                 자신의 id 가 아니다. 그 보장은 조회 쪽이 한다 (체인 금지, D-033)
