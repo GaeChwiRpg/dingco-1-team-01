@@ -24,6 +24,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -51,7 +52,18 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>부하를 만드는 법</b>: 실행기를 worker 1 · 대기줄 1 로 줄이고, AI mock 을 100ms 재우면
  * 워커가 붙잡혀 대기줄이 넘친다 → 접수 스레드가 분류를 인라인 실행 → 이음새. 유실은 DB 상태
  * (`status=RECEIVED` 잔존)로 센다 — 예외 전파 여부와 무관한 지상 진실이다.
+ *
+ * <p>공통 부트 설정(작은 실행기)은 여기 base 에 두고, 두 하위 클래스는 {@code @Import} 만 달리한다
+ * — 수정 전은 실 운영 빈, 수정 후는 {@code REQUIRES_NEW} 빈(코드리뷰 반영: 중복 제거).
  */
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+        "classification.async.core-size=1",
+        "classification.async.max-size=1",
+        "classification.async.queue-capacity=1",
+        "classification.async.await-termination=15s"
+})
 abstract class SeamLoadBase {
 
     protected static final int TOTAL = 200;
@@ -146,23 +158,18 @@ abstract class SeamLoadBase {
     }
 }
 
-@SpringBootTest
-@ActiveProfiles("test")
 @Import(com.dingco.triage.support.MySqlTestContainer.class)
-@TestPropertySource(properties = {
-        "classification.async.core-size=1",
-        "classification.async.max-size=1",
-        "classification.async.queue-capacity=1",
-        "classification.async.await-termination=15s"
-})
 class SeamLoadRequiredIT extends SeamLoadBase {
 
     /**
      * <b>이 테스트는 실제 운영 빈(REQUIRED)을 쓴다.</b> D-066 을 채택해 운영 ②를 {@code REQUIRES_NEW}
      * 로 바꾸면 유실이 0 이 되어 아래 "유실>0" 단언이 깨진다 — <b>채택 시 이 테스트를 갱신/삭제</b>한다
      * (D-066 채택 티켓의 완료 조건). 의도된 커플링이다.
+     *
+     * <p><b>3회 반복</b>({@code @RepeatedTest})한다 — 문서가 "수정 전 건수는 170~190대로 흔들린다"고
+     * 밝혔으므로, "유실>0" 이 스케줄링에 흔들리지 않고 안정적인지 반복으로 본다 (코드리뷰 반영).
      */
-    @Test
+    @RepeatedTest(3)
     void 수정_전_REQUIRED_는_부하에서_유실이_발생한다() throws Exception {
         LoadResult r = runLoad();
         report("수정 전 (REQUIRED · 현행 운영)", r);
@@ -172,15 +179,7 @@ class SeamLoadRequiredIT extends SeamLoadBase {
     }
 }
 
-@SpringBootTest
-@ActiveProfiles("test")
 @Import({com.dingco.triage.support.MySqlTestContainer.class, SeamLoadRequiresNewIT.FixConfig.class})
-@TestPropertySource(properties = {
-        "classification.async.core-size=1",
-        "classification.async.max-size=1",
-        "classification.async.queue-capacity=1",
-        "classification.async.await-termination=15s"
-})
 class SeamLoadRequiresNewIT extends SeamLoadBase {
 
     @Test
@@ -206,6 +205,7 @@ class SeamLoadRequiresNewIT extends SeamLoadBase {
                 ApplicationEventPublisher eventPublisher,
                 StatsService statsService,
                 Clock clock) {
+            // REQUIRES_NEW = 매달린(커밋된) 트랜잭션을 잠시 suspend 하고 새 물리 트랜잭션을 강제로 연다.
             return new ClassificationService(inquiryRepository, resultRepository, queueRepository,
                     properties, auditSamplingPolicy, eventPublisher, statsService, clock) {
                 @Override

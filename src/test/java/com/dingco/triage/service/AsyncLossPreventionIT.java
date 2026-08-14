@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
 import com.dingco.triage.config.ClassificationProperties;
+import com.dingco.triage.config.ClassifyRetryProperties;
 import com.dingco.triage.config.MonitoringProperties;
 import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.InquiryClassificationResult;
@@ -123,6 +124,9 @@ class AsyncLossPreventionIT {
     private ClassificationProperties classificationProperties;
 
     @Autowired
+    private ClassifyRetryProperties retryProperties;
+
+    @Autowired
     private MonitoringProperties monitoringProperties;
 
     @Autowired
@@ -163,6 +167,13 @@ class AsyncLossPreventionIT {
 
         // 비동기 분류가 판정 행을 남길 때까지 기다린다.
         InquiryClassificationResult result = awaitResult(id);
+
+        // "AI 3회 실패"의 근거를 이 테스트가 직접 센다 — mock 이 실제로 몇 번 불렸는지가 유일한 사실이다
+        // (코드리뷰 반영: FAILED 만 보고 재시도 횟수를 단언 안 하면 "3회"가 이 테스트로 검증되지 않는다)
+        int actualCalls = org.mockito.Mockito.mockingDetails(aiClassificationService).getInvocations().size();
+        assertThat(actualCalls)
+                .as("재시도가 설정한 횟수만큼 실제로 걸렸는가")
+                .isEqualTo(retryProperties.maxAttempts());
 
         // 판정은 FAILED, 두 값 모두 null (D-022)
         assertThat(result.getVerdict()).isEqualTo(Verdict.FAILED);
@@ -307,6 +318,7 @@ class AsyncLossPreventionIT {
                 }
             });
         });
+        // null = afterCommit 안에서 action 이 예외를 안 던졌다는 뜻 = "정상"(모드 C' 가 기대하는 값).
         return captured.get();
     }
 
@@ -374,13 +386,8 @@ class AsyncLossPreventionIT {
      * 값 자체는 안 남기므로, taxonomy 표의 각 줄을 여기서 눈으로 확인한다.
      */
     private void report(String mode, String finalStatus, String queue, long stuck, String note) {
-        System.out.printf("""
-
-                [유실방지 taxonomy] %s
-                  최종 상태  : %s
-                  검토 큐    : %s
-                  stuck      : %d
-                  판정        : %s
-                %n""", mode, finalStatus, queue, stuck, note);
+        // 한 줄 key=value — 로그 파서·CI 출력에서 정렬이 안 흐트러지고 grep/대조가 쉽다 (코드리뷰 반영).
+        System.out.printf("[유실방지 taxonomy] %s | 상태=%s | 큐=%s | stuck=%d | 판정=%s%n",
+                mode, finalStatus, queue, stuck, note);
     }
 }
