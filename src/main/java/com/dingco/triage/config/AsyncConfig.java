@@ -5,6 +5,7 @@ import io.sentry.Sentry;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
@@ -35,25 +36,21 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  *       모르는" 사각지대의 비동기 판이다 (ⓓ)
  * </ul>
  *
- * <p><b>대기줄이 차면 버리지 않고 접수한 쪽이 대신 처리한다</b> ({@link ThreadPoolExecutor.CallerRunsPolicy},
- * D-045 ⑤). 그러면 AI 가 밀릴 때 접수 API 도 같이 느려지는데, 그걸 감수하는 이유는 하나다 —
- * <b>느려지는 건 보이지만 사라지는 건 안 보인다.</b> 이 선택의 대가는 측정 a 에 그대로 나타나므로
- * 잴 때 대기줄 상태를 함께 기록한다.
+ * <p><b>대기줄이 차면 접수한 쪽을 막지 않고 그냥 버린다</b> ({@link DeferToReclassifyPolicy},
+ * D-069 — D-045 ⑤ 를 뒤집음). 예전엔 여기서 {@link ThreadPoolExecutor.CallerRunsPolicy} 로
+ * 접수 스레드가 AI 호출을 <b>대신 떠맡았다</b> — "버리면 문의가 조용히 사라진다"는 게 이유였는데,
+ * 그 대가로 대기줄이 찰 때마다 접수 API 가 AI 호출 시간만큼 느려졌다(TRI-74 지연의 실제 원인).
  *
- * <p>⚠️ <b>단 「버리지 않는다」에는 예외가 하나 있고, 감추지 않는다</b> (AI 리뷰 지적 → JDK
- * 바이트코드로 확인). {@code CallerRunsPolicy} 는 실행기가 <b>이미 내려가는 중</b>이면
- * 작업을 실행하지 않고 <b>조용히 버린다</b> — 구현이 {@code if (!e.isShutdown()) r.run();} 이라
- * 종료 중에는 아무 일도 하지 않고 반환한다. 예외도 로그도 없다.
+ * <p><b>지금은 버려도 사라지지 않는다.</b> 문의는 트랜잭션 ①에서 이미 {@code RECEIVED} 로
+ * 커밋돼 있고, {@link com.dingco.triage.service.event.StuckInquiryReclassifyScheduler}
+ * (TRI-94)가 threshold 이상 머문 {@code RECEIVED} 문의를 주기적으로 다시 태운다. 그래서
+ * "버리지 않는다"는 목표를 <b>접수 스레드를 막아서</b>가 아니라 <b>나중에 회수해서</b>
+ * 달성하는 쪽으로 옮겼다 — 접수 API 는 대기줄 상태와 무관하게 항상 빠르게 반환한다.
  *
- * <pre>
- * 평상시   대기줄 참 → 접수 스레드가 대신 실행       (안 버림 ✅)
- * 종료 중  대기줄 참 → <b>아무 일도 안 하고 반환</b>       (버림 ❌)
- * </pre>
- *
- * <p>그래서 「종료 중 + 대기줄 포화」가 겹치는 짧은 창에서는 유실이 가능하다. 이 창을 없애려면
- * 정책을 직접 만들어 종료 중에는 <b>거부 예외를 던져 호출부가 알게</b> 해야 하는데, 지금은
- * <b>범위 밖으로 두고 드러내는 쪽</b>을 택했다 — 그 유실은 문의가 {@code RECEIVED} 로 남아
- * {@code stuckReceived} 에 나타난다 (D-017). 「나중에 할 것」 E 가 실제로 없애는 항목이다.
+ * <p>이 교체가 없애는 유실도 있다. 예전 {@code CallerRunsPolicy} 는 실행기가 <b>이미 내려가는
+ * 중</b>이면 {@code if (!e.isShutdown()) r.run();} 구현 탓에 작업을 실행하지 않고 예외도 로그도
+ * 없이 조용히 버렸다 — "종료 중 + 대기줄 포화" 가 겹치는 창에서 유실이 났다. 새 정책은 애초에
+ * 모든 거부를 로그로 남기고 회수는 스케줄러에 맡기므로 이 창이 사라진다.
  *
  * <p><b>{@code @Async} 는 반드시 이름을 지정해서 쓴다</b> — {@code @Async("classifyExecutor")}.
  * 이름을 빠뜨리면 스프링이 자기 기본 실행기로 보내는데, 그쪽에는 여기서 정한 종료 대기도
@@ -110,9 +107,9 @@ public class AsyncConfig implements AsyncConfigurer {
         executor.setQueueCapacity(properties.queueCapacity());
         executor.setThreadNamePrefix("classify-");
 
-        // 대기줄이 차도 버리지 않는다 (D-045 ⑤). 기본값은 예외를 던져 작업을 없애는데,
-        // 여기서 없어지는 작업 하나가 곧 분류되지 않은 문의 하나다.
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // 대기줄이 차면 접수 스레드를 막지 않고 버린다 (D-069). 버려도 문의는 RECEIVED 로
+        // 남아 있어 StuckInquiryReclassifyScheduler(TRI-94)가 나중에 회수한다.
+        executor.setRejectedExecutionHandler(new DeferToReclassifyPolicy());
 
         // 끌 때 하던 분류를 기다린다 (D-047 ⓒ). 설정 두 줄인데, 없으면 배포할 때마다
         // 유실이 생기고 그 유실은 stuckReceived 에만 보인다.
@@ -259,6 +256,25 @@ public class AsyncConfig implements AsyncConfigurer {
             log.error("async_uncaught method={} params={}",
                     method.getName(), Arrays.toString(params), ex);
             Sentry.captureException(ex);
+        }
+    }
+
+    /**
+     * 대기줄이 차면 접수 스레드를 막지 않고 로그만 남긴 채 버린다 (D-069).
+     *
+     * <p>버려진 작업(=이번 분류 시도)은 사라지지만 <b>문의는 사라지지 않는다</b> — 트랜잭션
+     * ①에서 이미 {@code RECEIVED} 로 커밋돼 있고, {@code StuckInquiryReclassifyScheduler}
+     * 가 threshold 이상 지난 {@code RECEIVED} 문의를 다시 태운다. 그래서 여기서는 예외를
+     * 던지거나 대신 실행하지 않고 <b>즉시 반환</b>한다 — 그게 접수 API 를 빠르게 유지하는
+     * 이유 전부다.
+     */
+    static class DeferToReclassifyPolicy implements RejectedExecutionHandler {
+
+        @Override
+        public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
+            log.warn("classify_task_deferred queueSize={} activeCount={} "
+                            + "— 대기줄 포화로 분류를 미뤘다. 문의는 RECEIVED 로 남아 재분류 스케줄러(TRI-94)가 회수한다",
+                    executor.getQueue().size(), executor.getActiveCount());
         }
     }
 }

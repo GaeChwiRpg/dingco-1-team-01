@@ -1,9 +1,13 @@
 package com.dingco.triage.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.zaxxer.hikari.HikariDataSource;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -103,15 +107,16 @@ class AsyncConfigTest {
         }
 
         @Test
-        @DisplayName("대기줄이 차면 버리지 않고 부른 쪽이 대신 처리한다")
-        void doesNotDropWhenQueueIsFull() {
+        @DisplayName("대기줄이 차면 접수 스레드를 막지 않고 버린다 — 회수는 재분류 스케줄러(TRI-94) 몫")
+        void deferInsteadOfBlockingCallerWhenQueueIsFull() {
             ok.run(context -> {
                 ThreadPoolTaskExecutor executor =
                         context.getBean(AsyncConfig.CLASSIFY_EXECUTOR, ThreadPoolTaskExecutor.class);
 
-                // 기본값(AbortPolicy)이면 여기서 없어지는 작업 하나가 곧 분류되지 않은 문의 하나다.
+                // D-069: CallerRunsPolicy(접수 스레드가 대신 실행 = 블로킹)는 접수 지연의 원인이었다.
+                // 문의는 RECEIVED 로 이미 커밋돼 있어 버려도 안 사라지므로, 여기서는 막지 않는다.
                 assertThat(executor.getThreadPoolExecutor().getRejectedExecutionHandler())
-                        .isInstanceOf(ThreadPoolExecutor.CallerRunsPolicy.class);
+                        .isInstanceOf(AsyncConfig.DeferToReclassifyPolicy.class);
             });
         }
 
@@ -203,6 +208,30 @@ class AsyncConfigTest {
             withValues(8, "0s", "30s").run(context -> assertThat(context).hasFailed()
                     .getFailure()
                     .hasStackTraceContaining("0 보다 커야 한다"));
+        }
+    }
+
+    @Nested
+    @DisplayName("DeferToReclassifyPolicy (D-069)")
+    class DeferToReclassifyPolicyTest {
+
+        @Test
+        @DisplayName("거부된 작업을 실행하지도, 예외를 던지지도 않는다 — 접수 스레드는 그대로 반환한다")
+        void neitherRunsNorThrows() {
+            AsyncConfig.DeferToReclassifyPolicy policy = new AsyncConfig.DeferToReclassifyPolicy();
+            ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                    1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>());
+            AtomicBoolean ran = new AtomicBoolean(false);
+
+            try {
+                assertThat(catchThrowable(() -> policy.rejectedExecution(() -> ran.set(true), executor)))
+                        .as("CallerRunsPolicy 였다면 접수 스레드가 이 자리에서 작업을 실행했을 것 — 여기서는 안 한다")
+                        .isNull();
+                assertThat(ran).as("작업이 실행되면 접수 스레드가 AI 호출까지 블로킹된다 — TRI-74 지연의 원인이었다")
+                        .isFalse();
+            } finally {
+                executor.shutdownNow();
+            }
         }
     }
 }
