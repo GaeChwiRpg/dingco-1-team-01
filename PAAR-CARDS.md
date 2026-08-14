@@ -416,9 +416,96 @@ Problem 은 *"문의가 처리에서 사라질 수 있다"* 였다. 모드 A·B 
 
 ## @agbink — 검토 중복 확정 차단
 
+> **한 문장으로**: 두 상담원이 실제로 같은 순간에 부딪히는 경합을 **Windows·WSL2에서 총 160회 재현했고, 매번 1건 성공 + 1건 `CONCURRENT_UPDATE`로 귀결되는 것을 확인했다.**
+
+### 왜 방어가 하나가 아니라 둘인가
+
+"동시 확정을 막는다"는 목표는 하나지만, 막아야 하는 순간은 **두 가지**다 — 상태 검사만으로는 두 상담원이 동시에 `PENDING`을 읽는 경합을 막을 수 없고, `@Version`만으로는 **이미 처리된 요청과 실제 동시 수정 충돌을 애플리케이션 관점에서 구분하기 어렵다.** 왜 두 방어가 모두 필요한지와 원인별 응답을 어떻게 구분하는지는 아래 「Analyze」에 정리했다.
+
+**이 카드에서만 쓰는 말**
+
+| 용어 | 의미 |
+| --- | --- |
+| check-then-act 경합 | "확인한 뒤, 그 확인 결과를 근거로 행동하기 전 사이에 남이 끼어들어 상태를 먼저 바꿔버리는 상황" — 상태 검사 혼자로는 못 막는 이유 |
+| `CyclicBarrier` | 두 스레드를 강제로 같은 순간에 출발시켜 경합을 인위적으로 재현하는 테스트 도구 |
+| `ALREADY_RESOLVED` / `CONCURRENT_UPDATE` | 둘 다 409 오류지만, 이미 처리된 요청인지 / 동시에 처리하려다 충돌한 것인지 원인이 다름 |
+
+---
+
 - **Problem**: 상담원 두 명이 같은 검토 건을 동시에 확정하면 최종 분류와 통계가 중복 반영될 수 있다.
-- **Analyze**: 애플리케이션 선확인 / 낙관적 락 / 상태 조건부 UPDATE. 기준은 중복 확정 0건과 충돌 응답의 설명 가능성이다.
-- **Baseline gate**: 같은 항목에 동시 확정 2건을 보내 현재 결과를 재현한다.
+- **Analyze**: 애플리케이션 선확인(상태 검사) / 낙관적 락. 기준은 중복 확정 0건과 충돌 응답의 설명 가능성이다. (상태 조건부 UPDATE는 이 문제가 아니라 트랜잭션 ②의 중복 실행 차단에 쓰는 도구라 후보에서 제외 — D-007)
+- **Baseline gate (동시성 재현 조건)**: 같은 큐 항목에 두 확정 요청을 barrier로 동일한 진입 지점까지 대기시킨 뒤 동시에 진행시켜 경합을 실제로 재현한다.
 - **Action evidence**: 확정 API PR, 동시성 테스트, 결정 로그를 연결한다.
-- **Result gate**: 성공 1건·충돌 1건(409), 최종 기록 1건, 통계 중복 0건을 확인한다.
-- **상태**: [ ] Baseline [ ] Analyze [ ] Action [ ] Result
+- **Result gate (동일 `ReviewQueueItem` 기준)**: 성공 1건·충돌 1건(409), 해당 큐 항목의 최종 상태가 `RESOLVED`로 귀결되고, 통계 중복 0건을 확인한다.
+- **상태**: [x] Baseline [x] Analyze [x] Action [x] **Result** *(2026-08-13 — 아래 「Result」)*
+
+### 진행 (2026-08-09 측정 · 2026-08-13 카드 정리)
+
+**✅ Analyze — `DECISIONS.md` D-021 에 근거가 있다**
+
+| 수단 | 막는 상황 | 왜 필요한가 |
+| --- | --- | --- |
+| 상태 검사 (`status != PENDING` → `ALREADY_RESOLVED`) | 이미 처리된 뒤 들어온 요청 | A가 먼저 확정한 뒤 B가 요청하면 `ALREADY_RESOLVED`로 차단할 수 있다. 단, A·B가 동시에 `PENDING`을 읽으면 둘 다 통과할 수 있다 (check-then-act 경합) |
+| **`@Version` 낙관적 락 (→ `CONCURRENT_UPDATE`, 채택)** | 동시에 같은 버전을 수정하는 경합 | A와 B가 모두 `PENDING`·`version=0`을 읽어도 최종 저장에서는 한쪽만 성공하도록 보장 |
+
+같은 409 지만 원인이 다르므로 **`code` 로 구분**한다(`ALREADY_RESOLVED` / `CONCURRENT_UPDATE`) — 이를 구분하면 이미 처리된 요청과 실제 동시 수정 충돌을 명확하게 설명하고 검증할 수 있다.
+
+**✅ Baseline·Result — 같은 측정에서 함께 나왔다 (`evidence/concurrent-review-confirm.md`, TRI-63)**
+
+`ReviewServiceTest.reproducesConcurrentUpdate()` — `CyclicBarrier(2)` 로 상담원 A·B(agentId 101·102)를 `confirm()` 호출 직전까지 묶어뒀다가 동시에 풀어, 둘 다 `PENDING`·`version=0` 을 읽은 뒤 저장을 시도하는 경합을 인위적으로 만든다. 40 트라이얼 반복.
+
+| 실행 | 트라이얼 | `SUCCESS` | `CONCURRENT_UPDATE` | `ALREADY_RESOLVED` | `RESOLVED`≠1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Windows 1·2·3회차 | 40×3 | 40×3 | 40×3 | 0 | 0 |
+| WSL2 Ubuntu (Linux 6.6) 1회차 | 40 | 40 | 40 | 0 | 0 |
+
+- `CONCURRENT_UPDATE` 발생률 **매회 40/40 = 100%**, OS 2종·총 4회 실행(160 트라이얼) 모두 동일 — 특정 환경의 우연이 아님
+- `ALREADY_RESOLVED` 0건 — 한쪽이 먼저 완료된 뒤 다른 쪽이 진입한 순차 실행이 아니라, 두 요청이 같은 버전을 가지고 저장 경쟁을 벌이는 조건이 매번 재현됐음을 뒷받침한다.
+- 40개 트라이얼 전부 `RESOLVED` 상태 항목이 **정확히 1건** — "둘 다 성공해서 데이터가 꼬이는" 최악의 시나리오는 0건
+
+**"매 실행 40/40 = 100%"의 원인은 DB 안에서 이렇게 갈린다:**
+
+```text
+A ── PENDING·version=0 읽음 ──→ UPDATE 성공 ──→ version 0→1
+                                              (final_category·큐 상태 DB 반영)
+
+B ── PENDING·version=0 읽음 ──→ UPDATE 시도 (아직도 version=0 을 들고 있음)
+                                 → 0행 변경 (이미 1로 바뀐 뒤라)
+                                 → ObjectOptimisticLockingFailureException
+                                 → CONCURRENT_UPDATE(409)
+                                 → 트랜잭션 통째로 롤백 (B 의 변경은 DB에 안 남음)
+```
+
+Hibernate가 두 번째 요청의 `UPDATE ... WHERE version=0`이 0행을 바꿨다는 걸 감지해 예외를 던지고, `ReviewService`가 이 예외를 잡아 `CONCURRENT_UPDATE`로 변환한다 — 이 예외 발생과 롤백까지 evidence에서 직접 확인했다.
+
+⚠️ **100% 는 "운영에서 항상 충돌한다"는 뜻이 아니다.** `CyclicBarrier` 로 두 스레드를 강제로 같은 시점에 밀어넣은 결과다. 실제 운영에서는 두 상담원이 우연히 같은 순간에 버튼을 눌러야 경합이 생기므로 이보다 훨씬 낮을 것이다 — 이 100%는 "경합 창이 실재하고 낙관적 락이 실제로 걸린다"는 증거이지 발생 빈도가 아니다.
+
+**추가 검증** — `Inquiry`에는 왜 `@Version`이 없는가?
+
+`Inquiry`에는 `@Version`이 없지만, 확정 충돌을 검증하는 대상인 `InquiryReviewQueueItem`에는 `@Version`이 적용되어 있다. Inquiry와 큐 항목은 같은 트랜잭션에서 처리되므로 충돌 시 함께 롤백된다.
+또한 `transitionFromReceived`의 조건부 UPDATE로 **하나의 `Inquiry`가 큐 생성 경로를 한 번만 통과하도록 보장**하고, AI·재사용 경로 모두 이 가드를 공유한다. 따라서 현재 구조에서는 **문의 1건당 큐 항목 최대 1건이 보장된다.**
+
+**✅ Action — 구현 완료**
+
+| 무엇 | 상태 | 근거 |
+| --- | --- | --- |
+| 확정 트랜잭션 ③ + `PATCH /api/inquiry-review-queue/{id}` | ✅ | PR #41 (TRI-59~63) |
+| 상태 검사 + `@Version` 낙관적 락 → 409 2종 | ✅ | 같은 PR, `ReviewService.confirm` |
+| 동시성 실측 (barrier 재현, Windows+WSL2) | ✅ | 같은 PR · `evidence/concurrent-review-confirm.md` |
+
+### Result gate 대조
+
+| Result gate 항목 | 충족 여부 |
+| --- | --- |
+| 성공 1건 · 충돌 1건(409) | ✅ 매 트라이얼 `SUCCESS` 1 · `CONCURRENT_UPDATE` 1 |
+| 최종 기록 1건 | ✅ `RESOLVED` 1건, 160/160 |
+| 실패 요청 변경 미반영 | ✅ 실패 트랜잭션이 통째로 롤백되어 `final_category`·큐 상태가 성공한 쪽만 반영됨을 확인 |
+| 통계 중복 | ⚠️ 별도 통계 카운터는 직접 측정하지 않음 — 실패 요청이 DB에 안 남는다는 사실로부터의 추론이지 직접 잰 값은 아니다 |
+
+### 다음 행동
+
+| 무엇 | 왜 | 어디서 |
+| --- | --- | --- |
+| **claim 이 confirm 단계에서도 강제돼야 하는지 결정 필요** | `ReviewService.confirm()`(65~92행)은 `status == PENDING`과 `@Version`만 확인하고 **`claimedBy`는 전혀 검사하지 않는다.** 지금 역할은 이렇게 갈려 있다 — **claim**: 목록에서 다른 상담원에게 안 보이게 하는 선점 장치(사전) / **`@Version`**: 실제 동시 확정 충돌을 막는 최종 방어(사후). A 가 선점해도 B 가 항목 ID 를 알고 있으면(예전 화면·직접 호출) 그대로 확정할 수 있어, **이 카드가 막으려던 "동시 확정"을 confirm 단계에서 추가로 막아주는 건 여전히 `@Version` 하나뿐**이다 | 정책에 따라 `claimedBy == agentId` 검사를 `confirm`에 추가("claim한 사람만 확정 가능")할지, 아니면 "목록에서 숨기는 것까지가 의도"로 그대로 둘지 결정 필요 |
+
+
