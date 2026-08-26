@@ -4,7 +4,9 @@ import com.dingco.triage.domain.Inquiry;
 import com.dingco.triage.domain.type.InquiryCategory;
 import com.dingco.triage.domain.type.InquiryStatus;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
@@ -226,6 +228,29 @@ public interface InquiryRepository extends Repository<Inquiry, Long> {
                AND i.receivedAt <= :cutoff
             """)
     long countStuckReceived(@Param("cutoff") Instant cutoff);
+
+    /**
+     * 멈춘 문의 재분류 대상 조회 (TRI-94 · D-069, 「나중에 할 것」 E).
+     *
+     * <p>{@link #countStuckReceived} 와 같은 조건(같은 cutoff 정의)이지만 <b>개수가 아니라
+     * 행 자체</b>를 돌려준다 — 스케줄러가 이 행들의 {@code normalizedKey}·{@code content} 를
+     * 읽어 {@code InquiryReceivedEvent} 를 다시 발행해야 하기 때문이다.
+     *
+     * <p><b>가드레일(D-045(1)) 대상이 아니다.</b> {@link #findByIdForClassification} 과 같은
+     * 층위 — 재분류도 분류(②)의 일부이고, 소유자가 아니라 시스템이 부르는 경로다. 이름에
+     * "재분류"임을 드러내 고객 경로가 실수로 부를 수 없게 했다.
+     *
+     * <p>오래된 순으로 정렬한다 — 가장 오래 멈춰 있던 것부터 회수해야 특정 문의가 계속
+     * 뒤로 밀리는 일이 없다. {@code limit} 은 호출부가 한 번에 너무 많이 태우지 않도록
+     * {@link com.dingco.triage.config.InquiryReclassifyProperties#batchSize()} 로 정한다.
+     */
+    @Query("""
+            SELECT i FROM Inquiry i
+             WHERE i.status = com.dingco.triage.domain.type.InquiryStatus.RECEIVED
+               AND i.receivedAt <= :cutoff
+             ORDER BY i.receivedAt ASC
+            """)
+    List<Inquiry> findStuckReceivedForReclassification(@Param("cutoff") Instant cutoff, Limit limit);
 
     /**
      * 접수 전건 — 계약 §7 {@code aiCallSavings.inquiriesReceived} 의 모집단 (TRI-68).

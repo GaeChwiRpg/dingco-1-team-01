@@ -1942,4 +1942,39 @@
 - **범위 밖**: 「종료 중 + 대기줄 포화」 창(D-066 이 이미 명시) · 위 커넥션 상한 문제 · 유실 142건 중 110건이 왜 조용한지(안 재봤다).
 - **재평가**: **인라인 동시 실행이 커넥션 풀에 닿는지를 운영 트래픽에서 보게 되면** 이 항목을 다시 읽는다. 그때 손대는 것은 전파 방식이 아니라 **풀 크기·`max-size`·톰캣 스레드**이고, D-047 ⓑ 의 불변식 자체를 고쳐야 한다. 근거·실측은 `evidence/async-loss-requires-new-adoption.md`.
 
-<!-- 다음 결정 추가 시 D-069 부터 -->
+### D-069. 대기줄 포화 시 접수를 막지 않고 버린다 — `CallerRunsPolicy` → `DeferToReclassifyPolicy` + 재분류 스케줄러 (TRI-94, D-045 ⑤ 뒤집음)
+
+- **일자**: 2026-08-15
+- **상태**: 채택 (5일 범위 안 구현 완료)
+
+**한 줄로**: D-045 ⑤ 가 "버리면 문의가 사라진다"는 이유로 택한 `CallerRunsPolicy`(대기줄 포화 시 접수 스레드가 AI 호출을 대신 떠맡음)를 걷어냈다. **문의는 이미 트랜잭션 ①에서 `RECEIVED` 로 커밋돼 있어 버려도 안 사라진다** — 이 재프레이밍은 PR #88(김준현, 문서 전용)이 먼저 정리했다. 그래서 접수 스레드는 그냥 버리고(`DeferToReclassifyPolicy`), 새로 만든 `StuckInquiryReclassifyScheduler` 가 threshold 이상 `RECEIVED` 에 머문 문의를 주기적으로 다시 태워 회수한다.
+
+- **배경**: TRI-74(접수 응답 속도) 측정에서 대기줄이 찰 때마다 접수 API 가 AI 호출 시간만큼 느려지는 것이 확인됐다 — `CallerRunsPolicy` 가 접수 스레드에서 분류(②)를 인라인으로 돌리기 때문이다. D-045 ⑤ 는 이 대가를 "느려지는 건 보이지만 사라지는 건 안 보인다"는 논리로 감수하기로 했었는데, 그 전제가 "버리면 정말 사라진다"였다. PR #88 이 이 전제를 깼다 — `RECEIVED` 상태 자체가 이미 내구성 있는 대기열이라, 새 아웃박스·큐 테이블 없이도 회수가 가능하다.
+- **선택지**:
+  1. **`CallerRunsPolicy` 유지** — 접수 지연은 그대로 남는다. TRI-74 목표(0.1s)에 못 미치는 원인을 그대로 둔다.
+  2. **거부 + 회수 스케줄러 (채택)** — 버려서 접수를 빠르게 유지하고, 회수는 별도 스케줄러가 비동기로 한다. 접수 경로와 회수 경로가 완전히 분리돼 접수 응답 속도가 대기줄 상태와 무관해진다.
+  3. 대기줄 자체를 없애고 항상 접수 스레드가 즉시 AI 를 부르게 — AI 호출이 접수 스레드를 항상 점유해 커넥션·스레드 예산이 더 나빠진다(D-047 ⓑ 의 관계가 상시 위반).
+- **결정**: **2번.**
+  - `config/AsyncConfig` — `ThreadPoolExecutor.CallerRunsPolicy` 를 새 `DeferToReclassifyPolicy`(로그만 남기고 즉시 반환)로 교체
+  - `service/event/StuckInquiryReclassifyScheduler`(신규) — `classification.reclassify.threshold` 이상 `RECEIVED` 에 머문 문의를 오래된 순으로 최대 `batch-size` 건 조회해 `InquiryReceivedEvent` 를 다시 발행. 재사용 조회·AI 호출·저장 로직은 새로 만들지 않고 기존 `InquiryReceivedEventListener` 를 그대로 태운다
+  - `domain/repository/InquiryRepository#findStuckReceivedForReclassification` — `countStuckReceived`(D-017 관측용)와 같은 조건이되 행 자체를 반환
+  - `config/InquiryReclassifyProperties`(신규) — `threshold`·`interval`·`batchSize`. `config/ReviewClaimConfig` 에 함께 등록(그 클래스 javadoc 이 이미 "「나중에 할 것」 E 도 이 인프라를 공유한다"고 예고해뒀다) — 스케줄링 인프라(`@EnableScheduling`)를 이중으로 켜지 않는다
+  - `application.yml` — `classification.reclassify.*`(threshold=2m, interval=PT1M, batch-size=20). 전부 초기값, 측정으로 조정
+- **⚠️ D-045 예외 선언 — 조용히 넘기지 않는다.** D-045 재평가 조항은 이렇게 못 박아뒀다:
+
+  > *"속도 a 가 목표를 크게 벗어나면 — 예컨대 p95 가 1초를 넘으면 — 버리지 않는다는 원칙은 유지하되 풀 크기를 키운다. 그래도 안 되면 접수와 분류 사이에 저장 단계를 두는 설계를 Phase 3 로 올린다. **정책을 「버림」으로 되돌리지는 않는다** — 그건 이 프로젝트가 막으려는 실패를 스스로 만드는 것이다."*
+
+  `DeferToReclassifyPolicy` 는 기술적으로는 분명히 **「버림」이다** — 거부된 분류 작업을 대신 처리하지도, 예외를 던져 호출부에 알리지도 않는다. 이 조항의 발동 조건(p95 > 1초)은 `evidence/api-response-time.md` 실측(6.36~18.77초)으로 이미 충족돼 있었고, `evidence/api-response-time-improvement-options.md`(PR #84)가 이 정확한 충돌을 먼저 지적해뒀다 — *"회수 장치가 있으면 「버림」이 아니라 「미룸」이라는 것이 논리지만, 조항 문구는 정책 자체를 금지한다. 이 길로 가려면 「회수 장치가 있을 때는 예외」를 새 결정 항목으로 남긴다."* **이 항목이 그 예외 선언이다.**
+
+  - **예외가 성립하는 이유**: 조항이 "버림"을 금지한 근거는 *"버리면 문의가 조용히 사라진다"* 였다. `StuckInquiryReclassifyScheduler` 가 있는 지금은 그 전제가 깨졌다 — 버려지는 것은 "지금 당장 분류하라는 신호"뿐이고 문의 자체는 트랜잭션 ①에서 이미 `RECEIVED` 로 커밋돼 있어 스케줄러가 반드시 다시 줍는다. **"영영 사라짐"이 "몇 분 늦음"으로 바뀐 것**이 예외의 근거이지, 조항의 우려(조용한 유실)를 무시하는 것이 아니다.
+  - **1순위(풀 크기 키우기)를 건너뛴 이유**: 조항은 "풀 크기 → 그래도 안 되면 저장 단계" 순서를 정했다. 이 순서를 건너뛴 근거는 `evidence/api-response-time-improvement-options.md` 가 이미 실측으로 제시했다 — **동시성 1(대기열이 아예 안 차는 조건)에서도 p95 0.85~3.12초로 목표를 8~31배 초과**(PR #85, 동시성 1 실측) — 즉 지연의 상당 부분이 대기열 포화가 아니라 **AI 호출 자체를 접수 스레드가 기다리는 것**에서 온다. 풀을 키워도 이 몫은 그대로다. `queue-capacity`·`max-size` 를 실제로 올려보지는 않았다 — 이 판단은 기존 실측을 근거로 한 것이지 직접 대조 실험한 것은 아니다.
+  - **선택지 ⓑ(문서의 `AbortPolicy` 제안)를 그대로 쓰지 않은 이유**: `AbortPolicy` 는 `RejectedExecutionException` 을 던진다. 이 예외는 `@TransactionalEventListener(AFTER_COMMIT)` 콜백 안에서 발생해 **접수 스레드로 그대로 전파될 수 있다** — 데이터는 이미 커밋됐는데 클라이언트는 500 을 받는 모순이 생길 수 있다(문서가 이 위험을 명시적으로 다루지 않았다). `DeferToReclassifyPolicy` 는 예외를 던지지 않고 로그만 남겨 이 위험을 없앤다 — 의도는 ⓑ 와 같고 구현만 다르다.
+- **D-066/D-068 과의 관계**: 그 둘이 고친 유실은 **인라인 실행 중 트랜잭션 이음새가 끊기는 것**(대기줄 포화 → `CallerRunsPolicy` 가 인라인 실행 → ②가 이미 커밋된 ①의 트랜잭션에 잘못 합류)이었다. 이번 변경으로 **인라인 실행 경로 자체가 사라진다** — 포화 시 접수 스레드는 분류를 대신 돌지 않고 그냥 버리기만 한다. 그래서 D-066/D-068 이 실측했던 재현 경로(대기줄 포화 부하)로는 더 이상 그 유실이 안 난다. 다만 **`REQUIRES_NEW` 를 되돌리지 않는다** — D-068 이 이미 "정상 비동기 경로에선 REQUIRED 와 동작 동일, 무해"라고 확인했고, 인라인 실행이 다시 생기는 변경(예: 이 정책을 되돌리는 것)이 있을 때를 대비한 방어로 남긴다. D-068 이 새로 발견했던 "커넥션 상한을 넘는 동시 인라인" 한계도 같은 이유로 더 이상 트리거되지 않는다 — 이건 **추론이고 부하로 재확인하지 않았다.**
+- **범위 밖 / 남은 것**:
+  - 접수 응답 속도가 실제로 얼마나 개선되는지는 **재지 않았다**. TRI-74 목표(0.1s)를 이걸로 달성하는지는 측정 a 재실측 전에는 모른다 — 목표는 목표로만 남긴다.
+  - `threshold`(2m)·`interval`(PT1M)·`batch-size`(20) 는 전부 추측값. 실제 대기줄 포화 빈도·회수 지연을 재고 조정해야 한다.
+  - AI 중복 호출(스케줄러가 아직 처리 중인 문의를 실수로 또 태우는 경우)은 D-049 조건부 UPDATE 가 저장 중복만 막고 AI 호출 중복은 막지 않는다 — 동시 유입 중복 호출(D-031 이 이미 수용한 것)과 같은 성격으로 수용, 측정 6 에서 함께 집계.
+- **영향**: `config/AsyncConfig`, `config/InquiryReclassifyProperties`(신규), `config/ReviewClaimConfig`, `service/event/StuckInquiryReclassifyScheduler`(신규), `domain/repository/InquiryRepository`, `application.yml`. 계약 A/B/C·API·도메인 스키마 불변 → 3자 합의 불필요. P1(이용택) 소관인 대기줄·접수 경로에 영향을 주므로 PR 본문에 근거를 남기고 리뷰를 받는다.
+- **재평가**: 측정 a(접수 p95) 재실측 후 threshold·interval·batch-size 조정. 대기줄 포화가 운영에서 얼마나 자주 나는지 관측되면(`classify_task_deferred` 로그) 그 빈도로 다시 본다.
+
+<!-- 다음 결정 추가 시 D-070 부터 -->
