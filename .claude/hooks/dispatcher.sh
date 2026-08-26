@@ -24,6 +24,24 @@ INPUT="$(cat)"
 HOOK_EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')"
 TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')"
 
+# 핸들러를 돌리고 그 판정을 로거에 넘긴 뒤, 원래 응답을 그대로 흘려보낸다 (TRI-98 · D-070).
+#
+# 감싸는 이유: 두 핸들러 모두 **차단해도 exit 0** 이고 판정은 stdout JSON 에만 있다.
+# 로깅을 PostToolUse 로 따로 붙이면 차단된 호출은 도구가 실행되지 않아 이벤트 자체가
+# 오지 않는다 — 정작 남겨야 할 "막힌 이력"이 통째로 빠진다. 그래서 여기서 stdout 을
+# 한 번 받아 로거에 건네고, 받은 그대로 다시 내보낸다.
+#
+# 로거 호출에 && 나 || 를 붙이지 않는다 — 로거는 어떤 경우에도 0 으로 끝나고(fail-open),
+# 여기서 판정을 좌우해서는 안 된다.
+run_and_log() {
+  local out rc
+  out="$("$@" <<<"$INPUT")"
+  rc=$?
+  printf '%s' "$INPUT" | "$HANDLERS/audit-log.sh" "$rc" "$out"
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  return $rc
+}
+
 case "$HOOK_EVENT" in
   PreToolUse)
     case "$TOOL_NAME" in
@@ -63,9 +81,14 @@ case "$HOOK_EVENT" in
 
         # git push (체이닝 뒤에 와도 잡는다: "cd x && git push", "a; git push" 등)
         if printf '%s' "$SEARCH_TEXT" | grep -qE '(^|[;&|]+)[[:space:]]*git[[:space:]]+push([[:space:]]|$)'; then
-          printf '%s' "$INPUT" | "$HANDLERS/verify-before-push.sh"
+          run_and_log "$HANDLERS/verify-before-push.sh"
           exit $?
         fi
+
+        # push 가 아닌 명령도 남긴다 — 검증 대상이 아니어서 핸들러는 안 돌지만,
+        # "무엇을 실행했나"는 차단 이력만큼이나 추적에 필요하다. 핸들러가 돌지
+        # 않았다는 사실은 빈 인자로 전달되어 handler="none" 으로 기록된다.
+        printf '%s' "$INPUT" | "$HANDLERS/audit-log.sh" "" ""
         ;;
 
       Write|Edit)
@@ -77,7 +100,7 @@ case "$HOOK_EVENT" in
         # (트랜잭션 경계 ①②③, 계약 A/B/C, 감사 표본 역산 가능성)은
         # constitution-auditor 서브에이전트의 몫으로 남긴다. 오탐이 잦은 훅은
         # 곧 꺼지고, 꺼진 훅은 없는 것만 못하다.
-        python3 "$HANDLERS/constitution-guard.py" <<<"$INPUT"
+        run_and_log python3 "$HANDLERS/constitution-guard.py"
         exit $?
         ;;
     esac
