@@ -15,6 +15,8 @@ import com.dingco.triage.service.ai.AiParsedClassification;
 import com.dingco.triage.service.ai.AiRawResponse;
 import com.dingco.triage.service.cache.CachedClassification;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -153,8 +155,26 @@ abstract class SeamLoadBase {
         }
     }
 
-    private long count(String where) {
+    protected long count(String where) {
         return jdbc.queryForObject("SELECT COUNT(*) FROM inquiries WHERE " + where, Long.class);
+    }
+
+    /**
+     * {@code RECEIVED} 가 0 이 될 때까지 기다린다 — 재분류 스케줄러(TRI-94)의 회수를 기다리는 자리다.
+     *
+     * <p>워커 1 · 대기줄 1 로 조인 상태라 처리율이 초당 10건(AI mock 100ms) 상한이고, 회수는
+     * 대기줄에 자리가 나는 만큼만 성공한다. 그래서 200건을 소화하는 데 수십 초가 걸린다.
+     *
+     * @return 기다린 끝에 남은 {@code RECEIVED} 건수 (0 이면 전부 회수된 것)
+     */
+    protected long awaitNoStuckReceived(Duration timeout) throws InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        long remaining = count("status='RECEIVED'");
+        while (remaining > 0 && Instant.now().isBefore(deadline)) {
+            Thread.sleep(500);
+            remaining = count("status='RECEIVED'");
+        }
+        return remaining;
     }
 
     protected void report(String label, LoadResult r) {
@@ -235,24 +255,55 @@ class SeamLoadRequiredIT extends SeamLoadBase {
 }
 
 @Import(com.dingco.triage.support.MySqlTestContainer.class)
+@TestPropertySource(properties = {
+        // 부하가 끝나자마자 회수가 시작되도록 임계·주기를 운영값(2m·PT1M)보다 짧게 준다.
+        // threshold 는 0 을 못 쓴다 — InquiryReclassifyProperties 가 양수를 강제한다.
+        "classification.reclassify.threshold=PT1S",
+        "classification.reclassify.interval=PT0.2S"
+})
 class SeamLoadRequiresNewIT extends SeamLoadBase {
 
     /**
-     * <b>운영 빈을 그대로 쓴다 — 애노테이션 경로 확인 (TRI-96 · D-066 재평가 조항).</b>
+     * <b>버려진 분류 신호는 스케줄러가 회수해 결국 전부 분류된다 (TRI-94 · D-069).</b>
      *
-     * <p>채택 전에는 이 자리를 테스트 전용 {@code @Primary} 빈이 대신했다. 그때 증명된 것은
-     * "{@code REQUIRES_NEW} 면 유실 0" 이라는 <b>효과</b>였고, <b>운영 클래스에 붙인 애노테이션이
-     * 실제로 프록시를 타는지</b>는 확인되지 않은 채였다 — D-066 이 그 확인을 채택 티켓의 몫으로
-     * 지정했다. 이 테스트가 그 자리다: 끼워넣는 빈 없이 유실 0 이 나오면 애노테이션이 먹은 것이다.
+     * <p><b>이 테스트가 재는 것이 D-069 로 바뀌었다.</b> 이전 판은 대기줄이 포화되면
+     * {@code CallerRunsPolicy} 가 접수 스레드에서 분류를 인라인 실행한다는 전제 위에 있었고,
+     * 그 경로에서 {@code REQUIRES_NEW} 가 이음새 유실을 0 으로 만드는지를 봤다. TRI-94 가 정책을
+     * {@code DeferToReclassifyPolicy}(버리고 즉시 반환) 로 바꾸면서 <b>인라인 경로 자체가
+     * 사라졌으므로</b>, 같은 부하에서 확인할 것은 다른 것이 됐다.
+     *
+     * <p><b>부하 직후 {@code RECEIVED} 가 남는 것은 이제 실패가 아니다.</b> D-069 의 주장이
+     * 정확히 그것이다 — 버려지는 것은 문의가 아니라 "지금 분류하라"는 신호이고, 문의는 ①에서
+     * 이미 커밋돼 DB 에 남아 있어 다시 태울 수 있다. 그래서 검증을 두 단계로 나눈다.
+     *
+     * <ol>
+     *   <li><b>전제</b> — 부하 직후 {@code RECEIVED} 가 남아야 한다. 안 남으면 대기줄이 넘치지
+     *       않았다는 뜻이라 이 테스트는 아무것도 증명하지 못한다</li>
+     *   <li><b>주장</b> — 스케줄러가 돌고 나면 그 잔여가 0 이 된다. 즉 「유실」이 아니라 「미룸」이다</li>
+     * </ol>
+     *
+     * <p><b>{@code REQUIRES_NEW}(D-066) 도 여전히 이 경로가 지킨다.</b> 스케줄러는
+     * {@code @Transactional} 안에서 이벤트를 발행하므로(AFTER_COMMIT 리스너의 전제), ②가
+     * {@code REQUIRED} 로 되돌아가면 그 트랜잭션에 합류할 수 있는 자리가 새로 생겼다. 인라인
+     * 경로는 사라졌지만 애노테이션의 근거는 남아 있다.
      */
     @Test
-    void 운영_REQUIRES_NEW_는_같은_부하에서_유실이_0이다() throws Exception {
+    void 버려진_분류_신호는_스케줄러가_회수해_최종_유실이_0이_된다() throws Exception {
         LoadResult r = runLoad();
-        report("REQUIRES_NEW (운영 빈 · D-066 채택)", r);
+        report("DeferToReclassify + 재분류 스케줄러 (운영 빈 · D-069)", r);
+
         assertThat(r.total()).isEqualTo(TOTAL);
         assertThat(r.lost())
-                .as("운영 애노테이션이 인라인 경로에서도 새 트랜잭션을 열어 유실 0")
+                .as("대기줄이 실제로 넘쳐 신호가 버려졌어야 이 테스트가 성립한다")
+                .isPositive();
+
+        long remaining = awaitNoStuckReceived(Duration.ofMinutes(3));
+
+        assertThat(remaining)
+                .as("스케줄러가 회수했으므로 버려진 신호는 유실이 아니라 미룸이다")
                 .isZero();
-        assertThat(r.classified()).isEqualTo(TOTAL);
+        assertThat(count("status='UNCLASSIFIED'"))
+                .as("회수된 건까지 전부 분류를 마쳤다")
+                .isEqualTo(TOTAL);
     }
 }
