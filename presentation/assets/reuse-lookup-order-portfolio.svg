@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="444" viewBox="0 0 680 444" role="img">
+<title>캐시-DB 2단 조회로 AI 중복 호출 제거 — 1000건 실측</title>
+<desc>1000건 중 1단 Redis 캐시에서 454건, 2단 DB 조회에서 36건을 재사용해 실제 AI 호출을 510건으로 줄였다. 포트폴리오용.</desc>
+<style>
+  text { font-family: 'Pretendard','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif; }
+  .ts { font-size: 12px; font-weight: 400; }
+  .th { font-size: 14px; font-weight: 500; }
+  .box rect { stroke-width: 1.5; }
+  .c-purple rect { fill:#EEEDFE; stroke:#534AB7; }
+  .c-purple .th { fill:#3C3489; }  .c-purple .ts { fill:#534AB7; }
+  .c-teal rect { fill:#E1F5EE; stroke:#0F6E56; }
+  .c-teal .th { fill:#085041; }    .c-teal .ts { fill:#0F6E56; }
+  .c-coral rect { fill:#FAECE7; stroke:#993C1D; }
+  .c-coral .th { fill:#712B13; }   .c-coral .ts { fill:#993C1D; }
+  .arr { stroke:#5F5E5A; stroke-width:1.5; fill:none; marker-end:url(#ah); }
+  .lbl { fill:#5F5E5A; }
+  .cap { fill:#444441; }
+</style>
+<defs>
+  <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1L9 5L0 9" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+  </marker>
+</defs>
+<rect width="680" height="444" fill="#FFFFFF"/>
+
+<g class="box c-purple">
+  <rect x="40" y="52" width="260" height="72" rx="12"/>
+  <text class="th" x="62" y="78">1단 · 저장해둔 답</text>
+  <text class="ts" x="62" y="100">같은 내용인지 먼저 봄 (Redis 캐시)</text>
+</g>
+<path class="arr" d="M300 88H342"/>
+<text class="ts lbl" x="321" y="80" text-anchor="middle">있음</text>
+<g class="box c-teal">
+  <rect x="350" y="40" width="290" height="96" rx="12"/>
+  <text class="th" x="372" y="68">그 답을 그대로 씀</text>
+  <text class="ts" x="372" y="92">AI 에게 안 물어봄 — 호출 0회</text>
+  <text class="ts" x="372" y="114">1000건 중 454건 · 캐시 적중률 45.4%</text>
+</g>
+
+<path class="arr" d="M170 124V182"/>
+<text class="ts lbl" x="182" y="158">없음</text>
+
+<g class="box c-purple">
+  <rect x="40" y="188" width="260" height="72" rx="12"/>
+  <text class="th" x="62" y="214">2단 · DB 조회</text>
+  <text class="ts" x="62" y="236">1단에 없을 때 (캐시 miss)</text>
+</g>
+<path class="arr" d="M300 224H342"/>
+<text class="ts lbl" x="321" y="216" text-anchor="middle">있음</text>
+<g class="box c-teal">
+  <rect x="350" y="170" width="290" height="120" rx="12"/>
+  <text class="th" x="372" y="198">1순위 · 사람이 확정한 답</text>
+  <text class="ts" x="372" y="222">2순위 · 없으면 AI 자동 확정한 답</text>
+  <text class="ts" x="372" y="244">AI 에게 안 물어봄 — 호출 0회</text>
+  <text class="ts" x="372" y="266">1000건 중 36건 · 캐시가 비어도 아낀 몫</text>
+</g>
+
+<path class="arr" d="M170 260V318"/>
+<text class="ts lbl" x="182" y="294">없음</text>
+
+<g class="box c-coral">
+  <rect x="40" y="324" width="260" height="72" rx="12"/>
+  <text class="th" x="62" y="350">AI 에게 물어봄</text>
+  <text class="ts" x="62" y="372">두 곳 모두 없을 때만</text>
+</g>
+<path class="arr" d="M300 360H342"/>
+<g class="box c-coral">
+  <rect x="350" y="324" width="290" height="72" rx="12"/>
+  <text class="th" x="372" y="350">실제 AI 호출</text>
+  <text class="ts" x="372" y="372">1000건 중 510건 · 절감률 49.0%</text>
+</g>
+
+<text class="ts cap" x="40" y="424">1000건 실측 · 재사용 490건(Redis 454 + DB 36) · 실제 호출 510건 · 토큰 612,000 → 312,120</text>
+</svg>

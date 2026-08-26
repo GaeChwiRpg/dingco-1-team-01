@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="620" viewBox="0 0 680 620" role="img">
+<title>대기열 포화 시 접수 지연 — 개선 전후 구조</title>
+<desc>개선 전에는 대기열이 차면 접수 스레드가 AI 호출을 직접 수행해 p95 7.28초였고, 개선 후에는 즉시 반환하고 스케줄러가 미뤄진 건을 회수해 p95 0.159초가 됐다. 포트폴리오용.</desc>
+<style>
+  text { font-family: 'Pretendard','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif; }
+  .ts { font-size: 12px; font-weight: 400; }
+  .th { font-size: 14px; font-weight: 500; }
+  .box rect { stroke-width: 1.5; }
+  .c-gray rect { fill:#F1EFE8; stroke:#5F5E5A; }
+  .c-gray .th { fill:#444441; }    .c-gray .ts { fill:#5F5E5A; }
+  .c-red rect { fill:#FCEBEB; stroke:#A32D2D; }
+  .c-red .th { fill:#791F1F; }     .c-red .ts { fill:#A32D2D; }
+  .c-teal rect { fill:#E1F5EE; stroke:#0F6E56; }
+  .c-teal .th { fill:#085041; }    .c-teal .ts { fill:#0F6E56; }
+  .c-amber rect { fill:#FAEEDA; stroke:#854F0B; }
+  .c-amber .th { fill:#633806; }   .c-amber .ts { fill:#854F0B; }
+  .arr { stroke:#5F5E5A; stroke-width:1.5; fill:none; marker-end:url(#ah); }
+  .lbl { fill:#5F5E5A; }
+  .sec { font-size:14px; font-weight:500; fill:#444441; }
+</style>
+<defs>
+  <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1L9 5L0 9" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+  </marker>
+</defs>
+<rect width="680" height="620" fill="#FFFFFF"/>
+
+<text class="sec" x="40" y="34">Before · 대기열이 차면 접수 스레드가 AI 를 직접 호출</text>
+
+<g class="box c-gray">
+  <rect x="40" y="52" width="120" height="62" rx="12"/>
+  <text class="th" x="58" y="78">고객 요청</text>
+  <text class="ts" x="58" y="98">POST /inquiries</text>
+</g>
+<path class="arr" d="M160 83H206"/>
+<g class="box c-gray">
+  <rect x="214" y="52" width="130" height="62" rx="12"/>
+  <text class="th" x="232" y="78">접수 저장</text>
+  <text class="ts" x="232" y="98">DB 커밋</text>
+</g>
+<path class="arr" d="M344 83H390"/>
+<g class="box c-red">
+  <rect x="398" y="52" width="242" height="62" rx="12"/>
+  <text class="th" x="416" y="78">대기열 가득 → 접수가 떠맡음</text>
+  <text class="ts" x="416" y="98">AI 응답을 그 자리에서 기다림 (CallerRunsPolicy)</text>
+</g>
+<path class="arr" d="M519 114V150"/>
+<g class="box c-red">
+  <rect x="398" y="156" width="242" height="52" rx="12"/>
+  <text class="th" x="416" y="180">응답 p95 7.28초 · 23 TPS</text>
+  <text class="ts" x="416" y="198">AI 대기 시간이 접수 응답에 그대로 실림</text>
+</g>
+
+<path d="M40 246H640" stroke="#B4B2A9" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+
+<text class="sec" x="40" y="290">After · 즉시 반환하고, 미뤄진 건은 스케줄러가 회수</text>
+
+<g class="box c-gray">
+  <rect x="40" y="308" width="120" height="62" rx="12"/>
+  <text class="th" x="58" y="334">고객 요청</text>
+  <text class="ts" x="58" y="354">POST /inquiries</text>
+</g>
+<path class="arr" d="M160 339H206"/>
+<g class="box c-gray">
+  <rect x="214" y="308" width="130" height="62" rx="12"/>
+  <text class="th" x="232" y="334">접수 저장</text>
+  <text class="ts" x="232" y="354">RECEIVED 로 커밋</text>
+</g>
+<path class="arr" d="M344 339H390"/>
+<g class="box c-teal">
+  <rect x="398" y="308" width="242" height="62" rx="12"/>
+  <text class="th" x="416" y="334">응답 p95 0.159초 · 516 TPS</text>
+  <text class="ts" x="416" y="354">AI 를 기다리지 않고 즉시 반환</text>
+</g>
+
+<path class="arr" d="M279 370V406"/>
+<text class="ts lbl" x="291" y="392">대기열이 차면</text>
+<g class="box c-amber">
+  <rect x="40" y="412" width="300" height="62" rx="12"/>
+  <text class="th" x="58" y="438">분류 요청만 버림 · 157건</text>
+  <text class="ts" x="58" y="458">문의는 RECEIVED 로 DB 에 남아 있음</text>
+</g>
+<path class="arr" d="M340 443H390"/>
+<g class="box c-teal">
+  <rect x="398" y="412" width="242" height="62" rx="12"/>
+  <text class="th" x="416" y="438">스케줄러가 회수 · 20건씩</text>
+  <text class="ts" x="416" y="458">1분 주기로 분류를 다시 요청</text>
+</g>
+
+<g class="box c-teal">
+  <rect x="40" y="514" width="600" height="66" rx="12"/>
+  <text class="th" x="64" y="542">유실 0건 — 미뤄진 157건이 모두 회수됨 (stuckReceived = 0)</text>
+  <text class="ts" x="64" y="564">새 큐·아웃박스 테이블 없음. 문의 상태값(RECEIVED)이 곧 대기열이다</text>
+</g>
+</svg>
