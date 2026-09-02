@@ -54,6 +54,9 @@ Thumbs.db
 # .claude/commands/, .claude/hooks/ 는 코딩 단계 산출물이므로 커밋한다.
 .claude/settings.local.json
 .claude/scripts/context-monitor.py
+# 에이전트 작업 이력 (TRI-98 · D-070). 위 logs/ 규칙에 이미 걸리지만 의도를 남긴다 —
+# 각자 로컬에서 쌓이는 기록이라 공유 대상이 아니고, 명령 앞부분·파일 경로가 들어간다.
+.claude/logs/
 
 # 파이썬 캐시 (측정 스크립트가 서로 import 하면서 생긴다)
 __pycache__/
