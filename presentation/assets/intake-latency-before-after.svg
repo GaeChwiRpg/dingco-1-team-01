@@ -42,7 +42,7 @@
 <g class="box c-red">
   <rect x="398" y="52" width="242" height="62" rx="12"/>
   <text class="th" x="416" y="78">대기열 가득 → 접수가 떠맡음</text>
-  <text class="ts" x="416" y="98">AI 응답을 그 자리에서 기다림 (CallerRunsPolicy)</text>
+  <text class="ts" x="416" y="98">AI 응답을 기다림 (CallerRunsPolicy)</text>
 </g>
 <path class="arr" d="M519 114V150"/>
 <g class="box c-red">

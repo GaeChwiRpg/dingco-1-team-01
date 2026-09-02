@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="876" viewBox="0 0 680 876" role="img">
+<title>접수부터 확정까지 — 문의 분류 파이프라인</title>
+<desc>고객이 문의를 접수하면 즉시 응답하고, 다른 스레드에서 캐시와 DB를 차례로 조회한 뒤 필요할 때만 AI를 호출한다. 확신도가 낮거나 자동 확정 중 감사로 뽑힌 건은 검토 목록에 쌓이고, 상담원이 확정하면 캐시를 사람 답으로 덮어써 다음 문의부터 정정된 답이 나간다.</desc>
+<style>
+  text { font-family: 'Pretendard','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif; }
+  .ts { font-size: 12px; font-weight: 400; }
+  .th { font-size: 14px; font-weight: 500; }
+  .sec { font-size: 14px; font-weight: 500; fill: #444441; }
+  .box rect { stroke-width: 1.5; }
+  .c-gray rect { fill:#F1EFE8; stroke:#5F5E5A; }
+  .c-gray .th { fill:#444441; }   .c-gray .ts { fill:#5F5E5A; }
+  .c-purple rect { fill:#EEEDFE; stroke:#534AB7; }
+  .c-purple .th { fill:#3C3489; } .c-purple .ts { fill:#534AB7; }
+  .c-coral rect { fill:#FAECE7; stroke:#993C1D; }
+  .c-coral .th { fill:#712B13; } .c-coral .ts { fill:#993C1D; }
+  .c-amber rect { fill:#FAEEDA; stroke:#854F0B; }
+  .c-amber .th { fill:#633806; } .c-amber .ts { fill:#854F0B; }
+  .c-teal rect { fill:#E1F5EE; stroke:#0F6E56; }
+  .c-teal .th { fill:#085041; }  .c-teal .ts { fill:#0F6E56; }
+  .arr { stroke:#5F5E5A; stroke-width:1.5; fill:none; marker-end:url(#ah); }
+  .lbl { fill:#5F5E5A; }
+</style>
+<defs>
+  <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1L9 5L0 9" fill="none" stroke="#5F5E5A" stroke-width="1.5"/>
+  </marker>
+</defs>
+<rect width="680" height="876" fill="#FFFFFF"/>
+
+<text class="sec" x="40" y="30">① 접수 — 문의를 저장하고 AI 를 기다리지 않고 바로 응답</text>
+
+<g class="box c-gray">
+  <rect x="40" y="44" width="120" height="56" rx="12"/>
+  <text class="th" x="58" y="68">고객 요청</text>
+  <text class="ts" x="58" y="88">POST /api/inquiries</text>
+</g>
+<path class="arr" d="M160 72H196"/>
+<g class="box c-gray">
+  <rect x="204" y="44" width="120" height="56" rx="12"/>
+  <text class="th" x="222" y="68">문의 저장</text>
+  <text class="ts" x="222" y="88">DB 커밋</text>
+</g>
+<path class="arr" d="M324 72H360"/>
+<g class="box c-teal">
+  <rect x="368" y="40" width="272" height="64" rx="12"/>
+  <text class="th" x="390" y="66">202 즉시 응답</text>
+  <text class="ts" x="390" y="90">AI 를 기다리지 않음</text>
+</g>
+
+<path class="arr" d="M264 100V128"/>
+<text class="ts lbl" x="276" y="118">신호</text>
+
+<path d="M40 140H640" stroke="#B4B2A9" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+
+<text class="sec" x="40" y="164">② 분류 — 다른 스레드에서 2단 조회 후 필요할 때만 AI 호출</text>
+
+<g class="box c-purple">
+  <rect x="40" y="178" width="260" height="64" rx="12"/>
+  <text class="th" x="62" y="204">1단 캐시 조회</text>
+  <text class="ts" x="62" y="226">정규화 키로 먼저 봄</text>
+</g>
+<path class="arr" d="M300 210H320V300H340"/>
+<text class="ts lbl" x="304" y="204">있음</text>
+<path class="arr" d="M170 242V282"/>
+<text class="ts lbl" x="182" y="266">없음</text>
+
+<g class="box c-purple">
+  <rect x="40" y="288" width="260" height="64" rx="12"/>
+  <text class="th" x="62" y="314">2단 DB 조회</text>
+  <text class="ts" x="62" y="336">1단에 없을 때만</text>
+</g>
+<path class="arr" d="M300 320H320V324H340"/>
+<text class="ts lbl" x="304" y="314">있음</text>
+<path class="arr" d="M170 352V392"/>
+<text class="ts lbl" x="182" y="376">없음</text>
+
+<g class="box c-coral">
+  <rect x="40" y="398" width="260" height="64" rx="12"/>
+  <text class="th" x="62" y="424">AI 호출</text>
+  <text class="ts" x="62" y="446">여기서만 실제 API 호출</text>
+</g>
+<path class="arr" d="M170 462V502"/>
+
+<g class="box c-amber">
+  <rect x="40" y="508" width="260" height="56" rx="12"/>
+  <text class="th" x="62" y="540">확신도 ≥ 0.8 ?</text>
+</g>
+
+<g class="box c-teal">
+  <rect x="340" y="288" width="300" height="72" rx="12"/>
+  <text class="th" x="362" y="316">자동 확정</text>
+  <text class="ts" x="362" y="340">캐시·DB 재사용 또는 확신도 충족</text>
+</g>
+
+<path class="arr" d="M300 516H320V360H340"/>
+<text class="ts lbl" x="326" y="440">예</text>
+
+<path class="arr" d="M300 536H340"/>
+<text class="ts lbl" x="304" y="528">아니오</text>
+
+<path class="arr" d="M490 360V508"/>
+<text class="ts lbl" x="502" y="438">20건에 1건</text>
+<text class="ts lbl" x="502" y="454">감사 표본</text>
+
+<g class="box c-amber">
+  <rect x="340" y="508" width="300" height="64" rx="12"/>
+  <text class="th" x="362" y="534">검토 목록</text>
+  <text class="ts" x="362" y="556">확신도 미달 + 무작위 감사 표본</text>
+</g>
+
+<path class="arr" d="M490 572V600"/>
+
+<g class="box c-gray">
+  <rect x="40" y="600" width="600" height="64" rx="12"/>
+  <text class="th" x="62" y="628">③ 상담원 확정 (PATCH)</text>
+  <text class="ts" x="62" y="650">검토 목록에서 집어 최종 답 확정</text>
+</g>
+<path class="arr" d="M340 664V692"/>
+
+<g class="box c-teal">
+  <rect x="40" y="698" width="600" height="64" rx="12"/>
+  <text class="th" x="62" y="726">사람 답으로 캐시 덮어쓰기</text>
+  <text class="ts" x="62" y="748">조건 없이 곧바로 — source=HUMAN</text>
+</g>
+<path class="arr" d="M340 762V790"/>
+
+<g class="box c-teal">
+  <rect x="40" y="796" width="600" height="64" rx="12"/>
+  <text class="th" x="62" y="824">같은 문의가 또 오면 올바른 답이 나감</text>
+  <text class="ts" x="62" y="846">재사용 경로(1단 캐시)로 곧바로 반영</text>
+</g>
+</svg>
