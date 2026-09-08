@@ -77,6 +77,7 @@ InquiryCategory (10종): DELIVERY, RETURN_REFUND, PAYMENT, PRODUCT, ACCOUNT,
 | 2단 절감 경로의 **1순위** — 같은 키에서 사람이 확정한 답 (`inquiries ⋈ result`, `final_category IS NOT NULL`) | 구동 `inquiries(normalized_key, created_at DESC)`<br>조인 `result(inquiry_id, created_at DESC)` | 구동 `ref` + 정렬 커버, 조인 `ref`, `final_category` 는 **서버 필터** ⚠️ |
 | 2단 절감 경로의 **2순위** — 위가 비었을 때만. AI 자동확정 (`verdict='AUTO_ACCEPTED'`) | 같은 두 인덱스 | 같음. `verdict` 는 등치라 필터가 싸다 |
 | `GET /api/inquiries` — status 필터 + 기간 범위 + `received_at` 정렬 | `(status, received_at)` | `range`, 정렬까지 커버 |
+| 같은 엔드포인트의 **고객 범위** 조회 — `customer_id` 등치 + `received_at` 정렬 (D-038 소유자 강제) | `(customer_id, received_at)` | `ref` + 정렬 커버, filesort 없음 — D-071 실측 |
 | 위 + `category` 필터 동시 사용 | `(status, current_category, received_at)` | category 는 등치라 선행 컬럼에 두면 뒤의 범위 + 정렬까지 커버 가능 |
 | 문의별 최신 분류 결과 | `(inquiry_id, created_at DESC)` | `ref` |
 | 감사 대조 — `verdict=AUTO_ACCEPTED AND final_category IS NOT NULL` 신뢰도 구간별 집계 | `(verdict, confidence)` | `range` |

@@ -1,0 +1,20 @@
+-- 고객 문의 목록 조회(계약 §2 · D-038 소유자 강제 경로)가 쓰는 인덱스 — D-071.
+--
+-- 왜 필요한가.
+--   V2 의 inquiries 인덱스 3개는 선행 컬럼이 전부 status 아니면 normalized_key 라,
+--   고객 화면이 치는 `WHERE customer_id = ? ORDER BY received_at` 은 어느 것도 못 탄다.
+--   evidence/measurement-5-list-query-explain.md 의 G 항목이 이걸 type=ALL +
+--   Using filesort 로 이미 기록해뒀는데, "쓰기 비용을 얹기 전에 이득을 먼저 잰다"(D-018)는
+--   이유로 붙이지 않은 채 남아 있었다. 그 측정을 하고 붙인다.
+--   실측은 evidence/customer-scope-index.md.
+--
+-- 컬럼 순서가 이 인덱스의 전부다.
+--   customer_id 는 등치 조건이라 선행에 두면 뒤의 received_at 이 이미 정렬된 상태로 붙어
+--   필터와 정렬을 한 인덱스가 함께 커버한다(filesort 가 사라지는 이유).
+--   뒤집어서 (received_at, customer_id) 로 두면 정렬은 되지만 customer_id 로 범위를
+--   좁히지 못해 전 구간을 훑는다 — 순서를 바꾸면 이득이 사라진다.
+--
+-- 이 인덱스가 커버하지 못하는 것.
+--   깊은 오프셋은 그대로 남는다. 인덱스가 있어도 앞의 행을 읽고 버리는 비용이라
+--   커서 페이징이 필요하다 (D-071 「범위 밖」).
+CREATE INDEX idx_inquiries_customer_received ON inquiries (customer_id, received_at);
